@@ -105,16 +105,19 @@ Les faits critiques ont une importance haute et sont récupérés en priorité.
 
 ```
 "Qu'est-ce que tu sais de moi ?"
-→ ORION affiche le profil complet
+→ GET /memory → ApiResponse<List<MemoryVector>>
 
 "Oublie ce que je t'ai dit sur X"
-→ DELETE FROM memory_vectors WHERE content LIKE '%X%'
+→ DELETE /memory/{id} → ApiResponse<bool>
+→ Backend : MemoryRepository.Remove() via UnitOfWork
 
 "Souviens-toi que..."
-→ INSERT INTO memory_vectors (content, importance) VALUES (...)
+→ POST implicite via ConversationAgent après chaque échange
+→ EmbeddingService génère le vecteur → MemoryRepository.AddAsync()
 
 "Montre-moi mes derniers souvenirs"
-→ SELECT content, created_at FROM memory_vectors ORDER BY created_at DESC LIMIT 20
+→ GET /memory?source=conversation&limit=20
+→ ApiResponse<List<MemoryVector>> trié par created_at DESC
 ```
 
 ## Embedding Model
