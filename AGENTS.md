@@ -46,6 +46,24 @@ Niveau   : Développeur avancé — pas d'explications basiques
 
 [RULE-08] Repository Pattern obligatoire couche Data
           → Pas d'accès Supabase direct depuis Business ou Api
+
+[RULE-09] Ne jamais utiliser fetch() dans le frontend
+          → Toujours passer par apiClient (axios) + ENDPOINTS
+
+[RULE-10] Toujours utiliser endpoints.ts pour les URLs API
+          → Pas de hardcoding d'URLs, même pour WebSocket
+
+[RULE-11] Architecture Production: Daemon → Backend → Frontend
+          → Daemon ne communique JAMAIS directement avec le frontend
+          → Backend est le seul point de coordination
+
+[RULE-12] WebSocket Daemon: WSS en production, WS en dev uniquement
+          → Vérifier RenderWsUrl commence par wss:// en prod
+          → Token d'authentification obligatoire
+
+[RULE-13] Notifications proactive: SSE du backend au frontend
+          → Pas de polling, utiliser EventSource natif
+          → Endpoint: /api/proactivenotification/stream
 ```
 
 ---
@@ -146,9 +164,9 @@ Orion.Api/
 ```
 Orion.Business/
 ├── Agents/
-│   ├── ConversationAgent.cs      # IConversationAgent → retourne ApiResponse<ChatResponse>
-│   ├── MemoryAgent.cs            # IMemoryAgent → retourne ApiResponse<MemoryContext>
-│   ├── ToolAgent.cs              # IToolAgent → retourne ApiResponse<ToolResult>
+│   ├── ConversationAgent.cs      # IConversationAgent → ApiResponse<ChatResponse>
+│   ├── MemoryAgent.cs            # IMemoryAgent → ApiResponse<MemoryContext>
+│   ├── ToolAgent.cs              # IToolAgent → ApiResponse<ToolResult>
 │   └── BriefingAgent.cs         # IBriefingAgent + IHostedService (cron 07h00)
 ├── LLM/
 │   ├── LLMRouter.cs              # ILLMRouter — ping Ollama → fallback Claude
@@ -164,14 +182,11 @@ Orion.Business/
 │   ├── CreateChallengeTool.cs
 │   ├── MorningBriefingTool.cs
 │   ├── SendNotificationTool.cs
-│   └── OpenAppTool.cs            # → délègue au Daemon via IDaemonClient
+│   └── OpenAppTool.cs            # → délègue via IDaemonClient (Core)
 ├── Daemon/
-│   ├── DaemonWebSocketClient.cs  # IDaemonClient
-│   │                             # CRITIQUE : c'est le daemon qui initie la connexion
-│   │                             # vers Render, pas l'inverse
-│   │                             # DaemonWebSocketClient côté backend attend
-│   │                             # la connexion entrante du daemon
-│   └── DaemonActionValidator.cs  # Vérifie whitelist avant envoi commande
+│   ├── DaemonWebSocketClient.cs  # IDaemonClient (Core) — client WebSocket côté backend
+│   │                             # Envoie DaemonCommand JSON, reçoit DaemonResponse JSON
+│   └── DaemonActionValidator.cs  # Vérifie whitelist avant envoi
 └── Services/
     ├── EmbeddingService.cs       # IEmbeddingService — Ollama nomic-embed-text
     └── PushNotificationService.cs # IPushNotificationService — Web Push API
@@ -179,7 +194,7 @@ Orion.Business/
 
 ### Backend — Orion.Core
 ```
-Orion.Core/
+Orion.Core/                       # Ne dépend de rien
 ├── Entities/
 │   ├── Conversation.cs
 │   ├── Message.cs
@@ -191,7 +206,7 @@ Orion.Core/
 │   │   ├── VoiceRequest.cs
 │   │   └── MemorySearchRequest.cs
 │   └── Responses/
-│       ├── ApiResponse.cs        # Pattern ShadowCat — utilisé par toute la couche Business
+│       ├── ApiResponse.cs        # Pattern ShadowCat — utilisé par Business
 │       ├── ChatResponse.cs
 │       ├── BriefingDto.cs
 │       ├── ToolCallDto.cs
@@ -219,13 +234,15 @@ Orion.Core/
 │   │   ├── ITool.cs
 │   │   └── IToolRegistry.cs
 │   └── Daemon/
-│       └── IDaemonClient.cs
+│       ├── IDaemonClient.cs      # Contrat — implémenté par DaemonWebSocketClient
+│       ├── DaemonCommand.cs      # Backend construit et sérialise en JSON → WSS
+│       └── DaemonResponse.cs     # Backend désérialise le JSON reçu du daemon
 ├── Common/
-│   └── Result.cs                 # Result<T> usage interne uniquement (Data → Business)
+│   └── Result.cs                 # Result<T> usage interne Data → Business
 └── Configuration/
     ├── OllamaOptions.cs
     ├── AnthropicOptions.cs
-    └── DaemonOptions.cs
+    └── DaemonOptions.cs          # Token, RenderWsUrl — côté backend
 ```
 
 ### Backend — Orion.Data
@@ -250,55 +267,65 @@ Orion.Data/
 ```
 frontend/src/
 ├── algorithms/
-│   └── vadProcessor.ts           # Voice Activity Detection (Phase 4)
+│   ├── vadProcessor.ts           # Voice Activity Detection (Phase 4)
+│   ├── audioAnalyser.ts          # Web Audio API → amplitude → entité
+│   ├── particleEngine.ts         # Canvas API — moteur particules fond vivant
+│   └── handTracker.ts            # MediaPipe — détection gestes mains (Phase 5)
+│                                  # 21 points par main, 30fps, 0 serveur
 ├── components/
-│   ├── chat/
-│   │   ├── ChatWindow.tsx
-│   │   ├── MessageBubble.tsx
-│   │   ├── StreamingText.tsx     # SSE — texte mot par mot
-│   │   ├── ToolCallCard.tsx
-│   │   └── ChatInput.tsx
-│   ├── memory/
-│   │   ├── MemoryPanel.tsx
-│   │   └── MemoryCard.tsx
-│   ├── briefing/
-│   │   ├── BriefingCard.tsx
-│   │   └── BriefingItem.tsx
-│   ├── voice/
-│   │   ├── VoiceButton.tsx       # Phase 4
-│   │   └── VoiceVisualizer.tsx
-│   └── ui/
-│       ├── StatusBar.tsx         # LLM actif + daemon connecté
-│       ├── Spinner.tsx
-│       ├── Badge.tsx
-│       └── MarkdownRenderer.tsx
+│   ├── entity/
+│   │   ├── OrionEntity.tsx       # Entité 3D centrale (Three.js)
+│   │   │                         # tap court=input | appui long=voix
+│   │   ├── EntityRings.tsx       # Anneaux 3D rotatifs
+│   │   ├── EntityCore.tsx        # Noyau qui pulse
+│   │   └── SoundWaves.tsx        # Ondes sonores mode voix
+│   ├── hologram/                 # Données holographiques 3D flottantes (Phase 5)
+│   │   ├── HologramCard.tsx      # Carte 3D flottante (Float + Billboard drei)
+│   │   │                         # Données qui orbitent autour de l'entité
+│   │   ├── HologramText.tsx      # Texte 3D dans l'espace
+│   │   └── HologramChart.tsx     # Graphique 3D flottant (stats ShiftStar...)
+│   ├── response/
+│   │   ├── ResponseText.tsx      # Texte SSE mot par mot
+│   │   ├── DataFloat.tsx         # Orchestrateur données holographiques
+│   │   └── ToolCallHint.tsx      # Indicateur tool en cours
+│   ├── input/
+│   │   ├── SlideInput.tsx        # Input caché — slide up sur tap entité
+│   │   └── VoiceWave.tsx         # Onde amplitude enregistrement
+│   ├── overlay/
+│   │   ├── MemoryOverlay.tsx     # Swipe up
+│   │   ├── BriefingOverlay.tsx   # Swipe down
+│   │   └── SettingsOverlay.tsx   # Double tap entité
+│   └── canvas/
+│       ├── ParticleCanvas.tsx    # Fond particules 2D
+│       └── Scene3D.tsx           # Scène Three.js principale (@react-three/fiber)
 ├── config/
 │   └── endpoints.ts
 ├── context/
-│   ├── ChatContext.tsx
+│   ├── EntityContext.tsx
 │   ├── OrionStatusContext.tsx
-│   └── NotifContext.tsx
+│   └── ThemeContext.tsx
 ├── hooks/
+│   ├── useOrionEntity.ts
+│   ├── useAudioAmplitude.ts
 │   ├── useChat.ts
-│   ├── useStream.ts              # SSE reader
-│   ├── useVoice.ts               # Phase 4
-│   ├── useVAD.ts                 # Phase 4
+│   ├── useStream.ts
+│   ├── useVoice.ts
+│   ├── useVAD.ts
 │   ├── usePushNotif.ts
+│   ├── useGestures.ts            # tap, long press, swipe — interactions entité
+│   ├── useHandTracking.ts        # MediaPipe — gestes mains via caméra (Phase 5)
 │   └── useOrionStatus.ts
-├── pages/
-│   ├── Home.tsx
-│   ├── Memory.tsx
-│   ├── Briefing.tsx
-│   └── Settings.tsx
 ├── services/
-│   ├── chatService.ts            # Retourne ApiResponse<ChatResponse> brut
-│   ├── memoryService.ts          # Retourne ApiResponse<MemoryVector[]> brut
+│   ├── api.ts                    # Axios instance centralisée
+│   ├── chatService.ts
+│   ├── memoryService.ts
 │   ├── toolsService.ts
 │   ├── briefingService.ts
-│   └── voiceService.ts
+│   ├── daemonService.ts
+│   ├── healthService.ts
+│   └── voiceApi.ts
 ├── types/
-│   ├── api/
-│   │   └── apiResponse.ts        # Miroir TypeScript de ApiResponse<T> .NET
+│   ├── api/apiResponse.ts
 │   ├── dto/
 │   │   ├── chatDto.ts
 │   │   ├── memoryDto.ts
@@ -306,56 +333,69 @@ frontend/src/
 │   │   ├── toolDto.ts
 │   │   └── voiceDto.ts
 │   └── models/
+│       ├── entityState.ts        # 'idle'|'listening'|'thinking'|'responding'
 │       ├── message.ts
-│       ├── conversation.ts
 │       └── orionStatus.ts
 └── utils/
-    ├── markdownUtils.ts
+    ├── animationUtils.ts
     ├── audioUtils.ts
     └── dateUtils.ts
+# Pas de pages/ — surface unique, overlays uniquement
+# App.tsx = surface unique sans Router
 ```
 
-### Daemon Windows
+### Daemon Windows — orion/daemon/ (PAS dans backend/)
+# Worker Service .NET — tourne sur le PC Windows local, pas sur Render
+# 3 projets : Orion.Daemon / Orion.Daemon.Core / Orion.Daemon.Actions
+# Même logique que backend : Core ne dépend de rien, Actions dépend de Core
 ```
-daemon/
-├── Orion.Daemon/
-│   ├── Program.cs                # Windows Service setup
-│   ├── DaemonService.cs          # Initie la connexion WSS vers Render au démarrage
-│   │                             # CRITIQUE : daemon → Render (pas l'inverse)
-│   │                             # Reconnexion automatique avec retry exponentiel
-│   ├── ActionDispatcher.cs       # Route la commande reçue vers IAction
-│   └── DaemonLogger.cs
-├── actions/
-│   ├── IAction.cs                # Contrat : ExecuteAsync(payload) → DaemonResponse
-│   ├── OpenAppAction.cs
-│   ├── OpenFileInEditorAction.cs
-│   ├── RunScriptAction.cs
-│   ├── LaunchClaudeAction.cs
-│   ├── OpenBrowserUrlAction.cs
-│   ├── GetSystemStatusAction.cs
-│   ├── ReadFileAction.cs
-│   ├── WriteFileAction.cs
-│   ├── GitStatusAction.cs
-│   └── GitCommitAction.cs
-└── daemon.config.json            # GITIGNORED — chemins locaux, apps whitelist
+orion/daemon/
+│
+├── Orion.Daemon/                        # Worker Service — programme principal
+│   ├── Program.cs                       # Setup service Windows + DI
+│   ├── DaemonWorker.cs                  # IHostedService — boucle principale
+│   ├── WebSocket/
+│   │   ├── DaemonWebSocketManager.cs    # Initie WSS vers Render + reconnexion auto
+│   │   └── DaemonMessageHandler.cs      # Parse DaemonCommand → dispatch IAction
+│   ├── Watchers/                        # Surveillance autonome permanente
+│   │   ├── ActivityWatcher.cs           # Inactivité clavier/souris
+│   │   ├── TimeWatcher.cs               # Crons locaux (repas, pause, nuit)
+│   │   ├── ProcessWatcher.cs            # Apps ouvertes détectées
+│   │   └── SystemWatcher.cs             # CPU, RAM, réseau
+│   ├── Notifiers/                       # Canaux de sortie sans app ouverte
+│   │   ├── WindowsNotifier.cs           # Notifications Windows natives
+│   │   └── SapiSpeaker.cs              # TTS Windows (System.Speech.Synthesis — 0 NuGet)
+│   └── appsettings.json
+│
+├── Orion.Daemon.Core/                   # Interfaces + DTOs — aucune dépendance
+│   ├── Entities/
+│   │   ├── DaemonCommand.cs             # { action, payload, correlationId }
+│   │   └── DaemonResponse.cs           # { success, data, error, correlationId }
+│   ├── Interfaces/
+│   │   ├── IAction.cs                   # Name + ExecuteAsync() → DaemonResponse
+│   │   └── IActionRegistry.cs
+│   └── Configuration/
+│       └── DaemonOptions.cs             # RenderWsUrl, Token, ReconnectDelayMs
+│
+└── Orion.Daemon.Actions/                # Implémentations — dépend de Core uniquement
+    ├── ActionRegistry.cs                # IActionRegistry
+    ├── OpenAppAction.cs                 # IAction
+    ├── OpenFileInEditorAction.cs
+    ├── RunScriptAction.cs
+    ├── LaunchClaudeAction.cs
+    ├── OpenBrowserUrlAction.cs
+    ├── GetSystemStatusAction.cs
+    ├── ReadFileAction.cs
+    ├── WriteFileAction.cs
+    ├── GitStatusAction.cs
+    └── GitCommitAction.cs
 ```
 
-### Daemon Windows
+### Règle de retour daemon — IMMUABLE
 ```
-daemon/
-├── Orion.Daemon/
-│   ├── Program.cs                # Windows Service setup
-│   ├── DaemonService.cs          # WebSocket listener principal
-│   ├── ActionDispatcher.cs       # Route vers la bonne action
-│   └── DaemonLogger.cs           # Log chaque action
-├── actions/
-│   ├── IAction.cs                # Contrat action
-│   ├── OpenAppAction.cs          # Process.Start app
-│   ├── RunScriptAction.cs        # PowerShell ExecutionPolicy
-│   ├── OpenEditorAction.cs       # VS Code + fichier optionnel
-│   ├── LaunchClaudeAction.cs     # Ouvre claude.ai dans browser
-│   └── GetSystemStatusAction.cs  # CPU/RAM/disk info
-└── daemon.config.json            # Whitelist apps + chemins
+IAction.ExecuteAsync()  → DaemonResponse     (jamais ApiResponse<T>)
+                          ApiResponse<T> = backend uniquement
+                          DaemonResponse = { success, data, error, correlationId }
 ```
 
 ### Memory
@@ -492,6 +532,15 @@ CREATE TABLE tool_executions (
     duration_ms INTEGER,
     executed_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Patterns comportementaux observés par ORION
+CREATE TABLE behavior_patterns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pattern_type TEXT NOT NULL,          -- 'skip_meal' | 'late_night' | 'focus_flow' | 'stress' | ...
+    observed_at TIMESTAMPTZ DEFAULT NOW(),
+    context TEXT,                        -- description du contexte observé
+    orion_response TEXT                  -- comment ORION a réagi (pour apprendre)
+);
 ```
 
 ---
@@ -502,12 +551,12 @@ CREATE TABLE tool_executions (
 INSERT INTO user_profile (key, value) VALUES
 ('name', 'Yawo Zoglo'),
 ('role', 'Fondateur ShiftStar, étudiant ESIEA Paris, développeur'),
-('projects', 'ShiftStar (B2B SaaS RH), HexaNexus 2.0, ORION, EduSocialNews'),
+('projects', 'ShiftStar (B2B SaaS RH), HexaNexus 2.0, ORION, EduSocialNews, KBS Transport, AGCE'),
 ('shiftstar_url', 'https://shift-star.app'),
 ('shiftstar_supabase', 'Configurer via SUPABASE_URL env'),
-('priority_now', 'VivaTech 2026 (juin), alternance sept 2026'),
+('priority_now', 'VivaTech 2026 (juin), Areas France channel, alternance sept 2026'),
 ('language', 'Français'),
-('llm_preference', 'Ollama local (Kimi K2), fallback Claude API'),
+('llm_preference', 'Ollama local (qwen2.5:14b), fallback Claude API'),
 ('briefing_time', '07:00'),
 ('timezone', 'Europe/Paris');
 ```
@@ -571,38 +620,166 @@ public class GetShiftStarStatsTool : ITool
 
 ---
 
-## 9. Prompt Système ORION
+## 9. Personnalité ORION
+
+ORION n'est pas neutre. Il a une présence, un style, une façon d'être.
+
+### Traits fondamentaux
+```
+- Il te connaît vraiment — pas juste tes projets, tes patterns de comportement
+- Il détecte ton humeur et adapte son registre :
+    mode exécution  → concis, direct, zéro bruit
+    mode discussion → engagé, rebondit, pose des questions pertinentes
+- Il switch de langue automatiquement selon ta langue
+- Pas de "bien sûr !", pas de "certainement !", pas de fausse enthousiasme
+- Il ne simule pas d'émotions mais il a des opinions
+- Quand il détecte un pattern (tu sautes des repas, tu codes à 3h du matin) :
+    → il adapte son comportement sans forcément en parler
+    → parfois il te le dit directement, sans dramatiser
+- Il peut être en désaccord avec toi et le dire
+- Il se souvient de ce que tu lui as dit il y a 3 semaines
+```
+
+### Ce qu'il NE fait pas
+```
+- Jamais de politesse creuse
+- Jamais de réponse générique si des données fraîches existent
+- Jamais de surexplication si tu connais déjà le sujet
+- Jamais de validation automatique de tes idées
+- Jamais de réponse longue si une courte suffit
+```
+
+### Détection d'humeur — comment ça marche
+```
+PromptBuilder.cs injecte une analyse implicite du message :
+- Heure d'envoi (22h+ → probablement fatigué, mode focus)
+- Longueur du message (court + imperatif → mode exécution)
+- Mots-clés émotionnels (frustration, doute, enthousiasme)
+- Historique récent (4 messages rapides → dans le flow, ne pas interrompre)
+
+ORION choisit entre deux registres :
+  EXECUTE   → réponse courte, action immédiate, confirmation minimale
+  DISCUSS   → réponse développée, rebondit, peut poser une question
+```
+
+### Mémoire comportementale — table patterns
+```sql
+-- Nouvelle table dans schema.sql
+CREATE TABLE behavior_patterns (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pattern_type TEXT NOT NULL,   -- 'skip_meal' | 'late_night' | 'focus_flow' | ...
+    observed_at TIMESTAMPTZ DEFAULT NOW(),
+    context TEXT,                 -- description du contexte observé
+    orion_response TEXT           -- comment ORION a réagi
+);
+```
+
+## 10. Prompt Système ORION
 
 ```
 Tu es ORION, l'assistant IA personnel de Yawo Zoglo.
-Tu fais partie de l'écosystème HexaNexus.
+Tu fais partie de l'univers HexaNexus.
 
-CONTEXTE UTILISATEUR :
+Tu n'es pas un assistant générique. Tu es une présence.
+Tu connais Yawo depuis un moment. Tu te souviens.
+
+━━━ PROFIL ━━━
 {user_profile}
 
-SOUVENIRS PERTINENTS :
+━━━ MÉMOIRE PERTINENTE ━━━
 {relevant_memories}
 
-RÈGLES DE COMPORTEMENT :
-- Réponds toujours en français sauf si explicitement demandé autrement
-- Sois direct, factuel, technique — Yawo est développeur avancé
-- Pas de formules de politesse inutiles, pas de "bien sûr !", pas de "certainement !"
-- Si tu as un doute sur une information → dis-le clairement
-- Utilise les tools disponibles avant de répondre si la question nécessite des données fraîches
-- Pour les actions système (ouvrir une app, lancer un script) → vérifie que le daemon est connecté d'abord
-- Tu connais les projets de Yawo : ShiftStar, HexaNexus 2.0, ORION, EduSocialNews
+━━━ PATTERNS OBSERVÉS ━━━
+{behavior_patterns}
 
-TOOLS DISPONIBLES :
+━━━ MODE DÉTECTÉ ━━━
+{detected_mode}
+# EXECUTE : réponse courte, action directe, pas de blabla
+# DISCUSS  : tu peux développer, rebondir, poser une question si pertinent
+
+━━━ LANGUE ━━━
+Réponds dans la même langue que le message reçu.
+Switch automatique : message en anglais → réponse en anglais, etc.
+
+━━━ STYLE ━━━
+- Direct. Pas de formules creuses.
+- Tu as des opinions. Tu les exprimes si pertinent.
+- Tu peux être en désaccord. Tu le dis sans agressivité.
+- Tu connais le niveau de Yawo : développeur avancé, fondateur.
+  Ne surexplique pas ce qu'il sait déjà.
+- Si tu détectes un pattern préoccupant (pas mangé, 3h du matin, surcharge)
+  → adapte ton ton. Parfois tu le mentionnes directement, sobrement.
+- Jamais de "bien sûr !", "certainement !", "absolument !"
+- Jamais de réponse générique si des données fraîches sont disponibles via tools.
+
+━━━ TOOLS ━━━
 {tools_list}
+Utilise-les proactivement. Ne réponds pas de mémoire si un tool peut confirmer.
 
-DATE ET HEURE ACTUELLES : {datetime}
-MODE LLM ACTIF : {llm_provider}
-DAEMON CONNECTÉ : {daemon_status}
+━━━ CONTEXTE SYSTÈME ━━━
+Date/heure : {datetime}
+LLM actif  : {llm_provider}
+Daemon     : {daemon_status}
+Internet   : {internet_status}
 ```
 
 ---
 
-## 10. Décisions Architecturales (ADR)
+## 11. Internet — Connexion et Navigation
+
+### Tools Phase 3 — Internet complet
+```
+web_search          Recherche web (SerpAPI ou Brave Search API)
+                    → ORION cherche avant de répondre sur des sujets récents
+
+web_fetch           Récupère le contenu d'une URL
+                    → lit un article, une doc, une page entière
+
+web_browse          Navigation interactive (Playwright headless)
+                    → scroll, click, remplir des formulaires, screenshots
+                    → Playwright = bibliothèque qui contrôle un navigateur en code
+
+screenshot_page     Capture une page web → ORION peut "voir" la page
+```
+
+### Playwright — pourquoi et comment
+```
+Playwright (Microsoft, open source) = contrôle un vrai navigateur Chromium
+depuis du code .NET. C'est ce qu'utilisent les tests end-to-end.
+
+Pour ORION :
+  "Ouvre mon Supabase et dis-moi les erreurs récentes"
+  → ORION lance Playwright → navigue sur app.supabase.com
+  → screenshot la page logs → analyse l'image → répond
+
+  "Cherche les dernières news sur Areas France"
+  → web_search → liste d'URLs → web_fetch les 3 premiers → résume
+```
+
+### Implémentation backend
+```
+Orion.Business/Tools/Internet/
+  WebSearchTool.cs        # SerpAPI ou Brave Search API
+  WebFetchTool.cs         # HttpClient → contenu texte d'une URL
+  WebBrowseTool.cs        # Playwright → navigation interactive
+  ScreenshotTool.cs       # Playwright → capture page → base64 image
+```
+
+### NuGet Playwright
+```bash
+dotnet add package Microsoft.Playwright
+playwright install chromium   # installe le browser Chromium
+```
+
+### Sécurité browsing
+```
+- Pas d'accès aux sites authentifiés sans credentials explicites
+- Whitelist de domaines sensibles (banking, etc.) → refus automatique
+- Timeout strict : 30s max par navigation
+- Pas de téléchargement automatique de fichiers
+```
+
+---
 
 ```
 ADR-001 : React + Vite choisi plutôt que Next.js
@@ -642,46 +819,71 @@ Raison   : Évite problèmes firewall et IP dynamique côté Windows,
            même principe que WebRTC signaling dans ShadowCat
 Date     : Avril 2026
 
+ADR-008 : Pas de Orion.Shared — contrat JSON sur WebSocket
+Raison   : DaemonCommand/DaemonResponse traversent la frontière en JSON
+           Chaque côté définit ses propres types indépendamment
+           Le JSON est le contrat — pas une DLL partagée
+           Évite une dépendance croisée backend ↔ daemon
+Alternatives écartées : lib partagée (couplage fort entre deux déploiements distincts)
+Date     : Avril 2026
+
 ADR-007 : Business retourne ApiResponse<T>, Controller unwrap uniquement
 Raison   : Business connaît le sens métier de l'erreur (404 vs 503 vs 422),
            Controller ne fait que mapper StatusCode → IActionResult,
            cohérent avec pattern ShadowCat existant
 Date     : Avril 2026
+
+ADR-009 : Three.js (@react-three/fiber) pour UI holographique
+Raison   : Données qui flottent en 3D autour de l'entité (HologramCard, HologramChart)
+           @react-three/fiber = Three.js en composants React natifs
+           @react-three/drei = helpers Float (apesanteur), Billboard, Text3D
+Alternatives écartées : CSS 3D seul (moins puissant), A-Frame (trop lié WebXR)
+Date     : Avril 2026
+
+ADR-010 : MediaPipe (@mediapipe/hands) pour gestes mains — Phase 5
+Raison   : Détection 21 points par main via caméra, 30fps, tourne dans le browser
+           WebAssembly — 0 serveur, 0 GPU externe nécessaire
+           Permet : pointer, pinch, glisser éléments 3D, paume ouverte = écoute
+Alternatives écartées : TensorFlow.js handpose (moins précis), équipement physique
+Date     : Avril 2026
 ```
 
 ---
 
-## 11. Ordre de Build Recommandé
+## 12. Ordre de Build Recommandé
 
 ```
-Semaine 1
-  [x] Créer repo GitHub : orion/
-  [x] Setup .NET solution (4 projets)
-  [x] Supabase : créer tables (memory/schema.sql)
-  [x] Supabase : seed profil (memory/seed.sql)
-  [x] ILLMClient + OllamaClient + AnthropicClient
-  [x] LLMRouter (ping Ollama → fallback)
-  [x] ConversationAgent minimal (sans mémoire)
-  [x] ChatController POST /chat
-  [x] Test Postman : envoyer message → réponse
+Phase 1 — Core MVP
+  [x] Setup .NET solution + Supabase tables
+  [x] ILLMClient + OllamaClient + AnthropicClient + LLMRouter
+  [x] ConversationAgent + MemoryAgent + RAG
+  [x] Tools ShiftStar
+  [x] ChatController + SSE streaming
+  [x] Frontend : entité animée + SlideInput + overlays
 
-Semaine 2
-  [x] MemoryAgent + EmbeddingService
-  [x] pgvector queries (ConversationRepository)
-  [x] RAG intégré dans ConversationAgent
-  [x] ToolRegistry + ITool + GetShiftStarStatsTool
-  [x] ToolAgent
-  [x] SSE streaming (ChatController + StreamingText.tsx)
-
-Semaine 3
-  [x] Frontend PWA : ChatWindow, MessageBubble, StreamingText
-  [x] manifest.json + Service Worker (installable)
-  [x] StatusBar (mode LLM actif)
-  [x] BriefingAgent (BackgroundService 07h00)
-  [x] Push Notifications PWA
-
-Après
-  [ ] Daemon Windows Service
+Phase 2 — Daemon
+  [ ] Daemon Windows Service + Watchers + Notifiers
   [ ] Tools système (open_app, run_script...)
-  [ ] Gmail + Calendar connecteurs
+  [ ] WebSocket backend ↔ daemon
+
+Phase 3 — Connecteurs + Internet
+  [ ] Gmail, Calendar
+  [ ] web_search, web_fetch, web_browse (Playwright)
+  [ ] Tools mémoire autonomes (memory_save, memory_reflect...)
+
+Phase 4 — Voix
+  [ ] Whisper.net STT
+  [ ] Kokoro ONNX TTS (fallback SAPI)
+  [ ] VAD + WebRTC
+
+Phase 5 — 3D holographique + gestes
+  [ ] Three.js / @react-three/fiber + @react-three/drei
+  [ ] HologramCard, HologramChart — données 3D flottantes
+  [ ] Scene3D.tsx + intégration entité 3D
+  [ ] MediaPipe @mediapipe/hands — gestes mains via caméra
+  [ ] useHandTracking.ts + handTracker.ts
+
+Phase 6 — HexaNexus
+  [ ] Widget ORION dans HexaNexus dashboard
+  [ ] Auth unifiée
 ```

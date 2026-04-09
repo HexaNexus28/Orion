@@ -1,0 +1,66 @@
+# ORION - Docker Compose pour développement local
+# Services: Backend API + Ollama (LLM local)
+
+version: '3.8'
+
+services:
+  # API Backend ORION
+  orion-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: orion-api
+    ports:
+      - "5000:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_SERVICE_KEY=${SUPABASE_SERVICE_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_MODEL=qwen2.5:14b
+      - DAEMON_WS_TOKEN=${DAEMON_WS_TOKEN:-dev-token}
+      - JWT_SECRET=${JWT_SECRET:-dev-secret}
+    depends_on:
+      - ollama
+    networks:
+      - orion-network
+    volumes:
+      - ./backend/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Ollama - LLM local
+  ollama:
+    image: ollama/ollama:latest
+    container_name: orion-ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - orion-network
+    # Pull automatique du modèle au démarrage
+    entrypoint: >
+      sh -c "
+        ollama serve &
+        sleep 10
+        ollama pull qwen2.5:14b || true
+        ollama pull nomic-embed-text || true
+        wait
+      "
+
+networks:
+  orion-network:
+    driver: bridge
+
+volumes:
+  ollama_data:
+    driver: local

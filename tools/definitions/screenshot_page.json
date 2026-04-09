@@ -1,0 +1,38 @@
+{
+  "name": "screenshot_page",
+  "description": "Capture une page web et retourne l'image en base64",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "URL à capturer"
+      },
+      "full_page": {
+        "type": "boolean",
+        "description": "Capturer la page entière ou juste le viewport",
+        "default": false
+      },
+      "width": {
+        "type": "integer",
+        "description": "Largeur du viewport",
+        "default": 1280
+      },
+      "height": {
+        "type": "integer",
+        "description": "Hauteur du viewport",
+        "default": 800
+      }
+    },
+    "required": ["url"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "image_base64": { "type": "string", "description": "Image PNG en base64" },
+      "width": { "type": "integer" },
+      "height": { "type": "integer" },
+      "format": { "type": "string", "enum": ["png", "jpeg"] }
+    }
+  }
+}

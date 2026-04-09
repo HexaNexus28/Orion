@@ -1,0 +1,41 @@
+# ORION Backend - Git Ignore
+
+# Build outputs
+bin/
+obj/
+out/
+*.exe
+*.dll
+*.pdb
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.csproj.user
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+appsettings.json
+appsettings.Development.json
+appsettings.Production.json
+
+# Logs
+*.log
+logs/
+
+# Test results
+TestResults/
+coverage/
+*.coverage
+
+# NuGet
+*.nupkg
+packages/
+
+# Misc
+.DS_Store
+Thumbs.db

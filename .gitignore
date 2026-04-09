@@ -1,0 +1,129 @@
+# =============================================================================
+# ORION - Global .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# ENVIRONMENT FILES - NEVER COMMIT SECRETS
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Secrets and keys
+*.pem
+*.key
+*.crt
+*.pfx
+secrets.json
+tokens.json
+appsettings.Development.json
+appsettings.Local.json
+
+# -----------------------------------------------------------------------------
+# DEPENDENCIES
+# -----------------------------------------------------------------------------
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# .NET
+bin/
+obj/
+*.nuget.props
+*.nuget.targets
+packages/
+
+# Python (if any scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+ENV/
+
+# -----------------------------------------------------------------------------
+# BUILD OUTPUTS
+# -----------------------------------------------------------------------------
+# Frontend
+dist/
+dist-ssr/
+build/
+out/
+.cache/
+.parcel-cache/
+
+# Backend
+publish/
+wwwroot/dist/
+
+# -----------------------------------------------------------------------------
+# IDE AND EDITOR FILES
+# -----------------------------------------------------------------------------
+.vs/
+.vscode/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.userprefs
+*.swp
+*.swo
+*~
+*.tmp
+*.temp
+*.bak
+
+# -----------------------------------------------------------------------------
+# LOGS AND DATABASES
+# -----------------------------------------------------------------------------
+logs/
+*.log
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# -----------------------------------------------------------------------------
+# TYPESCRIPT
+# -----------------------------------------------------------------------------
+*.tsbuildinfo
+
+# -----------------------------------------------------------------------------
+# SYSTEM FILES
+# -----------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# -----------------------------------------------------------------------------
+# ORION SPECIFIC
+# -----------------------------------------------------------------------------
+daemon/daemon.config.json
+models/
+*.bin
+*.onnx
+recordings/
+temp_audio/
+
+# Memory
+cache/
+/memory/seed.sql
+
+# Local notes
+notes/
+TODO.md
+todo.md

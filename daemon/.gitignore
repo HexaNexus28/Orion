@@ -1,0 +1,28 @@
+# Orion Daemon - Git Ignore
+
+# Build outputs
+bin/
+obj/
+out/
+*.exe
+*.dll
+*.pdb
+
+# Environment & Secrets - NEVER COMMIT
+daemon.config.json
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.csproj.user
+
+# Logs
+*.log
+logs/
+
+# Misc
+.DS_Store
+Thumbs.db
+
+.onnx

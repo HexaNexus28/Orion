@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet --version)",
+      "Bash(xargs grep:*)",
+      "Bash(dotnet build:*)",
+      "Bash(npx tsc:*)",
+      "Bash(ollama list:*)",
+      "Bash(xargs ls:*)",
+      "Bash(ls -la \"C:/Personnal/Projects/Orion/frontend/node_modules/onnxruntime-web/dist/\"*.wasm)"
+    ]
+  }
+}

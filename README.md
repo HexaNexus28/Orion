@@ -46,7 +46,7 @@ ORION a deux niveaux de mémoire distincts qui fonctionnent ensemble.
 3. VECTOR SEARCH : pgvector cherche les 5 souvenirs les plus proches
    → "ShiftStar a 40 utilisateurs actifs (février 2026)"
    → "Le pricing ShiftStar est €49/mois Pro"
-   → "Yawo travaille chez McDonald's Areas France"
+   
 
 4. CONTEXT BUILD :
    [PROFIL YAWO]
@@ -75,7 +75,7 @@ Il est injecté en tête de chaque prompt système.
 name              Yawo Zoglo
 role              Fondateur, étudiant, développeur
 projects          Liste des projets actifs
-priority_now      Focus actuel (VivaTech, Areas France, alternance)
+priority_now      Focus actuel (VivaTech, alternance)
 briefing_time     07:00
 timezone          Europe/Paris
 language          Français

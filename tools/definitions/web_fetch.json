@@ -1,0 +1,28 @@
+{
+  "name": "web_fetch",
+  "description": "Récupère le contenu texte d'une URL (article, doc, page)",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "URL à récupérer"
+      },
+      "max_length": {
+        "type": "integer",
+        "description": "Longueur max du contenu",
+        "default": 5000
+      }
+    },
+    "required": ["url"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "url": { "type": "string" },
+      "title": { "type": "string" },
+      "content": { "type": "string" },
+      "truncated": { "type": "boolean" }
+    }
+  }
+}

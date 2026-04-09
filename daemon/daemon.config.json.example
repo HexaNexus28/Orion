@@ -1,0 +1,4 @@
+# Orion Daemon Configuration
+
+This file contains local paths and should NOT be committed to Git.
+Copy this file to `%LOCALAPPDATA%\Orion\daemon.config.json` after editing.

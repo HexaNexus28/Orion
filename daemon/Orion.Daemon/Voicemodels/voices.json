@@ -1,0 +1,32 @@
+{
+  "voices": [
+    {
+      "id": 0,
+      "name": "af_alloy",
+      "language": "en-us",
+      "gender": "female",
+      "description": "Default American female voice"
+    },
+    {
+      "id": 1,
+      "name": "af_heart",
+      "language": "en-us",
+      "gender": "female",
+      "description": "American female voice - warm"
+    },
+    {
+      "id": 2,
+      "name": "bm_fable",
+      "language": "en-us",
+      "gender": "male",
+      "description": "American male voice - story teller"
+    },
+    {
+      "id": 3,
+      "name": "af_sky",
+      "language": "en-us",
+      "gender": "female",
+      "description": "American female voice - soft"
+    }
+  ]
+}

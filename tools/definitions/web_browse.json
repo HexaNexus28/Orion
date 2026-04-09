@@ -1,0 +1,42 @@
+{
+  "name": "web_browse",
+  "description": "Navigation interactive avec Playwright (scroll, click, formulaires)",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "url": {
+        "type": "string",
+        "description": "URL de départ"
+      },
+      "actions": {
+        "type": "array",
+        "description": "Actions à exécuter : { type: 'goto'|'click'|'fill'|'scroll'|'wait', selector?: string, value?: string }",
+        "items": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": ["goto", "click", "fill", "scroll", "wait"]
+            },
+            "selector": { "type": "string" },
+            "value": { "type": "string" },
+            "direction": { "type": "string", "enum": ["up", "down"] },
+            "amount": { "type": "integer" },
+            "duration": { "type": "integer", "description": "milliseconds" }
+          }
+        }
+      }
+    },
+    "required": ["url"]
+  },
+  "returns": {
+    "type": "object",
+    "properties": {
+      "url": { "type": "string" },
+      "title": { "type": "string" },
+      "final_url": { "type": "string" },
+      "html": { "type": "string" },
+      "text_content": { "type": "string" }
+    }
+  }
+}
