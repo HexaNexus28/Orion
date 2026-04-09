@@ -8,6 +8,14 @@ public class ActionRegistry : IActionRegistry
 {
     private readonly Dictionary<string, IAction> _actions = new(StringComparer.OrdinalIgnoreCase);
 
+    public ActionRegistry(IEnumerable<IAction> actions)
+    {
+        foreach (var action in actions)
+        {
+            _actions[action.Name] = action;
+        }
+    }
+
     public void Register(IAction action)
     {
         _actions[action.Name] = action;

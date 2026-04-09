@@ -4,7 +4,7 @@ public class InternetOptions
 {
     public const string SectionName = "Internet";
     
-    public string SearchApiProvider { get; set; } = "brave"; // brave, serpapi
+    public string SearchApiProvider { get; set; } = "duckduckgo"; // duckduckgo (free), brave, serpapi
     public string BraveApiKey { get; set; } = string.Empty;
     public string SerpApiKey { get; set; } = string.Empty;
     public int MaxResults { get; set; } = 5;

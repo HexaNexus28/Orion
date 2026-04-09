@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orion.Core.Configuration;
@@ -16,7 +17,7 @@ public class WebSearchTool : ITool
     private readonly InternetOptions _options;
 
     public string Name => "web_search";
-    public string Description => "Recherche web via Brave Search API ou SerpAPI";
+    public string Description => "Recherche web via DuckDuckGo (gratuit), Brave ou SerpAPI";
 
     public JsonObject InputSchema => new()
     {
@@ -52,7 +53,8 @@ public class WebSearchTool : ITool
             {
                 "brave" => await SearchBraveAsync(query, count, ct),
                 "serpapi" => await SearchSerpApiAsync(query, count, ct),
-                _ => await SearchBraveAsync(query, count, ct)
+                "duckduckgo" => await SearchDuckDuckGoAsync(query, count, ct),
+                _ => await SearchDuckDuckGoAsync(query, count, ct)
             };
 
             var toolResult = new ToolResult
@@ -138,5 +140,74 @@ public class WebSearchTool : ITool
         }
 
         return results;
+    }
+
+    private async Task<List<WebSearchResultDto>> SearchDuckDuckGoAsync(string query, int count, CancellationToken ct)
+    {
+        _logger.LogInformation("[WebSearch] Using DuckDuckGo (free, no API key)");
+
+        _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible; ORION/1.0)");
+
+        var url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}";
+        var response = await _httpClient.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+
+        var html = await response.Content.ReadAsStringAsync(ct);
+        var results = ParseDuckDuckGoHtml(html, count);
+
+        _logger.LogInformation("[WebSearch] DuckDuckGo returned {Count} results", results.Count);
+        return results;
+    }
+
+    private static List<WebSearchResultDto> ParseDuckDuckGoHtml(string html, int count)
+    {
+        var results = new List<WebSearchResultDto>();
+
+        // Parse DDG HTML result blocks: <a class="result__a" href="...">title</a>
+        var linkPattern = new Regex(
+            @"<a[^>]+class=""result__a""[^>]+href=""([^""]*)""[^>]*>(.*?)</a>",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+        var snippetPattern = new Regex(
+            @"<a[^>]+class=""result__snippet""[^>]*>(.*?)</a>",
+            RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+        var linkMatches = linkPattern.Matches(html);
+        var snippetMatches = snippetPattern.Matches(html);
+
+        for (var i = 0; i < Math.Min(linkMatches.Count, count); i++)
+        {
+            var rawUrl = linkMatches[i].Groups[1].Value;
+            var title = StripHtml(linkMatches[i].Groups[2].Value);
+            var snippet = i < snippetMatches.Count ? StripHtml(snippetMatches[i].Groups[1].Value) : "";
+
+            // DDG wraps URLs in a redirect — extract the real URL
+            var actualUrl = rawUrl;
+            if (rawUrl.Contains("uddg="))
+            {
+                var match = Regex.Match(rawUrl, @"uddg=([^&]+)");
+                if (match.Success)
+                    actualUrl = Uri.UnescapeDataString(match.Groups[1].Value);
+            }
+
+            if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(actualUrl))
+            {
+                results.Add(new WebSearchResultDto
+                {
+                    Title = title,
+                    Url = actualUrl,
+                    Snippet = snippet,
+                    Source = "DuckDuckGo"
+                });
+            }
+        }
+
+        return results;
+    }
+
+    private static string StripHtml(string html)
+    {
+        return Regex.Replace(html, @"<[^>]+>", "").Trim();
     }
 }

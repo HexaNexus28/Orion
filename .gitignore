@@ -123,6 +123,9 @@ temp_audio/
 cache/
 /memory/seed.sql
 
+# Claude Code
+.claude/
+
 # Local notes
 notes/
 TODO.md
