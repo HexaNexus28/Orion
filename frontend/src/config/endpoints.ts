@@ -38,12 +38,16 @@ export const ENDPOINTS = {
     history: '/api/briefing/history',
   },
 
-  // VoiceController - api/voice
+  // VoiceController - api/voice (HTTP legacy)
   voice: {
     transcribe: '/api/voice/transcribe',
     synthesize: '/api/voice/synthesize',
     status: '/api/voice/status',
+    converse: '/api/voice/converse',     // POST — legacy half-duplex pipeline
   },
+
+  // WebSocket Voice — full-duplex pipeline (replaces /converse)
+  voiceWS: '/ws/voice',
 
   // ProactiveNotificationController - notifications temps réel daemon → frontend
   notifications: {

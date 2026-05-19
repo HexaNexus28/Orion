@@ -53,7 +53,7 @@ public class OpenBrowserUrlTool : ITool
         var request = new DaemonActionRequest
         {
             RequestId = Guid.NewGuid().ToString("N"),
-            Action = "open_browser_url",
+            Action = "open_url",
             Payload = new { url }
         };
 

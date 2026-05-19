@@ -1,15 +1,15 @@
-using System.Text.Json;
 using Microsoft.Extensions.Logging;
+using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
-using Orion.Core.DTOs.Requests;
+using Orion.Core.Interfaces.Services;
 
 namespace Orion.Business.Services;
 
 /// <summary>
 /// Service pour notifier le daemon de lire la réponse ORION à voix haute
 /// </summary>
-public class VoiceNotificationService
+public class VoiceNotificationService : IVoiceNotificationService
 {
     private readonly IDaemonClient _daemonClient;
     private readonly ILogger<VoiceNotificationService> _logger;
@@ -72,7 +72,7 @@ public class VoiceNotificationService
 
         try
         {
-            _logger.LogInformation("[VoiceNotification] Requesting synthesis: {Preview}",
+            _logger.LogDebug("[VoiceNotification] Requesting synthesis: {Preview}",
                 text.Length > 50 ? text[..50] + "..." : text);
 
             var request = new DaemonActionRequest
@@ -82,30 +82,20 @@ public class VoiceNotificationService
                 Payload = new { text }
             };
 
-            var result = await _daemonClient.SendActionAsync(request, ct);
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(10));
 
-            if (!result.Success || result.Data == null)
+            // Binary WS protocol — daemon sends raw WAV bytes, no base64 overhead
+            var result = await _daemonClient.SendBinaryActionAsync(request, cts.Token);
+
+            if (!result.Success || result.Data == null || result.Data.Length == 0)
             {
-                _logger.LogWarning("[VoiceNotification] Synthesis request failed: {Msg}", result.Message);
+                _logger.LogWarning("[VoiceNotification] Synthesis failed: {Msg}", result.Message);
                 return null;
             }
 
-            // result.Data est DaemonActionResponse dont .Data est object? (JsonElement après désérialisation)
-            if (result.Data.Data is JsonElement jsonData &&
-                jsonData.TryGetProperty("audioBase64", out var audioEl) &&
-                audioEl.ValueKind == JsonValueKind.String)
-            {
-                var base64 = audioEl.GetString();
-                if (!string.IsNullOrEmpty(base64))
-                {
-                    var bytes = Convert.FromBase64String(base64);
-                    _logger.LogInformation("[VoiceNotification] Received {Kb}KB WAV", bytes.Length / 1024);
-                    return bytes;
-                }
-            }
-
-            _logger.LogWarning("[VoiceNotification] No audio data in response (Kokoro unavailable?)");
-            return null;
+            _logger.LogDebug("[VoiceNotification] Received {Kb}KB WAV binary", result.Data.Length / 1024);
+            return result.Data;
         }
         catch (Exception ex)
         {

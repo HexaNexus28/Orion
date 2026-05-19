@@ -64,9 +64,7 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClos
                 <div className="p-4 rounded-lg bg-orion-dark/50">
                   <span className="text-orion-text block mb-2">Modèle Ollama</span>
                   <select className="w-full bg-orion-dark border border-orion-accent/20 rounded px-3 py-2 text-orion-text">
-                    <option>qwen2.5:14b</option>
-                    <option>llama3.2:latest</option>
-                    <option>mistral:latest</option>
+                    <option>gemma4:31b-cloud</option>
                   </select>
                 </div>
               </div>

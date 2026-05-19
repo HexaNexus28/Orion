@@ -42,13 +42,14 @@ public class SynthesizeAction : IAction
             if (wavBytes == null || wavBytes.Length == 0)
             {
                 _logger.LogWarning("[SynthesizeAction] Synthesis returned empty audio");
-                return DaemonResponse.SuccessResponse(correlationId, new { audioBase64 = (string?)null, available = false });
+                return DaemonResponse.SuccessResponse(correlationId, new { available = false });
             }
 
-            var audioBase64 = Convert.ToBase64String(wavBytes);
-            _logger.LogInformation("[SynthesizeAction] Returning {Kb}KB WAV to backend", wavBytes.Length / 1024);
+            _logger.LogInformation("[SynthesizeAction] Returning {Kb}KB WAV binary to backend", wavBytes.Length / 1024);
 
-            return DaemonResponse.SuccessResponse(correlationId, new { audioBase64, available = true });
+            // Return BinaryPayload — DaemonWebSocketManager sends as binary WS frame
+            // Protocol: [36-byte correlationId] + [raw WAV bytes] — no base64 overhead
+            return DaemonResponse.SuccessResponse(correlationId, new BinaryPayload(wavBytes));
         }
         catch (Exception ex)
         {

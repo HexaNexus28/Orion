@@ -1,309 +1,135 @@
-# ORION — Personal AI Agent
+# ORION — CLAUDE.md
 
-## Project Overview
-ORION est l'assistant IA personnel de Yawo Zoglo, standalone pour l'instant, prévu comme module HexaNexus.
-Stack : **React 19 + Vite** (PWA) frontend, **.NET 9** backend, **Ollama** (LLM local) avec fallback **Claude API**, **Supabase + pgvector** (mémoire persistante), **ORION Daemon** (agent système Windows).
-Langue de l'interface et des réponses : **Français**.
+ORION = assistant IA personnel de Yawo Zoglo, futur moteur IA HexaNexus.
+Stack : React 19 + Vite (PWA) | .NET 9 backend | Ollama + Claude fallback | Supabase + pgvector | Daemon Windows.
+Langue : Français. Voir AGENTS.md pour règles, workflows, phases.
 
-## Vision
-```
-ORION n'est pas un chatbot.
-ORION est un agent qui :
-  - Comprend le contexte long-terme (mémoire persistante)
-  - Agit sur des systèmes réels (tools)
-  - Contrôle la machine locale (daemon)
-  - Est proactif (morning briefing, alertes)
-  - S'intègre plus tard dans HexaNexus
-```
+## Architecture
 
-## Architecture Globale
 ```
 orion/
-├── CLAUDE.md                  # CE FICHIER — point d'entrée agent
-├── AGENTS.md                  # Instructions agents, tools, workflows
-├── backend/                   # .NET 9 Web API — cerveau ORION — déployé sur Render
-│   ├── Orion.Api/             # Controllers, Program.cs, Middleware
-│   │   ├── Controllers/       # Chat, Memory, Daemon, Voice, Briefing, Tools, Health
-│   │   ├── Middleware/        # Auth, ErrorHandling, Logging, DaemonWebSocket
-│   │   └── Program.cs         # DI, CORS, middleware pipeline
-│   ├── Orion.Business/        # Agents, LLM, Tools, Services
-│   │   ├── Agents/            # ConversationAgent, MemoryAgent, ToolAgent, BriefingAgent
-│   │   ├── LLM/               # LLMRouter, OllamaClient, AnthropicClient
-│   │   ├── Services/          # ChatService, MemoryService, WhisperService, BriefingService
-│   │   └── Tools/             # Tool implementations + ToolRegistry
-│   ├── Orion.Core/            # Entities, DTOs, Interfaces, Configuration
-│   │   ├── DTOs/Requests/     # ChatRequest, VoiceRequest, MemorySearchRequest
-│   │   ├── DTOs/Responses/    # ChatResponse, VoiceResponse, ApiResponse
-│   │   ├── Entities/          # Conversation, Message, MemoryVector
-│   │   └── Interfaces/        # Repositories, Services, Agents, LLM
-│   └── Orion.Data/            # Repositories, UnitOfWork, Context, Mappings
-├── frontend/                  # React 19 + Vite — PWA installable — déployé sur Vercel
-│   └── src/
-│       ├── components/        # UI : Entité, Input, Overlays, Canvas, 3D
-│       ├── services/          # API clients — TOUS en axios + endpoints.ts
-│       ├── hooks/             # useChat, useVoice, useStream, useGestures, useHandTracking
-│       ├── types/             # Interfaces TS strictes — aucun 'any'
-│       └── config/            # endpoints.ts (centralisé), env vars
-├── daemon/                    # .NET 9 Worker Service — installé sur PC Windows
-│   ├── Orion.Daemon/          # Programme principal — service Windows
-│   ├── Orion.Daemon.Core/     # Entities, Interfaces, Configuration (propre au daemon)
-│   └── Orion.Daemon.Actions/  # Implémentations IAction (OpenApp, RunScript...)
-├── memory/                    # Schémas et scripts mémoire
-│   ├── schema.sql             # Tables Supabase (conversations, vectors)
-│   ├── seed.sql               # Données initiales (profil Yawo)
-│   └── README.md              # Comment fonctionne la mémoire ORION
-├── tools/                     # Définitions des tools (contrats)
-│   ├── definitions/           # JSON Schema de chaque tool
-│   └── README.md              # Comment créer un nouveau tool
-├── docker-compose.yml         # Backend + Ollama pour dev local
-└── .env.example               # Variables d'environnement requises
+├── backend/           .NET 9 Clean Architecture (Api → Business → Core → Data)
+├── frontend/          React 19 + Vite + TailwindCSS + Three.js (PWA)
+├── daemon/            .NET 9 Worker Service Windows (3 projets)
+├── memory/            schema.sql, seed.sql
+├── tools/             JSON Schema definitions
+├── CLAUDE.md          CE FICHIER
+└── AGENTS.md          Règles, agents, phases, ADRs
 ```
 
-### Pourquoi pas de projet Orion.Shared
-```
-Le contrat entre backend et daemon = JSON sur WebSocket
-Pas de référence de projet entre les deux solutions
+Contrat backend ↔ daemon = JSON + Binary sur WebSocket (pas de DLL partagée).
 
-Backend construit DaemonCommand en JSON → envoie via WSS
-Daemon désérialise avec ses propres types → exécute → répond en JSON
-Backend désérialise DaemonResponse avec ses propres types
-
-Chaque côté définit ses types indépendamment.
-Le JSON est le contrat — pas une DLL partagée.
-```
-
-## Stack Technique Complète
-
-| Couche | Technologie | Rôle |
-|---|---|---|
-| Frontend | React 19 + Vite + TypeScript + TailwindCSS | PWA installable mobile + desktop |
-| Backend | .NET 9, ASP.NET Core | API REST + WebSocket streaming |
-| LLM principal | Ollama (Qwen2.5:14b) — local Windows | Inférence offline, gratuit |
-| LLM fallback | Claude API (claude-sonnet-4-20250514) | Quand Ollama injoignable (mobile) |
-| Mémoire court terme | RAM (ConversationManager) | Contexte session en cours |
-| Mémoire long terme | Supabase PostgreSQL + pgvector | RAG, profil, historique |
-| Daemon système | .NET 9 Worker Service Windows | Actions OS : apps, scripts, fichiers |
-| Déploiement backend | Render (free tier, Docker) | API accessible partout |
-| Déploiement frontend | Vercel | PWA HTTPS obligatoire |
-| CI/CD | GitHub Actions | Build + deploy automatique |
-
-## LLM — Stratégie Dual-Mode
+## LLM — Multi-Provider (tout via Ollama)
 
 ```
-Request reçue
-     │
-     ▼
-Ollama joignable ? (http://localhost:11434)
-     │
-     ├── OUI → Ollama local (Qwen2.5:14b)
-     │           Gratuit, rapide, offline, privacy totale
-     │
-     └── NON → Fallback Claude API (Anthropic)
-                Payant, cloud, actif quand en déplacement
+Primary:   qwen3.5:cloud       → Ollama Cloud (gratuit, 0 clé API, multimodal, tools, thinking)
+Fallback:  ministral-3:cloud   → Ollama Cloud (Mistral, FR natif, rapide)
+Offline:   qwen2.5:3b          → Local (si internet down)
+Embeddings : nomic-embed-text (768 dims) — obligatoire
+Routing : LLMRouter.cs — TOUJOURS passer par ILLMRouter, jamais appel direct
 ```
 
-### Modèles Ollama recommandés
-```bash
-ollama pull qwen2.5:14b      # Principal — raisonnement + tool use — ~9GB (GPU 8GB+)
-ollama pull qwen2.5:7b       # Si GPU < 8GB VRAM — ~5GB
-ollama pull nomic-embed-text # Embeddings RAG — obligatoire, léger (~270MB)
-```
+## Mémoire
 
-### Interface abstraite (immuable)
-```csharp
-// Orion.Core/Interfaces/ILLMClient.cs — IMMUABLE
-public interface ILLMClient
-{
-    Task<ApiResponse<LLMResponse>> CompleteAsync(LLMRequest request, CancellationToken ct = default);
-    Task StreamAsync(LLMRequest request, Func<string, Task> onChunk, CancellationToken ct = default);
-    bool IsAvailable();
-    LLMProvider Provider { get; }
-}
-// Implémentations : OllamaClient.cs, AnthropicClient.cs
-// Sélection : LLMRouter.cs (vérifie Ollama, fallback Claude)
-```
+Court terme = RAM (~20 msgs). Long terme = Supabase pgvector (RAG).
+Tables : conversations, messages, memory_vectors, user_profile, behavior_patterns, tool_executions.
+Flux : embed message → pgvector top-5 → injecte dans prompt → LLM → sauvegarde + embedding.
 
-## Mémoire — Architecture
+## Voice Pipeline — Full-Duplex (OPÉRATIONNEL)
 
 ```
-Mémoire court terme (RAM)        Mémoire long terme (Supabase)
-─────────────────────────        ──────────────────────────────
-Session en cours                 Persiste entre sessions
-Messages de la conv              Profil utilisateur
-Contexte outils actifs           Historique résumé
-Vidée à chaque session           Embeddings pgvector (RAG)
-~20 derniers messages max        Croissance illimitée
+Frontend (VAD)                          Backend (/ws/voice)
+─────────────                           ───────────────────
+VAD détecte parole    ──PCM Int16──►    Whisper.net STT
+                      ◄──JSON────       onTranscript
+                      ◄──JSON────       onLLMChunk (token/token)
+                      ◄──JSON────       onLLMDone
+AudioContext 24kHz    ◄──Binary───      Kokoro TTS (daemon) WAV
+
+Anti-écho :
+- voiceWSResponseRef bloque Web Speech TTS pendant pipeline WS
+- window.speechSynthesis.speaking check avant trigger VAD
+- Ne jamais activer Web Speech TTS et Kokoro TTS simultanément
+
+TTS dual-mode :
+- Mode TEXT (clavier) → Web Speech API (voiceWSResponseRef = false)
+- Mode VOICE (WS)     → Kokoro daemon (voiceWSResponseRef = true)
 ```
 
-### Schéma Supabase (voir memory/schema.sql)
-```sql
-conversations      -- sessions de chat
-messages           -- messages individuels
-memory_vectors     -- embeddings pgvector (RAG)
-user_profile       -- profil Yawo (projets, préférences, contexte)
-behavior_patterns  -- patterns comportementaux observés par ORION
-tool_executions    -- log des appels tools
+## Règle 4 couches — IMMUABLE
+
+```
+Orion.Core      → ne dépend de rien
+Orion.Business  → dépend de Core
+Orion.Data      → dépend de Core
+Orion.Api       → dépend de Business
+
+Retour par couche :
+  Data        → T? / IEnumerable<T>
+  Business    → ApiResponse<T>          (sens métier de l'erreur)
+  Controller  → IActionResult           (unwrap StatusCode uniquement)
 ```
 
-### Flux RAG à chaque requête
+### Diagramme Voix — Pipeline Full-Duplex (OPÉRATIONNEL)
 ```
-Message reçu
-     │
-     ▼
-Génère embedding du message (Ollama nomic-embed-text)
-     │
-     ▼
-Recherche top-5 souvenirs pertinents (pgvector cosine similarity)
-     │
-     ▼
-Injecte dans le contexte LLM : [profil] + [souvenirs] + [conv courante]
-     │
-     ▼
-LLM répond avec contexte enrichi
-     │
-     ▼
-Sauvegarde message + embedding en DB
+ÉTAT ACTUEL : WebSocket bidirectionnel /ws/voice — full-duplex, barge-in, 0 coût
+════════════════════════════════════════════════════════════════════════════════════
+
+┌─────────── FRONTEND ───────────┐       ┌─────────── BACKEND ──────────────┐
+│                                │       │                                  │
+│  VAD (@ricky0123/vad-web)     │  WS   │  VoiceWebSocketHandler.cs        │
+│  détecte fin de parole auto   │◄─────►│  /ws/voice bidirectionnel        │
+│       │                        │       │       │                          │
+│  PCM Int16 chunks             │──────►│  Whisper.net STT (local)         │
+│  (streaming temps réel)       │       │       │                          │
+│       │                        │       │  ConversationAgent               │
+│  onTranscript ← JSON          │◄──────│  PrepareStreamAsync()            │
+│  onLLMChunk   ← JSON          │◄──────│  StreamLLMAsync() (token/token)  │
+│  onLLMDone    ← JSON          │◄──────│       │                          │
+│       │                        │       │  TTS Kokoro (daemon)             │
+│  AudioContext (24kHz)         │◄──────│  WAV binaire via WS              │
+│  joue les WAV chunks          │       │                                  │
+│       │                        │       └──────────────────────────────────┘
+│  Barge-in: interrupt WS msg   │───────► CancellationToken annule le tour
+│                                │
+│  Anti-écho:                    │
+│  - voiceWSResponseRef bloque   │
+│    Web Speech TTS pendant WS   │
+│  - window.speechSynthesis      │
+│    .speaking check dans VAD    │
+└────────────────────────────────┘
+
+PROTOCOLE WebSocket :
+  Client → Server : JSON { type: "start_audio" | "end_audio" | "interrupt" }
+  Client → Server : Binary (PCM Int16 chunks)
+  Server → Client : JSON { type: "transcript" | "llm_chunk" | "llm_done" | "session" | "error" }
+  Server → Client : Binary (WAV audio chunks)
+
+STACK :
+  STT : Whisper.net (local, gratuit, ~1.5GB modèle)
+  TTS : KokoroSharp.CPU (local, gratuit, ~320MB modèle, voix ff_siwis)
+  VAD : @ricky0123/vad-web (browser, WebAssembly)
+  LLM : Ollama local → fallback Claude API
 ```
 
-## Diagrammes d'Architecture
-
-### Diagramme de Classes — Backend Core
+### Pipeline TTS dual-mode
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        ORION.CORE                               │
-│                                                                 │
-│  <<interface>>          <<interface>>        <<interface>>       │
-│  ILLMClient             ITool                IDaemonClient       │
-│  ─────────────          ─────────────        ──────────────      │
-│  +CompleteAsync()       +Name: string        +SendActionAsync()  │
-│  +StreamAsync()         +Description         +IsConnected: bool  │
-│  +IsAvailable()         +InputSchema                            │
-│  +Provider              +ExecuteAsync()                         │
-│       ▲                      ▲                     ▲            │
-└───────┼──────────────────────┼─────────────────────┼───────────┘
-        │                      │                     │
-┌───────┼──────────────────────┼─────────────────────┼───────────┐
-│       │         ORION.BUSINESS                     │           │
-│                                                                 │
-│  OllamaClient      GetShiftStarStatsTool    DaemonWsClient      │
-│  AnthropicClient   GetShiftStarVotesTool                        │
-│       │            MorningBriefingTool                          │
-│       │            OpenAppTool (→ Daemon)                       │
-│       │                                                         │
-│  LLMRouter ──────────────────────────────────────────────────   │
-│  (sélectionne Ollama ou Anthropic selon disponibilité)          │
-│                                                                 │
-│  ToolRegistry ──── [ ITool, ITool, ITool, ... ]                 │
-│  (registre de tous les tools disponibles)                       │
-│                                                                 │
-│  ConversationAgent ◄──── MemoryAgent                            │
-│         │                  (RAG = récupération des souvenirs)   │
-│         └──────────────► ToolAgent                              │
-│                           BriefingAgent (cron 07h00)            │
-└─────────────────────────────────────────────────────────────────┘
-```
+Mode TEXT (input clavier) → Web Speech API (navigateur)
+  responseText → speakSentence() phrase par phrase
+  voiceWSResponseRef = false
 
-### Diagramme de Données — Supabase
-```
-┌──────────────────┐         ┌──────────────────────┐
-│  conversations   │         │  user_profile         │
-│  ──────────────  │         │  ────────────────     │
-│  id (UUID) PK    │         │  key (TEXT) PK         │
-│  type            │         │  value (TEXT)          │
-│  started_at      │         │  updated_at            │
-│  ended_at        │         └──────────────────────┘
-│  llm_provider    │
-│  summary         │         ┌──────────────────────┐
-└────────┬─────────┘         │  memory_vectors       │
-         │ 1                 │  ────────────────     │
-         │                   │  id (UUID) PK         │
-         │ N                 │  content (TEXT)        │
-┌────────▼─────────┐         │  embedding vector(768)│
-│  messages        │         │  source                │
-│  ──────────────  │         │  importance (FLOAT)    │
-│  id (UUID) PK    │         │  created_at            │
-│  conversation_id │◄──────  │  last_accessed         │
-│  role            │  1      └──────────────────────┘
-│  content         │
-│  tool_name       │         ┌──────────────────────┐
-│  tool_input JSON │         │  behavior_patterns    │
-│  tool_result JSON│         │  ────────────────     │
-│  created_at      │         │  id (UUID) PK         │
-└────────┬─────────┘         │  pattern_type          │
-         │ 1                 │  observed_at           │
-         │                   │  context               │
-         │ N                 │  orion_response        │
-┌────────▼─────────┐         └──────────────────────┘
-│  tool_executions │
-│  (log appels)    │
-└──────────────────┘
-```
+Mode VOICE (WebSocket) → Kokoro (daemon) — optimisé latence
+  LLM stream → sentence split (smart: .!? min 20 chars, weak break à 80, force à 150)
+  → VoiceNotificationService.SynthesizeAsync() (pipeliné: TTS en // du LLM stream)
+  → DaemonClient binary WS → KokoroSpeaker → WAV raw bytes (pas de base64)
+  → Backend forward WAV binaire au frontend via WS
+  → Frontend: pre-decode pipeline (décode chunk N+1 pendant lecture chunk N)
+  voiceWSResponseRef = true → Web Speech TTS désactivé
 
-### Diagramme de Flux — Requête complète
-```
-[User PWA] ──POST /chat──► [ChatController]
-                                  │
-                                  ▼
-                        [ConversationAgent]
-                           │         │
-                    [MemoryAgent]    │
-                    1. Load profil   │
-                    2. Embed msg     │
-                    3. pgvector top5 │
-                    4. Return ctx    │
-                           │         │
-                           ▼         │
-                    [LLMRouter]      │
-                    Ollama dispo ?   │
-                    OUI → Ollama     │
-                    NON → Claude API │
-                           │         │
-                    LLM répond       │
-                    tool_call ?      │
-                    OUI ─────────────┘
-                           │
-                    [ToolAgent]
-                    Système tool ?
-                    OUI → [DaemonWsClient] → [Daemon Windows]
-                    NON → Exécute directement (Supabase, API)
-                           │
-                    [ConversationAgent]
-                    Sauvegarde message + embedding
-                           │
-                    SSE stream ──► [Frontend ResponseText.tsx]
-```
-
-### Diagramme Voix — Niveaux d'implémentation
-```
-NIVEAU 1 (Phase 1) — Web Speech API, 0 coût
-─────────────────────────────────────────────
-Micro → [SpeechRecognition API] → texte → backend
-texte ← [SpeechSynthesis API] ← réponse ORION
-Qualité : correcte | Latence : 1-2s | Coût : 0€
-
-NIVEAU 2 (Phase 4) — Whisper.net + Kokoro ONNX, 0 coût, 100% local
-──────────────────────────────────────────────────────────────────────
-Whisper.net  = wrapper .NET du modèle Whisper open source d'OpenAI
-               STT (Speech-to-Text = audio → texte) — local, gratuit
-Kokoro ONNX  = modèle TTS via Microsoft.ML.OnnxRuntime
-               TTS (Text-to-Speech = texte → voix naturelle) — local, gratuit
-               Modèle : hexgrad/Kokoro-82M → kokoro-v0_19.onnx (~300MB) Hugging Face
-               Fallback : System.Speech (SAPI natif Windows) si ONNX non configuré
-
-Micro → [MediaRecorder / WebRTC] → fichier audio → backend
-      → [Whisper.net local] → transcription précise
-      → [ConversationAgent + LLM] → réponse texte
-      → [Kokoro ONNX local] → audio naturel
-      → [AudioContext frontend] → tu entends ORION
-Qualité : excellente | Latence : 1-3s | Coût : 0€
-Stack WebRTC déjà maîtrisée via ShadowCat
-
-NIVEAU 3 (Phase 5) — Temps réel < 1s
-──────────────────────────────────────
-Micro → [VAD @ricky0123/vad-web] → détecte fin de parole automatiquement
-      → WebRTC stream → Whisper.net streaming → LLM streaming
-      → Kokoro ONNX streaming → AudioContext
-Qualité : iron man | Latence : <1s | Coût : 0€
+Prompt voix dédié (ChatRequest.VoiceMode = true):
+  - Réponses courtes, orales, sans markdown
+  - Connecteurs conversationnels, chiffres parlés
+  - Max 3-4 phrases, propose d'approfondir si long
 ```
 
 ## Tools — Comment ça fonctionne
@@ -393,8 +219,9 @@ Orion.Daemon.Core    → ne dépend de rien (propre au daemon)
 Orion.Daemon.Actions → dépend de Orion.Daemon.Core
 Orion.Daemon         → dépend de Orion.Daemon.Core + Orion.Daemon.Actions
 
-Contrat backend ↔ daemon = JSON sur WebSocket (pas de DLL partagée)
+Contrat backend ↔ daemon = JSON + Binary sur WebSocket (pas de DLL partagée)
 Chaque côté définit ses propres types DaemonCommand / DaemonResponse
+Protocole binaire TTS: [36-byte requestId UTF-8] + [raw WAV bytes] (pas de base64)
 ```
 
 ### Orion.Core
@@ -414,6 +241,7 @@ Orion.Core/
 │   └── Responses/
 │       ├── ApiResponse.cs         # Pattern ShadowCat — retourné par Business
 │       ├── ChatResponse.cs
+│       ├── StreamContext.cs       # DTO pour PrepareStreamAsync → StreamLLMAsync
 │       ├── BriefingDto.cs
 │       ├── ToolCallDto.cs
 │       ├── ToolResult.cs
@@ -553,8 +381,8 @@ Orion.Business/
 │   └── DaemonActionValidator.cs
 └── Services/
     ├── EmbeddingService.cs
-    ├── SttService.cs              # Whisper.net — audio → texte
-    ├── TtsService.cs              # Kokoro ONNX — texte → audio (fallback SAPI)
+    ├── WhisperService.cs              # Whisper.net — audio → texte (STT local)
+    ├── VoiceNotificationService.cs    # TTS via daemon (Kokoro) — WAV synthesis
     └── PushNotificationService.cs
 ```
 
@@ -584,8 +412,12 @@ Orion.Api/
 │   ├── DaemonController.cs
 │   ├── ToolsController.cs
 │   ├── BriefingController.cs
-│   ├── VoiceController.cs
+│   ├── VoiceController.cs                  # Legacy HTTP voice endpoints
+│   ├── ProactiveNotificationController.cs  # SSE stream + daemon notify
 │   └── HealthController.cs
+├── WebSockets/
+│   ├── VoiceWebSocketHandler.cs            # /ws/voice full-duplex handler
+│   └── VoiceWebSocketMiddleware.cs         # Route /ws/voice requests
 ├── Middleware/
 │   ├── AuthMiddleware.cs
 │   ├── ErrorHandlingMiddleware.cs
@@ -618,9 +450,14 @@ orion/daemon/
 │   │   ├── ProcessWatcher.cs            # Apps ouvertes détectées
 │   │   └── SystemWatcher.cs             # CPU, RAM, réseau
 │   ├── Notifiers/                       # Canaux de sortie sans app ouverte
-│   │   ├── WindowsNotifier.cs           # Notifications Windows natives
-│   │   └── SapiSpeaker.cs              # TTS Windows natif (System.Speech.Synthesis)
-│   │                                    # 0 NuGet, 0 coût, parle sans app ouverte
+│   │   ├── WindowsToastNotifier.cs     # Toast Windows 10/11
+│   │   ├── WindowsNotifier.cs           # Fallback MessageBox
+│   │   ├── PowerShellTtsNotifier.cs     # TTS SAPI5 via PowerShell
+│   │   └── KokoroSpeaker.cs            # TTS neuronal KokoroSharp.CPU
+│   │                                    # NuGet KokoroSharp.CPU v0.6.6
+│   │                                    # Voix: ff_siwis (French female)
+│   │                                    # Modèle auto-download ~320MB
+│   ├── ProactiveOrchestrator.cs          # Détecte patterns → génère messages → notifie
 │   └── appsettings.json
 │
 ├── Orion.Daemon.Core/
@@ -958,10 +795,12 @@ frontend/
     │   │   ├── EntityCore.tsx     # Noyau qui pulse
     │   │   └── SoundWaves.tsx     # Ondes sonores mode voix
     │   ├── hologram/
-    │   │   ├── HologramCard.tsx   # Carte 3D flottante (Float + Billboard)
-    │   │   │                      # Données qui flottent autour de l'entité
-    │   │   ├── HologramText.tsx   # Texte 3D dans l'espace
-    │   │   └── HologramChart.tsx  # Graphique 3D flottant (stats ShiftStar...)
+    │   │   ├── HologramCard.tsx           # Carte 3D flottante (Float + Billboard)
+    │   │   ├── HologramText.tsx           # Texte 3D SDF dans l'espace
+    │   │   ├── HologramChart.tsx          # Graphique 3D flottant
+    │   │   └── HologramResponsePanel.tsx  # Panneau réponse holographique
+    │   │                                  # Pure Three.js : GLSL shader, SDF Text,
+    │   │                                  # particules, wireframe, anneaux orbitaux
     │   ├── response/
     │   │   ├── ResponseText.tsx   # Texte SSE mot par mot
     │   │   ├── DataFloat.tsx      # Orchestrateur données holographiques
@@ -981,11 +820,13 @@ frontend/
     │   ├── useOrionEntity.ts      # État entité (idle/listening/thinking/responding)
     │   ├── useAudioAmplitude.ts   # Web Audio API → amplitude temps réel
     │   ├── useChat.ts             # Envoie message, reçoit SSE
-    │   ├── useStream.ts           # Lecture SSE token par token
-    │   ├── useVoice.ts            # getUserMedia, MediaRecorder, WebRTC
-    │   ├── useVAD.ts              # Détection fin de parole
+    │   ├── useStream.ts           # Lecture SSE token par token + appendChunk/setStreaming
+    │   ├── useVoice.ts            # LEGACY — getUserMedia, MediaRecorder (remplacé par useVoiceWS)
+    │   ├── useVoiceWS.ts          # Full-duplex WebSocket voice — pipeline actif
+    │   ├── useVAD.ts              # VAD @ricky0123/vad-web + PCM streaming
     │   ├── useGestures.ts         # tap, long press, swipe — interactions entité
     │   ├── useHandTracking.ts     # MediaPipe — gestes mains caméra (Phase 5)
+    │   ├── useOrionNotifications.ts # SSE proactive notifications + Web Speech TTS
     │   ├── usePushNotif.ts        # Service Worker + push
     │   └── useOrionStatus.ts      # Ping backend : LLM, daemon
     │
@@ -1001,8 +842,8 @@ frontend/
     │   ├── briefingService.ts
     │   ├── daemonService.ts
     │   ├── healthService.ts
-    │   ├── voiceApi.ts
-    │   └── toolsService.ts
+    │   ├── voiceApi.ts            # LEGACY HTTP voice
+    │   └── voiceWebSocket.ts      # WebSocket client /ws/voice
     │
     ├── config/
     │   └── endpoints.ts           # ENDPOINTS centralisés
@@ -1058,16 +899,19 @@ npm install vite-plugin-pwa
 ```tsx
 <ThemeProvider>
   <EntityProvider>
-    <ParticleCanvas />          {/* fond particules 2D — z-index 0 */}
-    <Scene3D>                   {/* scène Three.js — z-index 1 */}
-      <OrionEntity />           {/* entité centrale 3D */}
-      <HologramCard />          {/* données 3D flottantes */}
-    </Scene3D>
-    <ResponseText />            {/* texte émergent — z-index 2 */}
-    <SlideInput />              {/* input caché — slide up sur tap */}
-    <MemoryOverlay />           {/* swipe up — z-index 10 */}
-    <BriefingOverlay />         {/* swipe down — z-index 10 */}
-    <SettingsOverlay />         {/* double tap — z-index 10 */}
+    {/* Scène 3D PERMANENTE (z-0) — contient TOUT le rendu 3D */}
+    <Scene3D                        {/* fond: Stars + Grid + PostProcessing */}
+      responseText={responseText}   {/* → HologramResponsePanel (Float + Billboard) */}
+      isStreaming={isStreaming}
+      onTap={handleOpenInput}       {/* → OrionCore3D (sphère énergie + anneaux + particules) */}
+      onLongPress={processVoiceTurn}
+      onDoubleTap={handleOpenSettings}
+    />
+    <DataCards />                   {/* cartes données HTML — z-10 */}
+    <SlideInput />                  {/* input caché — slide up */}
+    <MemoryOverlay />               {/* swipe up — z-30 */}
+    <BriefingOverlay />             {/* swipe down — z-30 */}
+    <SettingsOverlay />             {/* double tap — z-30 */}
   </EntityProvider>
 </ThemeProvider>
 ```
@@ -1146,22 +990,57 @@ VITE_WS_URL=ws://localhost:5000
 - [ ] web_search, web_fetch, web_browse (Playwright)
 - [ ] Tools mémoire autonomes (memory_save, memory_reflect...)
 
-### Phase 4 — Voix
-- [ ] Whisper.net STT (audio → texte, local)
-- [ ] Kokoro ONNX TTS (texte → voix naturelle, local)
-  Fallback : System.Speech (SAPI natif Windows, 0 NuGet)
-- [ ] VAD @ricky0123/vad-web
-- [ ] WebRTC (réutilisé de ShadowCat)
+### Phase 4 — Voix ✅ OPÉRATIONNEL
+- [x] Whisper.net STT (audio → texte, local)
+- [x] KokoroSharp.CPU TTS (texte → voix naturelle, local, ff_siwis)
+- [x] VAD @ricky0123/vad-web (700ms silence timeout)
+- [x] WebSocket /ws/voice full-duplex bidirectionnel
+- [x] Barge-in (interrupt + CancellationToken)
+- [x] Anti-écho (voiceWSResponseRef + speechSynthesis.speaking)
+- [x] ConversationAgent refactor: PrepareStreamAsync + StreamLLMAsync
+- [x] Proactive notifications: Daemon → SSE → Frontend (camelCase fix)
 
-### Phase 5 — 3D holographique + gestes
-- [ ] Three.js / @react-three/fiber — scène 3D
-- [ ] HologramCard — données flottantes en 3D
+### Phase 4.5 — Latence voix  ✅ IMPLÉMENTÉ
+- [x] P6: Prompt voix dédié — réponses courtes, orales, sans markdown (ChatRequest.VoiceMode)
+- [x] P4: Smart sentence splitting — .!? min 20 chars, weak break à 80, force à 150
+- [x] P7: TTS pipeliné en parallèle du LLM stream (fire-and-await pattern)
+- [x] P5: Frontend pre-decode pipeline (décode chunk N+1 pendant lecture chunk N)
+- [x] P3: KokoroSpeaker.SynthesizeStreamAsync — segments via Channel async
+- [x] P1: Binary WS daemon↔backend — raw WAV bytes, zéro base64 overhead
+- [x] Multi-frame WS accumulation (daemon + backend) — gros messages WAV OK
+- [x] IVoiceNotificationService interface + DI propre (R-07 fix)
+
+### Phase 5 — 3D holographique + gestes 🚧 EN COURS
+- [x] Three.js / @react-three/fiber — scène 3D (Scene3D.tsx)
+- [x] HologramCard, HologramChart — données flottantes en 3D
+- [x] HologramResponsePanel — panneau réponse holographique pur Three.js
+       (GLSL shader, SDF Text, particules, wireframe, anneaux)
+- [ ] Entité ORION migrée en Three.js (actuellement Canvas 2D)
 - [ ] MediaPipe — gestes mains via caméra
   (paume ouverte, pointer, pinch, glisser)
 
-### Phase 6 — HexaNexus
+### Phase 6 — Intelligence Proactive (Jarvis Awareness)
+- [ ] Screen awareness: screenshot périodique → Qwen3.5 vision → ORION sait ce que tu fais
+- [ ] Context switching: détecte changement de projet (VS Code, browser) → adapte automatiquement
+- [ ] Smart interruptions: ORION ne parle que quand c'est pertinent (scoring urgence)
+- [ ] Briefing adaptatif: pas juste morning, mais contextuel (avant meeting, deadline proche)
+- [ ] Learning loop: behavior_patterns → prédire besoins → agir avant la demande
+- [ ] Ambient mode: ORION tourne en tâche de fond, intervient proactivement
+- [ ] Multi-session memory: résume les sessions précédentes pour continuité
+
+### Phase 7 — Capacités Jarvis Avancées
+- [ ] Code review automatique: watch git changes → analyse impact → commentaires proactifs
+- [ ] Deploy monitoring: vérifie Render/Vercel status → alerte si problème
+- [ ] Autonomous task execution: "déploie ShiftStar" → git push + monitor + confirm
+- [ ] Multi-tool chaining: ORION combine tools sans intervention (web_search → analyze → summarize)
+- [ ] Voice commands système: "ouvre le projet ShiftStar dans VS Code" → daemon action
+- [ ] Email/calendar integration: "résume mes emails" → "planifie le meeting" → action directe
+- [ ] Playwright automation: ORION navigue le web pour toi (recherche, test, scrape)
+
+### Phase 8 — HexaNexus
 - [ ] Widget ORION dans HexaNexus dashboard
 - [ ] Auth unifiée
+- [ ] ORION comme moteur IA multi-tenant pour tous les clients HexaNexus
 
 ## Règles de développement
 - **Repository Pattern** obligatoire couche Data

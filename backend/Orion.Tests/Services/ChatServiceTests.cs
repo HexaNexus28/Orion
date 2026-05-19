@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Moq;
+using Orion.Business.LLM;
 using Orion.Business.Services;
 using Orion.Core.DTOs;
 using Orion.Core.DTOs.Requests;
@@ -8,6 +9,7 @@ using Orion.Core.Entities;
 using Orion.Core.Enums;
 using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Daemon;
+using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Core.Interfaces.Services;
 
@@ -18,7 +20,10 @@ public class ChatServiceTests
     private readonly Mock<IConversationAgent> _mockAgent;
     private readonly Mock<IUnitOfWork> _mockUnitOfWork;
     private readonly Mock<IAuditService> _mockAuditService;
-    private readonly VoiceNotificationService _voiceNotification;
+    private readonly Mock<ILLMRouter> _mockLlmRouter;
+    private readonly Mock<IDaemonClient> _mockDaemonClient;
+    private readonly PromptBuilder _promptBuilder;
+    private readonly Mock<IVoiceNotificationService> _mockVoiceNotification;
     private readonly Mock<ILogger<ChatService>> _mockLogger;
     private readonly ChatService _service;
 
@@ -27,11 +32,12 @@ public class ChatServiceTests
         _mockAgent = new Mock<IConversationAgent>();
         _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockAuditService = new Mock<IAuditService>();
-        _voiceNotification = new VoiceNotificationService(
-            new Mock<IDaemonClient>().Object,
-            new Mock<ILogger<VoiceNotificationService>>().Object);
+        _mockLlmRouter = new Mock<ILLMRouter>();
+        _mockDaemonClient = new Mock<IDaemonClient>();
+        _promptBuilder = new PromptBuilder();
+        _mockVoiceNotification = new Mock<IVoiceNotificationService>();
         _mockLogger = new Mock<ILogger<ChatService>>();
-        _service = new ChatService(_mockAgent.Object, _mockUnitOfWork.Object, _mockAuditService.Object, _voiceNotification, _mockLogger.Object);
+        _service = new ChatService(_mockAgent.Object, _mockUnitOfWork.Object, _mockAuditService.Object, _mockLlmRouter.Object, _promptBuilder, _mockDaemonClient.Object, _mockVoiceNotification.Object, _mockLogger.Object);
     }
 
     [Fact]

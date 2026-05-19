@@ -40,8 +40,14 @@ self.addEventListener('activate', (event) => {
 
 // Fetch: Cache-first strategy
 self.addEventListener('fetch', (event) => {
-  // Skip non-GET requests and API calls
-  if (event.request.method !== 'GET' || event.request.url.includes('/api/')) {
+  const url = event.request.url;
+
+  // Skip non-GET, API calls, and non-http(s) schemes (chrome-extension://, etc.)
+  if (
+    event.request.method !== 'GET' ||
+    url.includes('/api/') ||
+    !url.startsWith('http')
+  ) {
     return;
   }
 

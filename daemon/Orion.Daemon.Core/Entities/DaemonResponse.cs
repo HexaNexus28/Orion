@@ -1,8 +1,14 @@
+using System.Text.Json.Serialization;
+
 namespace Orion.Daemon.Core.Entities;
 
 public class DaemonResponse
 {
     public string CorrelationId { get; set; } = "";
+
+    [JsonIgnore]
+    public string RequestId => CorrelationId;
+
     public bool Success { get; set; }
     public object? Data { get; set; }
     public string? Error { get; set; }

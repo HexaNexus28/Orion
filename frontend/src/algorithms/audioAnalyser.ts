@@ -1,6 +1,10 @@
 // Web Audio API Audio Analyser
 // Provides amplitude visualization
 
+interface WebKitWindow extends Window {
+  webkitAudioContext?: typeof AudioContext;
+}
+
 export interface AudioAnalyserConfig {
   fftSize?: number;
   smoothingTimeConstant?: number;
@@ -18,7 +22,7 @@ export class AudioAnalyser {
 
   async initialize(stream: MediaStream): Promise<void> {
     const AudioContextClass = window.AudioContext ||
-      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      (window as unknown as WebKitWindow).webkitAudioContext;
 
     this.context = new AudioContextClass({ sampleRate: 16000 });
 
@@ -37,7 +41,9 @@ export class AudioAnalyser {
   getAmplitude(): number {
     if (!this.analyser || !this.dataArray) return 0;
 
-    this.analyser.getFloatTimeDomainData(this.dataArray as unknown as any);
+    // Float32Array<ArrayBufferLike> is not assignable to Float32Array<ArrayBuffer>
+    // but getFloatTimeDomainData only reads the buffer — safe to cast
+    this.analyser.getFloatTimeDomainData(this.dataArray as Float32Array<ArrayBuffer>);
 
     // Calculate RMS
     let sum = 0;

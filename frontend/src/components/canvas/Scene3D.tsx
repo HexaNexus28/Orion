@@ -1,43 +1,55 @@
+// components/canvas/Scene3D.tsx
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
-import { Suspense, ReactNode } from 'react';
+import { Stars, PerspectiveCamera } from '@react-three/drei';
+import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
+import { OrionCore3D } from './OrionCore3D';
+import { ResponseText3D } from '../hologram/ResponseText3D';
 
-interface Scene3DProps {
-  children?: ReactNode;
+export interface Scene3DProps {
+  responseText?: string;
+  isStreaming?: boolean;
+  onTap?: () => void;
+  onLongPress?: () => void;
+  onDoubleTap?: () => void;
 }
 
-/**
- * Scene3D - Scène Three.js principale pour ORION
- * Contient l'entité 3D et les éléments holographiques
- * @react-three/fiber + @react-three/drei
- */
-export const Scene3D: React.FC<Scene3DProps> = ({ children }) => {
+export const Scene3D: React.FC<Scene3DProps> = ({
+  responseText = '',
+  isStreaming = false,
+  onTap,
+  onLongPress,
+  onDoubleTap,
+}) => {
   return (
-    <div className="absolute inset-0 z-1">
+    <div className="absolute inset-0 z-0">
       <Canvas
-        camera={{ position: [0, 0, 5], fov: 50 }}
-        gl={{ antialias: true, alpha: true }}
-        style={{ background: 'transparent' }}
+        dpr={[1, 1.5]}
+        gl={{ antialias: true, alpha: false, powerPreference: 'high-performance' }}
+        frameloop="always"
       >
-        <Suspense fallback={null}>
-          {/* Lighting */}
-          <ambientLight intensity={0.5} />
-          <pointLight position={[10, 10, 10]} intensity={1} color="#8b5cf6" />
-          <pointLight position={[-10, -10, -10]} intensity={0.5} color="#6366f1" />
+        <PerspectiveCamera makeDefault position={[0, 0, 6]} fov={50} />
+        <color attach="background" args={['#050510']} />
+        <fog attach="fog" args={['#050510', 12, 28]} />
 
-          {/* Content */}
-          {children}
+        <ambientLight intensity={0.15} />
+        <pointLight position={[2, 3, 4]} intensity={0.8} color="#8b5cf6" />
+        <pointLight position={[-3, -1, 2]} intensity={0.4} color="#22d3ee" />
 
-          {/* Optional controls for debug */}
-          <OrbitControls
-            enableZoom={false}
-            enablePan={false}
-            rotateSpeed={0.5}
-          />
-        </Suspense>
+        <Stars radius={60} depth={60} count={2500} factor={3} saturation={0} fade speed={0.8} />
+
+        {/* Orb — shifted up when there's a response */}
+        <group position={[0, responseText ? 1.2 : 0, 0]}>
+          <OrionCore3D onTap={onTap} onLongPress={onLongPress} onDoubleTap={onDoubleTap} />
+        </group>
+
+        {/* 3D response text — single stable instance */}
+        <ResponseText3D text={responseText} isStreaming={isStreaming} />
+
+        <EffectComposer>
+          <Bloom luminanceThreshold={0.25} luminanceSmoothing={0.8} height={200} intensity={0.6} />
+          <Vignette eskil={false} offset={0.15} darkness={1.0} />
+        </EffectComposer>
       </Canvas>
     </div>
   );
 };
-
-export default Scene3D;

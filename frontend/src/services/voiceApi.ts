@@ -1,7 +1,11 @@
 // Voice API Service - Uses apiClient and endpoints.ts (Pattern ORION)
-import { ENDPOINTS } from '../config/endpoints';
+import { API_BASE, ENDPOINTS } from '../config/endpoints';
 import { apiClient } from './api';
 import type { ApiResponse } from '../types';
+
+interface WebKitWindow extends Window {
+  webkitAudioContext?: typeof AudioContext;
+}
 
 export interface VoiceTranscribeRequest {
   audioBase64: string;
@@ -122,7 +126,7 @@ export const encodeWav = (samples: Float32Array, sampleRate: number): Blob => {
 // keepée pour éviter git diff trop large — peut être supprimée proprement
 export const convertBlobToWav = async (blob: Blob): Promise<Blob> => {
   const arrayBuffer = await blob.arrayBuffer();
-  const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const AudioContextClass = window.AudioContext || (window as unknown as WebKitWindow).webkitAudioContext;
   const audioContext = new AudioContextClass();
 
   try {
@@ -185,4 +189,118 @@ export const transcribeBlob = async (
     mimeType: 'audio/wav',
     language,
   });
+};
+
+/**
+ * Pipeline voix complet en streaming bout-en-bout.
+ * WAV blob → POST /api/voice/converse → audio WAV stream chunk par chunk.
+ *
+ * @param audioBlob     Blob WAV produit par useVoice (ScriptProcessorNode)
+ * @param onTranscript  Appelé dès que le transcript est dispo (header X-Transcript)
+ * @param onAudioChunk  Appelé pour chaque chunk WAV reçu — jouer immédiatement
+ * @param sessionId     Session ID optionnel pour continuer une conversation
+ * @param language      Langue de transcription (défaut: 'fr' pour français)
+ */
+export const converseStream = async (
+  audioBlob: Blob,
+  onTranscript: (text: string) => void,
+  onAudioChunk: (chunk: ArrayBuffer) => void,
+  sessionId?: string,
+  language: string = 'fr',
+  onTextFallback?: (text: string) => void
+): Promise<void> => {
+  const formData = new FormData();
+  formData.append('audioFile', audioBlob, 'voice.wav');
+
+  const params = new URLSearchParams();
+  if (sessionId) params.append('sessionId', sessionId);
+  if (language) params.append('language', language);
+
+  const url = `${API_BASE}${ENDPOINTS.voice.converse}${params.toString() ? '?' + params.toString() : ''}`;
+
+  // fetch() is required for streaming binary response (axios does not support ReadableStream).
+  // Propagate auth headers from apiClient to maintain consistent auth behavior.
+  const headers: Record<string, string> = {};
+  const authHeader = apiClient.defaults.headers.common['Authorization'];
+  if (authHeader) headers['Authorization'] = String(authHeader);
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: formData,
+  });
+
+  if (!response.ok) {
+    throw new Error(`Converse failed: ${response.status}`);
+  }
+
+  const transcript = response.headers.get('X-Transcript');
+  if (transcript) {
+    onTranscript(decodeURIComponent(transcript));
+  }
+
+  if (!response.body) return;
+
+  // Détecte le fallback texte (Kokoro indisponible → backend envoie du texte)
+  const contentType = response.headers.get('Content-Type') || '';
+  const isTextFallback = contentType.includes('text/plain');
+
+  const reader = response.body.getReader();
+  try {
+    if (isTextFallback) {
+      // Fallback texte — accumuler et décoder
+      const textChunks: Uint8Array[] = [];
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value && value.byteLength > 0) textChunks.push(value);
+      }
+      if (textChunks.length > 0) {
+        const decoder = new TextDecoder('utf-8');
+        const fullText = textChunks.map(c => decoder.decode(c, { stream: true })).join('') + decoder.decode();
+        console.log('[converseStream] Text fallback:', fullText);
+        onTextFallback?.(fullText);
+      }
+    } else {
+      // Audio WAV — accumuler un buffer et extraire les fichiers WAV complets
+      let pending = new Uint8Array(0);
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value || value.byteLength === 0) continue;
+
+        // Concaténer au buffer pending
+        const merged = new Uint8Array(pending.length + value.length);
+        merged.set(pending);
+        merged.set(value, pending.length);
+        pending = merged;
+
+        // Extraire les WAV complets (chaque WAV: RIFF + taille dans bytes 4-7)
+        while (pending.length >= 8) {
+          const view = new DataView(pending.buffer, pending.byteOffset, pending.byteLength);
+          const riff = pending[0] === 0x52 && pending[1] === 0x49 && pending[2] === 0x46 && pending[3] === 0x46; // 'RIFF'
+          if (!riff) {
+            console.warn('[converseStream] Non-RIFF data, skipping', pending.length, 'bytes');
+            pending = new Uint8Array(0);
+            break;
+          }
+          const wavSize = view.getUint32(4, true) + 8; // RIFF header size = 8
+          if (pending.length < wavSize) break; // Pas encore assez de données
+
+          // Extraire un WAV complet
+          const wavData = pending.slice(0, wavSize);
+          pending = pending.slice(wavSize);
+          onAudioChunk(wavData.buffer);
+        }
+      }
+
+      // Flush remaining data si c'est un WAV complet
+      if (pending.length >= 8) {
+        const riff = pending[0] === 0x52 && pending[1] === 0x49 && pending[2] === 0x46 && pending[3] === 0x46;
+        if (riff) onAudioChunk(pending.buffer);
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
 };

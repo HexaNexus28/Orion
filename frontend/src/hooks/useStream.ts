@@ -51,11 +51,22 @@ export const useStream = () => {
     setState({ text: '', isStreaming: false, error: null });
   }, []);
 
+  // Used by VoiceWS to inject LLM chunks directly into the display state
+  const appendChunk = useCallback((chunk: string) => {
+    setState(prev => ({ ...prev, text: prev.text + chunk, isStreaming: true }));
+  }, []);
+
+  const setStreaming = useCallback((streaming: boolean) => {
+    setState(prev => ({ ...prev, isStreaming: streaming }));
+  }, []);
+
   return {
     text: state.text,
     isStreaming: state.isStreaming,
     error: state.error,
     streamMessage,
-    reset
+    reset,
+    appendChunk,
+    setStreaming,
   };
 };

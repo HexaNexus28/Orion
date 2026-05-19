@@ -14,9 +14,17 @@ export const chatService = {
   },
 
   async *streamMessage(request: ChatRequest): AsyncGenerator<string> {
+    // fetch() is required for SSE streaming (axios does not support ReadableStream).
+    // Propagate auth headers from apiClient to maintain consistent auth behavior.
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    const authHeader = apiClient.defaults.headers.common['Authorization'];
+    if (authHeader) headers['Authorization'] = String(authHeader);
+
     const response = await fetch(`${API_BASE}${ENDPOINTS.chat.stream}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(request),
     });
 

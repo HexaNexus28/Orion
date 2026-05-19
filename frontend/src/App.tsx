@@ -1,8 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ParticleCanvas } from './components/ui/ParticleCanvas';
-import { OrionEntity } from './components/ui/OrionEntity';
 import { SlideInput } from './components/input/SlideInput';
-import { ResponseText } from './components/ui/ResponseText';
+import { Scene3D } from './components/canvas/Scene3D';
+import { HoloCards, parseHoloCards } from './components/ui/HoloCards';
 import { MemoryOverlay } from './components/overlay/MemoryOverlay';
 import { BriefingOverlay } from './components/overlay/BriefingOverlay';
 import { SettingsOverlay } from './components/overlay/SettingsOverlay';
@@ -10,17 +9,20 @@ import { useEntity } from './context/EntityContext';
 import { useOrionStatus } from './context/OrionStatusContext';
 import { useGestureControl } from './hooks/useGestureControl';
 import { useVAD } from './hooks/useVAD';
+import { useVoiceWS } from './hooks/useVoiceWS';
 import { useStream } from './hooks/useStream';
-import { transcribeBlob } from './services/voiceApi';
+import { useOrionNotifications } from './hooks/useOrionNotifications';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
 const SWIPE_THRESHOLD = 80;
 
 const App: React.FC = () => {
-  const { state: entityState, amplitude, setState, setAmplitude, updateAmplitude } = useEntity();
-  const { text: responseText, isStreaming, streamMessage, reset } = useStream();
+  const { state: entityState, setState, setAmplitude, updateAmplitude, amplitudeRef } = useEntity();
+  const { text: responseText, isStreaming, streamMessage, reset, appendChunk, setStreaming } = useStream();
   const { daemonConnected } = useOrionStatus();
+  const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
   const spokenUpToRef = useRef(0);
+  const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
 
   const [isInputVisible, setIsInputVisible] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
@@ -124,11 +126,14 @@ const App: React.FC = () => {
   }, [getBestFrenchVoice]);
 
   // ── TTS : parle phrase par phrase pendant le stream (Web Speech API) ────────
+  // Only active for TEXT input mode. When voice WS pipeline is active (isTurnActive),
+  // TTS audio comes from Kokoro via WebSocket — don't double-speak.
   useEffect(() => {
     if (!responseText) {
-      spokenUpToRef.current = 0;
+      spokenUpToRef.current = 0; // Reset cursor only on new conversation (empty text)
       return;
     }
+    if (isTTSSpeaking || voiceWSResponseRef.current) return; // Don't reset cursor here!
 
     const unspoken = responseText.slice(spokenUpToRef.current);
     const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
@@ -148,7 +153,7 @@ const App: React.FC = () => {
       if (remaining.length > 3) speakSentence(remaining);
       spokenUpToRef.current = responseText.length;
     }
-  }, [responseText, isStreaming, speakSentence]);
+  }, [responseText, isStreaming, isTTSSpeaking, speakSentence]);
 
   // ── Voice error handling ─────────────────────────────────────────────────────
   const handleVoiceError = useCallback((error: string) => {
@@ -163,7 +168,7 @@ const App: React.FC = () => {
     setVoiceError(null);
     setState('listening');
     setAmplitude(0.6);
-    stopTTS(); // Coupe ORION immédiatement si tu commences à parler
+    stopTTS(); // Coupe Web Speech TTS
   }, [unlockSpeech, setState, setAmplitude, stopTTS]);
 
   // Ref pour stocker l'audio reçu du VAD
@@ -174,9 +179,18 @@ const App: React.FC = () => {
     setAmplitude(0); // Reset le pulse quand la parole se termine
   }, [setAmplitude]);
 
-  const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: resetVAD } = useVAD({
+  // sendAudioRef used to forward PCM chunks to WebSocket from VAD (avoids circular deps)
+  const sendAudioRef = useRef<((pcm16: Int16Array) => void) | null>(null);
+
+  const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD } = useVAD({
     onSpeechStart: handleSpeechStart,
     onAudioReady: handleAudioReady,
+    onAudioChunk: (pcm16) => sendAudioRef.current?.(pcm16),
+    onAmplitude: (amp) => {
+      setAmplitude(amp);
+      // Debug: log every 2s to see if audio is being captured
+      if (Math.random() < 0.02) console.log('[VAD] RMS amplitude:', amp.toFixed(4));
+    },
     onError: handleVoiceError,
   });
 
@@ -188,15 +202,15 @@ const App: React.FC = () => {
   const handleCloseInput = useCallback(() => setIsInputVisible(false), []);
   const handleOpenSettings = useCallback(() => setIsSettingsOpen(true), []);
 
-  // ── Passive listening ────────────────────────────────────────────────────────
-  const startPassiveListening = useCallback(async () => {
-    if (isInputVisible || isStreaming || isTTSSpeaking || isProcessingVoiceRef.current || isPassiveListeningRef.current) {
+  // ── Passive listening (ref-based to avoid re-render loops) ─────────────────────
+  const startPassiveListeningRef = useRef<() => Promise<void>>(undefined);
+  startPassiveListeningRef.current = async () => {
+    if (isInputVisible || isProcessingVoiceRef.current || isPassiveListeningRef.current) {
       return;
     }
     console.log('[App] startPassiveListening → démarrage VAD');
     try {
       audioBlobRef.current = null;
-      resetVAD();
       await startVAD();
       isPassiveListeningRef.current = true;
       setVoiceError(null);
@@ -206,84 +220,95 @@ const App: React.FC = () => {
       console.error('[App] Erreur startPassiveListening:', err);
       isPassiveListeningRef.current = false;
     }
-  }, [isInputVisible, isStreaming, isTTSSpeaking, resetVAD, setState, startVAD]);
+  };
 
-  const stopPassiveListening = useCallback(async () => {
-    if (!isPassiveListeningRef.current) return null;
+  const stopPassiveListeningRef = useRef<() => void>(undefined);
+  stopPassiveListeningRef.current = () => {
+    if (!isPassiveListeningRef.current) return;
     isPassiveListeningRef.current = false;
     setAmplitude(0);
-    pauseVAD(); // ← Pause MicVAD, garde l'audio en mémoire via onAudioReady
-    // Retourne le blob stocké par onAudioReady
-    return audioBlobRef.current;
-  }, [setAmplitude, pauseVAD]);
+    pauseVAD();
+  };
 
-  // ── Voice turn processing ────────────────────────────────────────────────────
+
+  // ── useVoiceWS — Full-duplex WebSocket voice pipeline ─────────────────────
+  const { isTurnActive, sendAudio, endAudio, interrupt } = useVoiceWS({
+    onTranscript: (transcript) => {
+      console.log('[App] Transcript reçu:', transcript);
+      voiceWSResponseRef.current = true; // Mark: this response comes from voice WS
+      reset();
+      setState('thinking');
+      setStreaming(true);
+    },
+    onLLMChunk: (chunk) => {
+      appendChunk(chunk);
+    },
+    onLLMDone: (fullText) => {
+      console.log('[App] LLM done:', fullText.substring(0, 60) + '...');
+      // Keep isStreaming=true until TTS finishes — text stays "live" while ORION speaks
+      // setStreaming(false) will be called by onOrionSpeaking(false) via isTurnActive
+      spokenUpToRef.current = fullText.length;
+    },
+    onOrionSpeaking: (speaking) => {
+      if (speaking) {
+        setState('responding');
+        setIsTTSSpeaking(true);
+        setStreaming(true); // Keep text in "streaming" mode during audio playback
+      } else {
+        setState('idle');
+        setIsTTSSpeaking(false);
+        setStreaming(false); // Text locks when ORION finishes speaking
+        voiceWSResponseRef.current = false;
+      }
+    },
+    onAmplitude: (amp) => {
+      setAmplitude(amp);
+    },
+    onError: (err) => {
+      setStreaming(false);
+      handleVoiceError(err);
+    },
+  });
+
+  // Wire sendAudio from useVoiceWS to VAD's onAudioChunk via ref
+  useEffect(() => {
+    sendAudioRef.current = sendAudio;
+    return () => { sendAudioRef.current = null; };
+  }, [sendAudio]);
+
+  // Barge-in: quand l'utilisateur parle pendant que ORION est en train de répondre
+  // Ignore echo: only barge-in if amplitude is strong (user speaking into mic, not speaker echo)
+  const bargeInThreshold = 0.04; // Higher than SPEECH_THRESHOLD (0.015) to avoid echo
+  useEffect(() => {
+    if (isSpeaking && isTurnActive && amplitudeRef.current > bargeInThreshold) {
+      console.log('[App] Barge-in: interruption du tour ORION (amp:', amplitudeRef.current.toFixed(3), ')');
+      interrupt();
+      audioBlobRef.current = null; // Discard echo audio
+    }
+  }, [isSpeaking, isTurnActive, interrupt]); // amplitudeRef is a ref — not a dep
+
+  // ── Voice turn processing (WebSocket full-duplex) ──────────────────────────
+  // With WebSocket, "processVoiceTurn" just signals end_audio.
+  // Audio is streamed in real-time via VAD's onAudioChunk → sendAudio.
   const processVoiceTurn = useCallback(async () => {
     if (isProcessingVoiceRef.current || isInputVisible) return;
 
     isProcessingVoiceRef.current = true;
-    reset();
     setState('thinking');
 
-    try {
-      const audioBlob = await stopPassiveListening();
-      if (!audioBlob || audioBlob.size < 8000) {
-        // < 8 KB WAV = moins de ~250ms de parole — trop court, skip silencieux
-        console.log('[Voice] Audio trop court (' + (audioBlob?.size ?? 0) + ' bytes), skip');
-        setState('idle');
-        return;
-      }
+    // Tell WebSocket server that speech ended → triggers STT + LLM + TTS
+    endAudio();
 
-      // Forcer le français — évite les hallucinations Whisper en auto-detect
-      const transcription = await transcribeBlob(audioBlob, 'fr');
-      if (!transcription.success || !transcription.data) {
-        throw new Error(transcription.message || 'Transcription échouée');
-      }
-
-      const transcript = transcription.data.transcript.trim();
-
-      // Filtres anti-hallucination Whisper
-      if (!transcript || transcript.length < 3) {
-        console.log('[Voice] Transcription trop courte, ignorée');
-        setState('idle');
-        return;
-      }
-
-      // Tags de bruit Whisper (musique, applaudissements, etc.)
-      const whisperNoisePattern = /^\s*\[.*?\]\s*$|\[Musique\]|\[Music\]|\[Applaudissements?\]|\[Rires?\]|\[Silence\]|\[Bruit\]/i;
-      if (whisperNoisePattern.test(transcript)) {
-        console.log('[Voice] Hallucination Whisper détectée, ignorée:', transcript);
-        setState('idle');
-        return;
-      }
-
-      // Scripts non-latins excessifs (arabe, cyrillique, grec)
-      const suspiciousChars = [...transcript].filter(c => /[\u0600-\u06FF\u0400-\u04FF\u0370-\u03FF]/u.test(c)).length;
-      if (suspiciousChars > transcript.length * 0.2) {
-        console.warn('[Voice] Script suspect, ignoré:', transcript);
-        setState('idle');
-        return;
-      }
-
-      setState('responding');
-      await streamMessage(transcript);
-      setState('idle');
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Erreur de traitement vocal';
-      console.error('[Voice] Processing error:', error);
-      setVoiceError(msg);
-      setState('error');
-      setTimeout(() => setState('idle'), 5000);
-    } finally {
+    // Release processing lock after a short delay
+    // (the actual response comes asynchronously via WebSocket callbacks)
+    setTimeout(() => {
       isProcessingVoiceRef.current = false;
-      audioBlobRef.current = null; // Clear pour prochain tour
-      await new Promise(r => setTimeout(r, 300)); // Wait MicVAD cleanup
-      if (!isInputVisible) await startPassiveListening();
-    }
-  }, [isInputVisible, reset, setState, startPassiveListening, stopPassiveListening, streamMessage]);
+    }, 500);
+  }, [isInputVisible, setState, endAudio]);
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
+    voiceWSResponseRef.current = false; // Text input → allow Web Speech TTS
     reset();
     setState('thinking');
     try {
@@ -308,16 +333,17 @@ const App: React.FC = () => {
     return () => window.cancelAnimationFrame(animationId);
   }, [updateAmplitude]);
 
-  // ── Passive listening lifecycle ──────────────────────────────────────────────
-  // VAD bloqué si : input ouvert, streaming en cours, OU ORION est en train de parler
+  // ── Passive listening lifecycle (avec barge-in) ────────────────────────────
+  // VAD tourne en continu SAUF si input texte ouvert.
+  // Pendant que ORION parle, le VAD continue → permet barge-in.
   useEffect(() => {
-    if (isInputVisible || isStreaming || isTTSSpeaking) {
-      void stopPassiveListening();
+    if (isInputVisible) {
+      stopPassiveListeningRef.current?.();
       return;
     }
-    void startPassiveListening();
-    return () => { void stopPassiveListening(); };
-  }, [isInputVisible, isStreaming, isTTSSpeaking, startPassiveListening, stopPassiveListening]);
+    void startPassiveListeningRef.current?.();
+    return () => { stopPassiveListeningRef.current?.(); };
+  }, [isInputVisible]); // Only re-run when input visibility changes
 
   // ── VAD → trigger voice turn ─────────────────────────────────────────────────
   // Quand MicVAD détecte la fin de parole (isSpeaking passe false → true → false)
@@ -327,12 +353,14 @@ const App: React.FC = () => {
       !isSpeaking && // Fin de parole détectée
       audioBlobRef.current && // Audio prêt
       !isInputVisible &&
+      !isTurnActive && // Don't start new turn while ORION is responding (echo protection)
+      !window.speechSynthesis?.speaking && // Don't trigger during Web Speech TTS (notifs, etc.)
       isPassiveListeningRef.current &&
       !isProcessingVoiceRef.current
     ) {
       void processVoiceTurn();
     }
-  }, [isSpeaking, isInputVisible, processVoiceTurn]);
+  }, [isSpeaking, isInputVisible, isTurnActive, processVoiceTurn]);
 
   // ── Hand tracking / gestures ─────────────────────────────────────────────────
   const { videoRef } = useGestureControl({
@@ -362,31 +390,19 @@ const App: React.FC = () => {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Layer 0 — fond particules */}
-      <ParticleCanvas intensity={0.5} />
+      {/* Canvas 3D — orbe + texte 3D réponse */}
+      <Scene3D
+        responseText={responseText}
+        isStreaming={isStreaming}
+        onTap={handleOpenInput}
+        onLongPress={processVoiceTurn}
+        onDoubleTap={handleOpenSettings}
+      />
 
-      {/* Layer 1 — surface unique : entité + réponse */}
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-8 z-10 pointer-events-none">
-        <div className="pointer-events-auto">
-          <OrionEntity
-            state={entityState}
-            amplitude={amplitude}
-            onTap={handleOpenInput}
-            onLongPress={processVoiceTurn}
-            onDoubleTap={handleOpenSettings}
-          />
-        </div>
-
-        {responseText && (
-          <div className="pointer-events-auto w-full max-w-2xl px-4">
-            <ResponseText
-              text={responseText}
-              isStreaming={isStreaming}
-              speed="normal"
-            />
-          </div>
-        )}
-      </div>
+      {/* HoloCards draggables — données structurées extraites de la réponse */}
+      {!isStreaming && responseText && (
+        <HoloCards cards={parseHoloCards(responseText)} />
+      )}
 
       {/* Layer 2 — input caché, slide depuis le bas */}
       <SlideInput
@@ -406,6 +422,19 @@ const App: React.FC = () => {
       {/* Hand tracking video (caché) */}
       {isHandTrackingEnabled && (
         <video ref={videoRef} className="hidden" autoPlay muted playsInline />
+      )}
+
+      {/* Notification proactive du daemon */}
+      {lastNotification && !isInputVisible && (
+        <div className="absolute top-6 left-4 right-4 z-30 animate-fade-in">
+          <div className={`rounded-xl px-4 py-3 backdrop-blur-md border ${
+            lastNotification.priority === 'critical' ? 'bg-red-500/20 border-red-500/40 text-red-200' :
+            lastNotification.priority === 'high' ? 'bg-orange-500/20 border-orange-500/40 text-orange-200' :
+            'bg-orion-accent/10 border-orion-accent/30 text-orion-light/80'
+          }`}>
+            <p className="text-sm leading-relaxed">{lastNotification.message}</p>
+          </div>
+        </div>
       )}
 
       {/* Erreur voix */}
@@ -435,6 +464,12 @@ const App: React.FC = () => {
             daemonConnected ? 'bg-green-500/30' : 'bg-red-500/20'
           }`}
           title={daemonConnected ? 'daemon connecté' : 'daemon déconnecté'}
+        />
+        <span
+          className={`w-1.5 h-1.5 rounded-full transition-colors duration-1000 ${
+            sseConnected ? 'bg-purple-400/30' : 'bg-purple-400/10'
+          }`}
+          title={sseConnected ? 'SSE connecté' : 'SSE déconnecté'}
         />
       </div>
     </div>

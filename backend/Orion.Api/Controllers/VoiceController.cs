@@ -1,7 +1,8 @@
+using System.Text;
 using Microsoft.AspNetCore.Mvc;
-using Orion.Business.Services;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
+using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Services;
 
 namespace Orion.Api.Controllers;
@@ -15,16 +16,19 @@ namespace Orion.Api.Controllers;
 public class VoiceController : ControllerBase
 {
     private readonly IWhisperService _whisperService;
-    private readonly VoiceNotificationService _voiceNotification;
+    private readonly IVoiceNotificationService _voiceNotification;
+    private readonly IConversationAgent _conversationAgent;
     private readonly ILogger<VoiceController> _logger;
 
     public VoiceController(
         IWhisperService whisperService,
-        VoiceNotificationService voiceNotification,
+        IVoiceNotificationService voiceNotification,
+        IConversationAgent conversationAgent,
         ILogger<VoiceController> logger)
     {
         _whisperService = whisperService;
         _voiceNotification = voiceNotification;
+        _conversationAgent = conversationAgent;
         _logger = logger;
     }
 
@@ -87,20 +91,20 @@ public class VoiceController : ControllerBase
             using var stream = audioFile.OpenReadStream();
             var result = await _whisperService.TranscribeAsync(stream, language);
 
-            if (result.IsSuccess && result.Value != null)
+            if (result.Success && result.Data != null)
             {
                 var response = new VoiceResponse
                 {
-                    Transcript = result.Value,
+                    Transcript = result.Data,
                     Confidence = 0.95, // Whisper ne fournit pas de confidence score natif
                     Language = language ?? "auto"
                 };
 
-                _logger.LogInformation("[Voice] Transcription réussie - {Length} caractères", result.Value.Length);
+                _logger.LogInformation("[Voice] Transcription réussie - {Length} caractères", result.Data.Length);
                 return Ok(ApiResponse<VoiceResponse>.SuccessResponse(response, "Transcription réussie"));
             }
 
-            return BadRequest(ApiResponse<object>.ErrorResponse(result.Error ?? "Échec de la transcription"));
+            return BadRequest(ApiResponse<object>.ErrorResponse(result.Message ?? "Échec de la transcription"));
         }
         catch (Exception ex)
         {
@@ -144,25 +148,160 @@ public class VoiceController : ControllerBase
             // Transcrire
             var result = await _whisperService.TranscribeAsync(audioBytes, request.Language);
 
-            if (result.IsSuccess && result.Value != null)
+            if (result.Success && result.Data != null)
             {
                 var response = new VoiceResponse
                 {
-                    Transcript = result.Value,
+                    Transcript = result.Data,
                     Confidence = 0.95,
                     Language = request.Language ?? "auto"
                 };
 
-                _logger.LogInformation("[Voice] Transcription JSON réussie - {Length} caractères", result.Value.Length);
+                _logger.LogInformation("[Voice] Transcription JSON réussie - {Length} caractères", result.Data.Length);
                 return Ok(ApiResponse<VoiceResponse>.SuccessResponse(response, "Transcription réussie"));
             }
 
-            return BadRequest(ApiResponse<object>.ErrorResponse(result.Error ?? "Échec de la transcription"));
+            return BadRequest(ApiResponse<object>.ErrorResponse(result.Message ?? "Échec de la transcription"));
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Voice] Erreur lors de la transcription JSON");
             return StatusCode(500, ApiResponse<object>.ErrorResponse("Erreur interne lors de la transcription"));
+        }
+    }
+
+    /// <summary>
+    /// Pipeline voix complet en streaming bout-en-bout :
+    /// Audio → Whisper STT → LLM stream → Kokoro TTS chunk par chunk → Audio stream
+    /// Latence perçue : ~800ms au lieu de 4-8s
+    /// Un seul appel réseau au lieu de 3
+    /// </summary>
+    [HttpPost("converse")]
+    [Consumes("multipart/form-data")]
+    public async Task Converse(
+        IFormFile audioFile,
+        [FromQuery] string? language = "fr",
+        [FromQuery] string? sessionId = null,
+        CancellationToken ct = default)
+    {
+        Response.ContentType = "audio/wav";
+        Response.Headers["X-Accel-Buffering"] = "no";
+        
+
+        if (audioFile == null || audioFile.Length == 0)
+        {
+            Response.StatusCode = 400;
+            return;
+        }
+
+        try
+        {
+            // ── Étape 1 : STT ──────────────────────────────────────────────
+            _logger.LogInformation("[Voice/Converse] STT start — {Size} bytes", audioFile.Length);
+            using var audioStream = audioFile.OpenReadStream();
+            var sttResult = await _whisperService.TranscribeAsync(audioStream, language);
+
+            if (!sttResult.Success || string.IsNullOrEmpty(sttResult.Data))
+            {
+                _logger.LogWarning("[Voice/Converse] STT failed: {Error}", sttResult.Message);
+                Response.StatusCode = 400;
+                return;
+            }
+
+            var transcript = sttResult.Data;
+            _logger.LogInformation("[Voice/Converse] STT done: {Text}", transcript);
+
+            // Envoie le transcript URL-encodé dans le header (HTTP headers = ASCII only)
+            Response.Headers["X-Transcript"] = Uri.EscapeDataString(transcript);
+
+            // ── Étape 2 : LLM stream + TTS phrase par phrase ───────────────
+            var buffer = new StringBuilder();
+            var fullResponse = new StringBuilder();
+            var audioFlushed = false;
+            var request = new ChatRequest
+            {
+                Message = transcript,
+                SessionId = sessionId != null && Guid.TryParse(sessionId, out var sid) ? sid : null
+            };
+
+            await foreach (var chunk in _conversationAgent.StreamAsync(request, ct))
+            {
+                buffer.Append(chunk);
+                fullResponse.Append(chunk);
+
+                // Dès qu'une phrase est complète → synthétise et envoie immédiatement
+                if (EndsWithSentence(buffer.ToString()))
+                {
+                    if (await TrySynthesizeAndFlushAsync(buffer.ToString().Trim(), ct))
+                        audioFlushed = true;
+                    buffer.Clear();
+                }
+            }
+
+            // Flush le reste du buffer (dernière phrase sans ponctuation finale)
+            if (buffer.Length > 0)
+            {
+                if (await TrySynthesizeAndFlushAsync(buffer.ToString().Trim(), ct))
+                    audioFlushed = true;
+            }
+
+            // Fallback : si aucun audio n'a été produit (Kokoro down), envoyer le texte
+            if (!audioFlushed && fullResponse.Length > 0)
+            {
+                _logger.LogWarning("[Voice/Converse] No audio produced — sending text fallback");
+                Response.ContentType = "text/plain; charset=utf-8";
+                var textBytes = Encoding.UTF8.GetBytes(fullResponse.ToString());
+                await Response.Body.WriteAsync(textBytes, ct);
+                await Response.Body.FlushAsync(ct);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogInformation("[Voice/Converse] Cancelled by client");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Voice/Converse] Error");
+            if (!Response.HasStarted)
+                Response.StatusCode = 500;
+        }
+    }
+
+    // ── Helpers privés ──────────────────────────────────────────────────────────
+
+    private static bool EndsWithSentence(string text)
+    {
+        var t = text.TrimEnd();
+        return t.EndsWith('.') || t.EndsWith('?') || t.EndsWith('!') || t.EndsWith('\n');
+    }
+
+    private async Task<bool> TrySynthesizeAndFlushAsync(string text, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return false;
+
+        try
+        {
+            var wav = await _voiceNotification.SynthesizeAsync(text, ct);
+            if (wav != null && wav.Length > 0)
+            {
+                await Response.Body.WriteAsync(wav, ct);
+                await Response.Body.FlushAsync(ct);
+
+                _logger.LogDebug("[Voice/Converse] Chunk flushed: '{Preview}' → {Kb}KB",
+                    text.Length > 30 ? text[..30] + "..." : text,
+                    wav.Length / 1024);
+                return true;
+            }
+
+            _logger.LogWarning("[Voice/Converse] No audio for: '{Preview}' (Kokoro unavailable?)",
+                text.Length > 30 ? text[..30] + "..." : text);
+            return false;
+        }
+        catch (OperationCanceledException)
+        {
+            _logger.LogWarning("[Voice/Converse] TTS timeout for: '{Preview}'",
+                text.Length > 30 ? text[..30] + "..." : text);
+            return false;
         }
     }
 

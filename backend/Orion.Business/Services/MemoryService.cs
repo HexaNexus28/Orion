@@ -10,22 +10,39 @@ namespace Orion.Business.Services;
 public class MemoryService : IMemoryService
 {
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IEmbeddingService _embeddingService;
     private readonly ILogger<MemoryService> _logger;
 
-    public MemoryService(IUnitOfWork unitOfWork, ILogger<MemoryService> logger)
+    public MemoryService(IUnitOfWork unitOfWork, IEmbeddingService embeddingService, ILogger<MemoryService> logger)
     {
         _unitOfWork = unitOfWork;
+        _embeddingService = embeddingService;
         _logger = logger;
     }
 
     public async Task<ApiResponse<List<MemoryVectorDto>>> SearchSimilarAsync(
         string query, int topK = 5, CancellationToken ct = default)
     {
-        // TODO: Generate embedding for query and search
-        // For now, return empty list
         _logger.LogInformation("Searching memories for: {Query}", query);
-        await Task.Yield(); // Suppress async warning
-        return ApiResponse<List<MemoryVectorDto>>.SuccessResponse(new List<MemoryVectorDto>());
+
+        var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(query, ct);
+        if (!embeddingResponse.Success || embeddingResponse.Data == null)
+        {
+            _logger.LogWarning("Embedding generation failed for memory search");
+            return ApiResponse<List<MemoryVectorDto>>.SuccessResponse(new List<MemoryVectorDto>());
+        }
+
+        var memories = await _unitOfWork.Memory.SearchSimilarAsync(embeddingResponse.Data, topK, ct);
+        var dtos = memories.Select((m, i) => new MemoryVectorDto
+        {
+            Id = m.Id,
+            Content = m.Content,
+            Source = m.Source,
+            Similarity = 1f - (i * 0.05f), // Approximate rank-based similarity
+            CreatedAt = m.CreatedAt
+        }).ToList();
+
+        return ApiResponse<List<MemoryVectorDto>>.SuccessResponse(dtos);
     }
 
     public async Task<ApiResponse<bool>> SaveMemoryAsync(
@@ -33,14 +50,22 @@ public class MemoryService : IMemoryService
     {
         try
         {
+            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(content, ct);
+            var embedding = embeddingResponse.Success && embeddingResponse.Data != null
+                ? embeddingResponse.Data
+                : Array.Empty<float>();
+
+            if (embedding.Length == 0)
+                _logger.LogWarning("[MemoryService] Embedding generation failed for content save, storing without vector");
+
             var memory = new MemoryVector
             {
                 Id = Guid.NewGuid(),
                 Content = content,
                 Source = source,
                 Importance = importance,
+                Embedding = embedding,
                 CreatedAt = DateTime.UtcNow
-                // TODO: Generate embedding
             };
 
             await _unitOfWork.Memory.AddAsync(memory, ct);

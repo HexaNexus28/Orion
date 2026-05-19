@@ -59,25 +59,39 @@ public class DaemonWebSocketManager
 
     private async Task ReceiveLoopAsync(CancellationToken ct)
     {
-        var buffer = new byte[4096];
+        var buffer = new byte[65536]; // 64KB — matches backend buffer
         var handler = new DaemonMessageHandler(_actionRegistry, _logger);
 
         try
         {
             while (_webSocket?.State == WebSocketState.Open && !ct.IsCancellationRequested)
             {
-                var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
-
-                if (result.MessageType == WebSocketMessageType.Close)
+                // Accumulate multi-frame messages
+                using var ms = new System.IO.MemoryStream();
+                WebSocketReceiveResult result;
+                do
                 {
-                    await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ct);
-                    break;
-                }
+                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), ct);
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ct);
+                        return;
+                    }
+                    ms.Write(buffer, 0, result.Count);
+                } while (!result.EndOfMessage);
 
-                var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                var message = Encoding.UTF8.GetString(ms.ToArray());
                 var response = await handler.ProcessMessageAsync(message);
 
-                await SendResponseAsync(response, ct);
+                // Send binary WAV directly if available, otherwise JSON
+                if (response.Success && response.Data is BinaryPayload bin)
+                {
+                    await SendBinaryResponseAsync(response.RequestId, bin.Bytes, ct);
+                }
+                else
+                {
+                    await SendResponseAsync(response, ct);
+                }
             }
         }
         catch (WebSocketException ex)
@@ -98,5 +112,28 @@ public class DaemonWebSocketManager
                 true,
                 ct);
         }
+    }
+
+    /// <summary>
+    /// Send binary response: [36-byte requestId UTF-8] + [raw WAV bytes]
+    /// Backend detects binary frames and resolves pending requests without base64.
+    /// </summary>
+    private async Task SendBinaryResponseAsync(string requestId, byte[] wavBytes, CancellationToken ct)
+    {
+        if (_webSocket?.State != WebSocketState.Open) return;
+
+        // Protocol: first 36 bytes = requestId (GUID string), rest = WAV
+        var idBytes = Encoding.UTF8.GetBytes(requestId.PadRight(36)[..36]);
+        var frame = new byte[36 + wavBytes.Length];
+        Buffer.BlockCopy(idBytes, 0, frame, 0, 36);
+        Buffer.BlockCopy(wavBytes, 0, frame, 36, wavBytes.Length);
+
+        await _webSocket.SendAsync(
+            new ArraySegment<byte>(frame),
+            WebSocketMessageType.Binary,
+            true,
+            ct);
+
+        _logger.LogDebug("[DAEMON] Sent {Kb}KB binary WAV for {Id}", wavBytes.Length / 1024, requestId);
     }
 }

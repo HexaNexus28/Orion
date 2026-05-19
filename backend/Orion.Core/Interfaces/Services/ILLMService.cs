@@ -5,7 +5,7 @@ using Orion.Core.Enums;
 namespace Orion.Core.Interfaces.Services;
 
 /// <summary>
-/// Service pour l'inférence LLM (Ollama/Anthropic)
+/// Service pour l'inférence LLM (Ollama/Kimi Cloud)
 /// Abstraction du LLMRouter pour la couche API
 /// </summary>
 public interface ILLMService

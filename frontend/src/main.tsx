@@ -1,4 +1,3 @@
-import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import { EntityProvider } from './context/EntityContext'
@@ -17,11 +16,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <EntityProvider>
-      <OrionStatusProvider>
-        <App />
-      </OrionStatusProvider>
-    </EntityProvider>
-  </React.StrictMode>,
+  <EntityProvider>
+    <OrionStatusProvider>
+      <App />
+    </OrionStatusProvider>
+  </EntityProvider>,
 )

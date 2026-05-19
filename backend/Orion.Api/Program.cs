@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using Orion.Api.Middleware;
+using Orion.Api.Services;
+using Orion.Api.WebSockets;
 using Orion.Business.Agents;
 using Orion.Business.Daemon;
 using Orion.Business.LLM;
@@ -49,8 +51,6 @@ builder.Services.AddSwaggerGen(c =>
 // ========== CONFIGURATION OPTIONS ==========
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection(OllamaOptions.SectionName));
-builder.Services.Configure<AnthropicOptions>(
-    builder.Configuration.GetSection(AnthropicOptions.SectionName));
 builder.Services.Configure<SupabaseOptions>(
     builder.Configuration.GetSection(SupabaseOptions.SectionName));
 builder.Services.Configure<DaemonOptions>(
@@ -71,7 +71,7 @@ if (string.IsNullOrEmpty(supabaseConnection))
 builder.Services.AddDbContext<OrionDbContext>(options =>
     options.UseNpgsql(supabaseConnection, npgsql =>
         npgsql.MigrationsAssembly("Orion.Data")
-              .EnableRetryOnFailure(3, TimeSpan.FromSeconds(5), null)));
+              .EnableRetryOnFailure(10, TimeSpan.FromSeconds(8), null)));
 
 logger.LogInformation(" Database configured (PostgreSQL)");
 
@@ -110,6 +110,8 @@ builder.Services.AddScoped<ScreenshotTool>();
 // Register internet tools as ITool for ToolRegistry auto-discovery
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<WebSearchTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<WebFetchTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<WebBrowseTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ScreenshotTool>());
 
 logger.LogInformation(" Internet tools registered (WebSearch, WebFetch, WebBrowse, Screenshot)");
 
@@ -124,6 +126,8 @@ builder.Services.AddScoped<ProfileUpdateTool>();
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemorySaveTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryUpdateTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryForgetTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryReflectTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ProfileUpdateTool>());
 
 logger.LogInformation(" Memory tools registered (memory_save, memory_update, memory_forget, memory_reflect, profile_update)");
 
@@ -134,6 +138,13 @@ builder.Services.AddScoped<OpenAppTool>();
 builder.Services.AddScoped<OpenBrowserUrlTool>();
 builder.Services.AddScoped<ReadFileTool>();
 builder.Services.AddScoped<GitCommitTool>();
+builder.Services.AddScoped<WriteFileTool>();
+builder.Services.AddScoped<RunScriptTool>();
+builder.Services.AddScoped<ListFilesTool>();
+builder.Services.AddScoped<KillProcessTool>();
+builder.Services.AddScoped<ClipboardTool>();
+builder.Services.AddScoped<TypeTextTool>();
+builder.Services.AddScoped<CaptureScreenTool>();
 
 // Register system tools as ITool for ToolRegistry auto-discovery
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<GetSystemStatusTool>());
@@ -142,8 +153,15 @@ builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<OpenAppTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<OpenBrowserUrlTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ReadFileTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<GitCommitTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<WriteFileTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<RunScriptTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ListFilesTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<KillProcessTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ClipboardTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<TypeTextTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<CaptureScreenTool>());
 
-logger.LogInformation(" System tools registered (get_system_status, git_status, open_app, open_browser_url, read_file, git_commit)");
+logger.LogInformation(" System tools registered (13 tools: status, git, app, browser, files, clipboard, keyboard, screen)");
 
 // ========== DAEMON ==========
 builder.Services.AddSingleton<IDaemonClient, DaemonWebSocketClient>();
@@ -153,6 +171,7 @@ logger.LogInformation(" Daemon client registered");
 
 // ========== AGENTS (Business Layer Internals) ==========
 builder.Services.AddScoped<IConversationAgent, ConversationAgent>();
+builder.Services.AddScoped<IBriefingAgent, BriefingAgent>();
 
 // ========== BUSINESS SERVICES (API Interface) ==========
 builder.Services.AddScoped<IChatService, ChatService>();
@@ -163,9 +182,13 @@ builder.Services.AddScoped<IBriefingService, BriefingService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
 
+// ========== EMBEDDING SERVICE (RAG - nomic-embed-text) ==========
+builder.Services.AddSingleton<IEmbeddingService, EmbeddingService>();
+logger.LogInformation(" Embedding Service registered (Ollama nomic-embed-text)");
+
 // ========== VOICE SERVICE (Phase 4 - Whisper STT) ==========
 builder.Services.AddSingleton<IWhisperService, WhisperService>();
-builder.Services.AddScoped<VoiceNotificationService>();
+builder.Services.AddScoped<IVoiceNotificationService, VoiceNotificationService>();
 logger.LogInformation(" Voice Service registered (Whisper STT + TTS notification)");
 
 logger.LogInformation(" Business Services registered (including Audit)");
@@ -178,7 +201,8 @@ builder.Services.AddCors(options =>
         policy
             .WithOrigins("http://localhost:5173", "http://localhost:3000")
             .AllowAnyMethod()
-            .AllowAnyHeader();
+            .AllowAnyHeader()
+            .WithExposedHeaders("X-Transcript");
     });
     
     options.AddPolicy("ProductionPolicy", policy =>
@@ -188,12 +212,16 @@ builder.Services.AddCors(options =>
                 ?? Array.Empty<string>())
             .WithMethods("GET", "POST", "PUT", "DELETE")
             .WithHeaders("Authorization", "Content-Type")
+            .WithExposedHeaders("X-Transcript")
             .AllowCredentials();
     });
 });
 
 // ========== HEALTH CHECKS ==========
 builder.Services.AddHealthChecks();
+
+// ========== BACKGROUND SERVICES ==========
+builder.Services.AddHostedService<BriefingScheduler>();
 
 // ========== BUILD APP ==========
 var app = builder.Build();
@@ -203,9 +231,14 @@ var app = builder.Build();
 // Error handling
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
-// WebSocket support for daemon
-app.UseWebSockets();
+// WebSocket support for daemon + voice
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(30),
+    AllowedOrigins = { "http://localhost:5173", "http://localhost:3000" }
+});
 app.UseMiddleware<DaemonWebSocketMiddleware>();
+app.UseMiddleware<VoiceWebSocketMiddleware>();
 
 // HTTPS
 if (!app.Environment.IsDevelopment())

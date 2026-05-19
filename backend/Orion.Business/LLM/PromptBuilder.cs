@@ -12,7 +12,8 @@ public class PromptBuilder
         List<MemoryVector> relevantMemories,
         List<ToolCallDto> availableTools,
         bool daemonConnected,
-        LLMProvider activeProvider)
+        LLMProvider activeProvider,
+        bool voiceMode = false)
     {
         var sb = new StringBuilder();
         
@@ -46,6 +47,24 @@ public class PromptBuilder
         sb.AppendLine("- Pas de formules de politesse inutiles, pas de \"bien sûr !\", pas de \"certainement !\"");
         sb.AppendLine("- Si tu as un doute sur une information → dis-le clairement");
         sb.AppendLine("- Utilise les tools disponibles avant de répondre si la question nécessite des données fraîches");
+
+        if (voiceMode)
+        {
+            sb.AppendLine();
+            sb.AppendLine("MODE VOIX ACTIF — règles spéciales :");
+            sb.AppendLine("- Réponds comme dans une CONVERSATION ORALE naturelle");
+            sb.AppendLine("- Phrases COURTES (max 2-3 phrases par idée), rythme conversationnel");
+            sb.AppendLine("- AUCUN markdown : pas de **, pas de ```, pas de listes à puces, pas de #");
+            sb.AppendLine("- AUCUN formatage visuel — tout sera lu à voix haute");
+            sb.AppendLine("- Utilise des connecteurs oraux : 'alors', 'du coup', 'en gros', 'par contre'");
+            sb.AppendLine("- Pour les chiffres : dis 'environ 1500' pas '~1,500'");
+            sb.AppendLine("- Si la réponse est longue, résume en 3-4 phrases et propose d'approfondir");
+            sb.AppendLine("- Ton naturel, comme un collègue dev qui explique — pas un robot qui lit de la doc");
+        }
+        else
+        {
+            sb.AppendLine("- Pour afficher des stats/chiffres clairement : utilise le format **Label**: Valeur");
+        }
         
         if (daemonConnected)
         {

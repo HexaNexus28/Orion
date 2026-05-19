@@ -6,8 +6,10 @@
 export { HologramCard } from './HologramCard';
 export { HologramText } from './HologramText';
 export { HologramChart } from './HologramChart';
+export { HologramResponsePanel } from './HologramResponsePanel';
 
 // Re-export types
 export type { HologramCardProps } from './HologramCard';
 export type { HologramTextProps } from './HologramText';
 export type { HologramChartProps, DataPoint } from './HologramChart';
+export type { HologramResponsePanelProps } from './HologramResponsePanel';

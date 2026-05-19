@@ -1,7 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Responses;
-using Orion.Core.Entities;
 using Orion.Core.Enums;
+using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Core.Interfaces.Services;
 
@@ -9,36 +9,21 @@ namespace Orion.Business.Services;
 
 public class BriefingService : IBriefingService
 {
+    private readonly IBriefingAgent _briefingAgent;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<BriefingService> _logger;
 
-    public BriefingService(IUnitOfWork unitOfWork, ILogger<BriefingService> logger)
+    public BriefingService(IBriefingAgent briefingAgent, IUnitOfWork unitOfWork, ILogger<BriefingService> logger)
     {
+        _briefingAgent = briefingAgent;
         _unitOfWork = unitOfWork;
         _logger = logger;
     }
 
     public async Task<ApiResponse<BriefingDto>> GenerateTodayBriefingAsync(CancellationToken ct = default)
     {
-        await Task.Yield(); // Suppress async warning until fully implemented
-        
-        // TODO: Implement briefing generation logic
-        // 1. Get ShiftStar stats
-        // 2. Get calendar events
-        // 3. Get emails
-        // 4. Generate summary with LLM
-        
-        _logger.LogInformation("Generating today's briefing");
-        
-        var briefing = new BriefingDto
-        {
-            Id = Guid.NewGuid(),
-            Content = "Briefing du jour - À implémenter",
-            CreatedAt = DateTime.UtcNow,
-            Stats = new Dictionary<string, object>()
-        };
-
-        return ApiResponse<BriefingDto>.SuccessResponse(briefing);
+        _logger.LogInformation("[BriefingService] Requesting today's briefing from BriefingAgent");
+        return await _briefingAgent.GenerateBriefingAsync(ct);
     }
 
     public async Task<ApiResponse<List<BriefingDto>>> GetBriefingHistoryAsync(

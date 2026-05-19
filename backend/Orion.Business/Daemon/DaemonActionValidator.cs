@@ -17,6 +17,12 @@ public class DaemonActionValidator
         "write_file",
         "git_status",
         "git_commit",
+        "list_files",
+        "kill_process",
+        "get_clipboard",
+        "set_clipboard",
+        "type_text",
+        "capture_screen",
     };
 
     public bool IsAllowed(string action)

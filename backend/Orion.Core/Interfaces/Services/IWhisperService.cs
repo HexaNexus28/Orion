@@ -1,4 +1,4 @@
-using Orion.Core.Common;
+using Orion.Core.DTOs.Responses;
 
 namespace Orion.Core.Interfaces.Services;
 
@@ -14,7 +14,7 @@ public interface IWhisperService
     /// <param name="audioStream">Stream audio (WAV, MP3, WebM, etc.)</param>
     /// <param name="language">Langue optionnelle (ex: "fr", "en")</param>
     /// <returns>Texte transcrit</returns>
-    Task<Result<string>> TranscribeAsync(Stream audioStream, string? language = null);
+    Task<ApiResponse<string>> TranscribeAsync(Stream audioStream, string? language = null);
 
     /// <summary>
     /// Transcrit des données audio brutes
@@ -22,7 +22,7 @@ public interface IWhisperService
     /// <param name="audioData">Données audio (bytes)</param>
     /// <param name="language">Langue optionnelle</param>
     /// <returns>Texte transcrit</returns>
-    Task<Result<string>> TranscribeAsync(byte[] audioData, string? language = null);
+    Task<ApiResponse<string>> TranscribeAsync(byte[] audioData, string? language = null);
 
     /// <summary>
     /// Vérifie si le modèle Whisper est chargé et prêt

@@ -43,29 +43,6 @@ public class HealthControllerTests
     }
 
     [Fact]
-    public void GetHealth_When_Anthropic_Active_Returns_Healthy_With_Anthropic()
-    {
-        // Arrange
-        var response = ApiResponse<HealthCheckDto>.SuccessResponse(new HealthCheckDto
-        {
-            Status = "healthy",
-            LlmProvider = "Anthropic",
-            Timestamp = DateTime.UtcNow
-        });
-        _mockHealthService.Setup(x => x.GetHealthStatus()).Returns(response);
-
-        // Act
-        var result = _controller.GetHealth();
-
-        // Assert
-        var objectResult = Assert.IsType<ObjectResult>(result);
-        Assert.Equal(200, objectResult.StatusCode);
-        
-        var apiResponse = Assert.IsType<ApiResponse<HealthCheckDto>>(objectResult.Value);
-        Assert.Equal("Anthropic", apiResponse.Data?.LlmProvider);
-    }
-
-    [Fact]
     public void GetHealth_When_No_Provider_Returns_Healthy_With_None()
     {
         // Arrange

@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using Microsoft.AspNetCore.Mvc;
+using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
+using Orion.Core.Interfaces.Agents;
+using Orion.Core.Interfaces.Daemon;
 
 namespace Orion.Api.Controllers;
 
@@ -13,11 +16,45 @@ namespace Orion.Api.Controllers;
 public class ProactiveNotificationController : ControllerBase
 {
     private static readonly ConcurrentDictionary<string, HttpResponse> _clients = new();
+    private readonly IDaemonClient _daemonClient;
+    private readonly IBriefingAgent _briefingAgent;
     private readonly ILogger<ProactiveNotificationController> _logger;
 
-    public ProactiveNotificationController(ILogger<ProactiveNotificationController> logger)
+    public ProactiveNotificationController(
+        IDaemonClient daemonClient,
+        IBriefingAgent briefingAgent,
+        ILogger<ProactiveNotificationController> logger)
     {
+        _daemonClient = daemonClient;
+        _briefingAgent = briefingAgent;
         _logger = logger;
+    }
+
+    // Internal broadcast — used by BriefingScheduler and this controller
+    internal static async Task BroadcastAsync(
+        string eventType, string message, string priority, bool speak,
+        ILogger logger)
+    {
+        var notification = new DaemonNotificationDto
+        {
+            Type = eventType,
+            Title = "ORION",
+            Message = message,
+            Priority = priority,
+            Speak = speak,
+            Timestamp = DateTime.UtcNow
+        };
+
+        var deadClients = new List<string>();
+        foreach (var (clientId, response) in _clients)
+        {
+            try { await SendEventAsync(response, "notification", notification); }
+            catch { deadClients.Add(clientId); }
+        }
+        foreach (var id in deadClients) _clients.TryRemove(id, out _);
+
+        logger.LogInformation("[Broadcast] {Preview} → {Count} clients",
+            message.Length > 60 ? message[..60] + "..." : message, _clients.Count);
     }
 
     /// <summary>
@@ -90,26 +127,68 @@ public class ProactiveNotificationController : ControllerBase
     }
 
     /// <summary>
+    /// Le daemon appelle ce endpoint avec un pattern détecté → LLM génère le message → broadcast SSE
+    /// </summary>
+    [HttpPost("trigger")]
+    public async Task<IActionResult> TriggerProactiveMessage(
+        [FromBody] ProactiveTriggerRequest request, CancellationToken ct)
+    {
+        _logger.LogInformation("[Trigger] Pattern: {Pattern} | Context: {Context}",
+            request.Pattern, request.Context);
+
+        var messageResult = await _briefingAgent.GenerateProactiveMessageAsync(
+            request.Pattern, request.Context, ct);
+
+        var message = messageResult.Success && !string.IsNullOrWhiteSpace(messageResult.Data)
+            ? messageResult.Data
+            : request.Context;
+
+        await BroadcastAsync("proactive", message, request.Priority ?? "normal", speak: true, _logger);
+
+        return Ok(ApiResponse<object>.SuccessResponse(new { message, clientsNotified = _clients.Count }));
+    }
+
+    /// <summary>
     /// Frontend peut demander une action au daemon via le backend
     /// </summary>
     [HttpPost("action")]
-    public async Task<IActionResult> SendActionToDaemon([FromBody] FrontendActionRequest request)
+    public async Task<IActionResult> SendActionToDaemon([FromBody] FrontendActionRequest request, CancellationToken ct)
     {
-        // Cette action sera forwardée au daemon via WebSocket
         _logger.LogInformation("[Action] Frontend requested: {Action}", request.Action);
-        
-        // TODO: Implémenter le forward au daemon via IDaemonClient
-        
-        return Ok(ApiResponse<object>.SuccessResponse(new { forwarded = true }));
+
+        if (!_daemonClient.IsConnected)
+            return StatusCode(503, ApiResponse<object>.ErrorResponse("Daemon non connecté", 503));
+
+        var daemonAction = new DaemonActionRequest
+        {
+            RequestId = Guid.NewGuid().ToString("N"),
+            Action = request.Action,
+            Payload = request.Data ?? new Dictionary<string, object>()
+        };
+
+        var result = await _daemonClient.SendActionAsync(daemonAction, ct);
+        return StatusCode(result.StatusCode, result);
     }
+
+    private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new()
+    {
+        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
+    };
 
     private static async Task SendEventAsync(HttpResponse response, string eventName, object data)
     {
-        var json = System.Text.Json.JsonSerializer.Serialize(data);
+        var json = System.Text.Json.JsonSerializer.Serialize(data, _jsonOptions);
         await response.WriteAsync($"event: {eventName}\n");
         await response.WriteAsync($"data: {json}\n\n");
         await response.Body.FlushAsync();
     }
+}
+
+public class ProactiveTriggerRequest
+{
+    public string Pattern { get; set; } = "";
+    public string Context { get; set; } = "";
+    public string? Priority { get; set; } = "normal";
 }
 
 public class DaemonNotificationDto

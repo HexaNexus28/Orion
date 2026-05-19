@@ -1,6 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkBreaks from 'remark-breaks';
 import type { ResponseTextProps } from '../../types';
+
+// Fix incomplete markdown during streaming — close unclosed markers
+function sanitizeStreamingMarkdown(text: string): string {
+  // Count ** pairs — if odd, close the trailing one
+  const boldCount = (text.match(/\*\*/g) || []).length;
+  if (boldCount % 2 !== 0) text += '**';
+  // Count ` pairs
+  const codeCount = (text.match(/`/g) || []).length;
+  if (codeCount % 2 !== 0) text += '`';
+  return text;
+}
 
 export const ResponseText: React.FC<ResponseTextProps> = ({
   text,
@@ -60,8 +73,14 @@ export const ResponseText: React.FC<ResponseTextProps> = ({
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5 }}
     >
-      <p className="text-orion-text font-mono text-lg leading-relaxed whitespace-pre-wrap">
-        {displayText}
+      <div className="text-orion-text text-lg leading-relaxed prose prose-invert prose-sm max-w-none
+        prose-headings:text-orion-accent prose-headings:font-semibold prose-headings:mt-3 prose-headings:mb-1
+        prose-strong:text-orion-light prose-strong:font-semibold
+        prose-ul:my-1 prose-ul:pl-4 prose-li:my-0.5
+        prose-p:my-1">
+        <ReactMarkdown remarkPlugins={[remarkBreaks]}>
+          {isStreaming ? sanitizeStreamingMarkdown(displayText) : displayText}
+        </ReactMarkdown>
         {!isComplete && (
           <motion.span
             className="inline-block w-2 h-5 bg-orion-accent ml-1"
@@ -69,7 +88,7 @@ export const ResponseText: React.FC<ResponseTextProps> = ({
             transition={{ duration: 0.5, repeat: Infinity }}
           />
         )}
-      </p>
+      </div>
     </motion.div>
   );
 };

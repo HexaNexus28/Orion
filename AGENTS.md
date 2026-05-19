@@ -64,6 +64,18 @@ Niveau   : Développeur avancé — pas d'explications basiques
 [RULE-13] Notifications proactive: SSE du backend au frontend
           → Pas de polling, utiliser EventSource natif
           → Endpoint: /api/proactivenotification/stream
+          → Sérialisation camelCase obligatoire (JsonNamingPolicy.CamelCase)
+
+[RULE-14] Voice WebSocket: anti-écho obligatoire
+          → Endpoint: /ws/voice (full-duplex)
+          → voiceWSResponseRef bloque Web Speech TTS pendant pipeline WS
+          → Vérifier window.speechSynthesis.speaking avant trigger VAD
+          → Ne jamais activer Web Speech TTS et Kokoro TTS simultanément
+
+[RULE-15] HologramResponsePanel: pur Three.js, zéro HTML
+          → Texte via drei Text (SDF), pas via drei Html
+          → Shader GLSL custom pour panneau holographique
+          → Pas de ReactMarkdown en 3D — stripMarkdown() vers plain text
 ```
 
 ---
@@ -87,7 +99,7 @@ ORION utilise un système multi-agents simple :
 ### ConversationAgent
 **Fichier** : `Orion.Business/Agents/ConversationAgent.cs`
 **Rôle** : Point d'entrée de toute requête utilisateur.
-**Workflow** :
+**Workflow chat (HTTP)** :
 ```
 1. Reçoit le message utilisateur
 2. Appelle MemoryAgent → récupère contexte (profil + souvenirs RAG)
@@ -96,6 +108,15 @@ ORION utilise un système multi-agents simple :
 5. Si le LLM retourne un tool_call → délègue à ToolAgent
 6. Sauvegarde le message + embedding en DB
 7. Retourne la réponse (stream ou complète)
+```
+**Workflow streaming (WS voice)** :
+```
+1. PrepareStreamAsync(message, sessionId) → ApiResponse<StreamContext>
+   - Valide session, charge mémoire, construit prompt, retourne StreamContext
+2. StreamLLMAsync(streamContext) → IAsyncEnumerable<string>
+   - Stream token par token depuis LLMRouter
+   - Utilisé par VoiceWebSocketHandler pour envoyer chunks au frontend
+3. Après stream : sauvegarde message complet + embedding
 ```
 
 ### MemoryAgent
@@ -146,17 +167,23 @@ Cron : 07h00 tous les jours (configurable)
 ### Backend — Orion.Api
 ```
 Orion.Api/
-├── Program.cs                    # DI, middleware, CORS, SSE
+├── Program.cs                              # DI, middleware, CORS, SSE, WebSocket
 ├── Controllers/
-│   ├── ChatController.cs         # POST /chat → IActionResult (unwrap ApiResponse)
-│   ├── MemoryController.cs       # GET /memory, DELETE /memory/{id}
-│   ├── ToolsController.cs        # GET /tools, POST /tools/test
-│   ├── BriefingController.cs     # GET /briefing/today, POST /briefing/trigger
-│   └── HealthController.cs       # GET /health — Render health check
+│   ├── ChatController.cs                   # POST /chat → IActionResult
+│   ├── MemoryController.cs                 # GET /memory, DELETE /memory/{id}
+│   ├── ToolsController.cs                  # GET /tools, POST /tools/test
+│   ├── BriefingController.cs               # GET /briefing/today
+│   ├── VoiceController.cs                  # Legacy HTTP voice
+│   ├── ProactiveNotificationController.cs  # SSE stream + daemon notify
+│   └── HealthController.cs                 # GET /health
+├── WebSockets/
+│   ├── VoiceWebSocketHandler.cs            # /ws/voice full-duplex
+│   └── VoiceWebSocketMiddleware.cs         # Route /ws/voice
 ├── Middleware/
-│   ├── AuthMiddleware.cs         # JWT validation
-│   ├── ErrorHandlingMiddleware.cs # Catch global → ApiResponse<object>.ErrorResponse
-│   └── LoggingMiddleware.cs
+│   ├── AuthMiddleware.cs
+│   ├── ErrorHandlingMiddleware.cs
+│   ├── LoggingMiddleware.cs
+│   └── DaemonWebSocketMiddleware.cs
 └── appsettings.json
 ```
 
@@ -164,7 +191,10 @@ Orion.Api/
 ```
 Orion.Business/
 ├── Agents/
-│   ├── ConversationAgent.cs      # IConversationAgent → ApiResponse<ChatResponse>
+│   ├── ConversationAgent.cs      # IConversationAgent
+│   │                             # ProcessAsync() → ApiResponse<ChatResponse>
+│   │                             # PrepareStreamAsync() → ApiResponse<StreamContext>
+│   │                             # StreamLLMAsync() → IAsyncEnumerable<string>
 │   ├── MemoryAgent.cs            # IMemoryAgent → ApiResponse<MemoryContext>
 │   ├── ToolAgent.cs              # IToolAgent → ApiResponse<ToolResult>
 │   └── BriefingAgent.cs         # IBriefingAgent + IHostedService (cron 07h00)
@@ -184,12 +214,13 @@ Orion.Business/
 │   ├── SendNotificationTool.cs
 │   └── OpenAppTool.cs            # → délègue via IDaemonClient (Core)
 ├── Daemon/
-│   ├── DaemonWebSocketClient.cs  # IDaemonClient (Core) — client WebSocket côté backend
-│   │                             # Envoie DaemonCommand JSON, reçoit DaemonResponse JSON
+│   ├── DaemonWebSocketClient.cs  # IDaemonClient (Core) — client WebSocket
 │   └── DaemonActionValidator.cs  # Vérifie whitelist avant envoi
 └── Services/
-    ├── EmbeddingService.cs       # IEmbeddingService — Ollama nomic-embed-text
-    └── PushNotificationService.cs # IPushNotificationService — Web Push API
+    ├── EmbeddingService.cs           # Ollama nomic-embed-text
+    ├── WhisperService.cs             # Whisper.net STT local
+    ├── VoiceNotificationService.cs   # TTS via daemon (Kokoro)
+    └── PushNotificationService.cs    # Web Push API
 ```
 
 ### Backend — Orion.Core
@@ -208,6 +239,7 @@ Orion.Core/                       # Ne dépend de rien
 │   └── Responses/
 │       ├── ApiResponse.cs        # Pattern ShadowCat — utilisé par Business
 │       ├── ChatResponse.cs
+│       ├── StreamContext.cs      # DTO pour PrepareStreamAsync → StreamLLMAsync
 │       ├── BriefingDto.cs
 │       ├── ToolCallDto.cs
 │       ├── ToolResult.cs
@@ -281,9 +313,12 @@ frontend/src/
 │   │   └── SoundWaves.tsx        # Ondes sonores mode voix
 │   ├── hologram/                 # Données holographiques 3D flottantes (Phase 5)
 │   │   ├── HologramCard.tsx      # Carte 3D flottante (Float + Billboard drei)
-│   │   │                         # Données qui orbitent autour de l'entité
-│   │   ├── HologramText.tsx      # Texte 3D dans l'espace
-│   │   └── HologramChart.tsx     # Graphique 3D flottant (stats ShiftStar...)
+│   │   ├── HologramText.tsx      # Texte 3D SDF dans l'espace
+│   │   ├── HologramChart.tsx     # Graphique 3D flottant
+│   │   ├── HologramResponsePanel.tsx  # Panneau réponse holographique
+│   │   │                              # Pure Three.js : GLSL shader, SDF Text,
+│   │   │                              # particules, wireframe, anneaux orbitaux
+│   │   └── index.ts              # Exports
 │   ├── response/
 │   │   ├── ResponseText.tsx      # Texte SSE mot par mot
 │   │   ├── DataFloat.tsx         # Orchestrateur données holographiques
@@ -308,12 +343,14 @@ frontend/src/
 │   ├── useOrionEntity.ts
 │   ├── useAudioAmplitude.ts
 │   ├── useChat.ts
-│   ├── useStream.ts
-│   ├── useVoice.ts
-│   ├── useVAD.ts
+│   ├── useStream.ts              # appendChunk/setStreaming pour WS + HTTP
+│   ├── useVoice.ts               # LEGACY — remplacé par useVoiceWS
+│   ├── useVoiceWS.ts             # Full-duplex WebSocket voice pipeline
+│   ├── useVAD.ts                 # @ricky0123/vad-web + PCM streaming
+│   ├── useGestures.ts            # tap, long press, swipe
+│   ├── useHandTracking.ts        # MediaPipe Phase 5
+│   ├── useOrionNotifications.ts  # SSE proactive notifs + Web Speech TTS
 │   ├── usePushNotif.ts
-│   ├── useGestures.ts            # tap, long press, swipe — interactions entité
-│   ├── useHandTracking.ts        # MediaPipe — gestes mains via caméra (Phase 5)
 │   └── useOrionStatus.ts
 ├── services/
 │   ├── api.ts                    # Axios instance centralisée
@@ -323,7 +360,8 @@ frontend/src/
 │   ├── briefingService.ts
 │   ├── daemonService.ts
 │   ├── healthService.ts
-│   └── voiceApi.ts
+│   ├── voiceApi.ts               # LEGACY HTTP voice
+│   └── voiceWebSocket.ts         # WebSocket client /ws/voice
 ├── types/
 │   ├── api/apiResponse.ts
 │   ├── dto/
@@ -363,8 +401,12 @@ orion/daemon/
 │   │   ├── ProcessWatcher.cs            # Apps ouvertes détectées
 │   │   └── SystemWatcher.cs             # CPU, RAM, réseau
 │   ├── Notifiers/                       # Canaux de sortie sans app ouverte
-│   │   ├── WindowsNotifier.cs           # Notifications Windows natives
-│   │   └── SapiSpeaker.cs              # TTS Windows (System.Speech.Synthesis — 0 NuGet)
+│   │   ├── WindowsToastNotifier.cs     # Toast Windows 10/11
+│   │   ├── WindowsNotifier.cs           # Fallback MessageBox
+│   │   ├── PowerShellTtsNotifier.cs     # TTS SAPI5 via PowerShell
+│   │   └── KokoroSpeaker.cs            # TTS neuronal KokoroSharp.CPU v0.6.6
+│   │                                    # Voix: ff_siwis (French female)
+│   ├── ProactiveOrchestrator.cs          # Patterns → messages → SSE + TTS
 │   └── appsettings.json
 │
 ├── Orion.Daemon.Core/                   # Interfaces + DTOs — aucune dépendance
@@ -853,7 +895,7 @@ Date     : Avril 2026
 ## 12. Ordre de Build Recommandé
 
 ```
-Phase 1 — Core MVP
+Phase 1 — Core MVP ✅
   [x] Setup .NET solution + Supabase tables
   [x] ILLMClient + OllamaClient + AnthropicClient + LLMRouter
   [x] ConversationAgent + MemoryAgent + RAG
@@ -861,25 +903,32 @@ Phase 1 — Core MVP
   [x] ChatController + SSE streaming
   [x] Frontend : entité animée + SlideInput + overlays
 
-Phase 2 — Daemon
-  [ ] Daemon Windows Service + Watchers + Notifiers
-  [ ] Tools système (open_app, run_script...)
-  [ ] WebSocket backend ↔ daemon
+Phase 2 — Daemon ✅
+  [x] Daemon Windows Service + Watchers + Notifiers
+  [x] Tools système (open_app, run_script...)
+  [x] WebSocket backend ↔ daemon
+  [x] Proactive notifications: Daemon → Backend SSE → Frontend
 
 Phase 3 — Connecteurs + Internet
   [ ] Gmail, Calendar
   [ ] web_search, web_fetch, web_browse (Playwright)
   [ ] Tools mémoire autonomes (memory_save, memory_reflect...)
 
-Phase 4 — Voix
-  [ ] Whisper.net STT
-  [ ] Kokoro ONNX TTS (fallback SAPI)
-  [ ] VAD + WebRTC
+Phase 4 — Voix ✅
+  [x] Whisper.net STT (local, gratuit)
+  [x] KokoroSharp.CPU TTS (local, voix ff_siwis)
+  [x] VAD @ricky0123/vad-web + PCM streaming
+  [x] WebSocket /ws/voice full-duplex bidirectionnel
+  [x] Barge-in (interrupt + CancellationToken)
+  [x] Anti-écho (voiceWSResponseRef + speechSynthesis.speaking)
+  [x] ConversationAgent: PrepareStreamAsync + StreamLLMAsync
 
-Phase 5 — 3D holographique + gestes
-  [ ] Three.js / @react-three/fiber + @react-three/drei
-  [ ] HologramCard, HologramChart — données 3D flottantes
-  [ ] Scene3D.tsx + intégration entité 3D
+Phase 5 — 3D holographique + gestes 🚧 EN COURS
+  [x] Three.js / @react-three/fiber + @react-three/drei
+  [x] HologramCard, HologramChart — données 3D flottantes
+  [x] Scene3D.tsx + intégration dans App.tsx
+  [x] HologramResponsePanel — pur Three.js (GLSL, SDF Text, particules)
+  [ ] Entité ORION migrée Canvas 2D → Three.js
   [ ] MediaPipe @mediapipe/hands — gestes mains via caméra
   [ ] useHandTracking.ts + handTracker.ts
 

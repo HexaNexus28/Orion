@@ -82,13 +82,13 @@ public class LLMServiceTests
     public void GetActiveProvider_Should_Return_Router_ActiveProvider()
     {
         // Arrange
-        _mockRouter.Setup(x => x.ActiveProvider).Returns(LLMProvider.Anthropic);
+        _mockRouter.Setup(x => x.ActiveProvider).Returns(LLMProvider.Ollama);
 
         // Act
         var result = _service.GetActiveProvider();
 
         // Assert
-        Assert.Equal(LLMProvider.Anthropic, result);
+        Assert.Equal(LLMProvider.Ollama, result);
     }
 
     [Fact]

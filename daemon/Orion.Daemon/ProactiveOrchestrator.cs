@@ -86,13 +86,14 @@ public class ProactiveOrchestrator
                 "[ProactiveOrchestrator] Pattern detected: {Pattern} from {Watcher}",
                 e.Pattern, sender?.GetType().Name ?? "Unknown");
 
-            // 1. Envoyer au backend pour génération LLM
+            // 1. Appeler le backend : LLM génère + broadcast SSE en une requête
+            // Si backend injoignable, GenerateProactiveMessage retourne un fallback local
             var message = await GenerateProactiveMessage(e);
-            
+
             if (!string.IsNullOrEmpty(message))
             {
-                // 2. Notifier via tous les canaux disponibles
-                await NotifyAll(message);
+                // 2. TTS local en parallèle (si frontend fermé, daemon parle quand même)
+                await NotifyAll(message, e.Pattern);
             }
         }
         catch (Exception ex)
@@ -103,95 +104,79 @@ public class ProactiveOrchestrator
 
     private async Task<string> GenerateProactiveMessage(PatternDetectedEventArgs pattern)
     {
+        // Déléguer au backend → LLM génère un message personnalisé
+        var backendMessage = await TriggerLLMMessageAsync(pattern.Pattern, pattern.Context);
+        if (!string.IsNullOrEmpty(backendMessage))
+            return backendMessage;
+
+        // Fallback local si backend injoignable
+        return GetFallbackMessage(pattern.Pattern, pattern.Context);
+    }
+
+    private async Task<string> TriggerLLMMessageAsync(string pattern, string context)
+    {
         try
         {
-            // Pour l'instant, messages prédéfinis
-            // À terme: appel backend pour génération LLM personnalisée
-            var message = pattern.Pattern switch
+            var payload = new { pattern, context, priority = "normal" };
+            var json = JsonSerializer.Serialize(payload);
+            var content = new StringContent(json, Encoding.UTF8, "application/json");
+            var url = $"{_backendHttpUrl}/api/proactivenotification/trigger";
+
+            var response = await _httpClient.PostAsync(url, content);
+            if (!response.IsSuccessStatusCode)
             {
-                "skip_meal" => "T'as mangé ? Tu es inactif depuis plusieurs heures et c'est l'heure du repas.",
-                "overwork" => "Tu travailles depuis longtemps. Tu devrais faire une pause.",
-                "meal_time" => "Il est l'heure du déjeuner !",
-                "break_time" => "C'est l'heure de la pause. Tu as bien mérité un moment de repos.",
-                "night_time" => "Il se fait tard. Pense à aller te coucher pour être en forme demain.",
-                "high_cpu" => "Ton CPU est surchargé. Je te conseille de fermer quelques applications.",
-                "high_ram" => "Ta mémoire RAM est presque pleine. Tu devrais redémarrer ou fermer des programmes.",
-                _ => pattern.Context
-            };
+                _logger.LogWarning("[ProactiveOrchestrator] Trigger returned {Status}", response.StatusCode);
+                return string.Empty;
+            }
 
-            _logger.LogInformation("[ProactiveOrchestrator] Generated message: {Message}", 
-                message.Length > 50 ? message[..50] + "..." : message);
+            var body = await response.Content.ReadAsStringAsync();
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var message = doc.RootElement
+                .GetProperty("data")
+                .GetProperty("message")
+                .GetString() ?? string.Empty;
 
-            return await Task.FromResult(message);
+            _logger.LogInformation("[ProactiveOrchestrator] LLM message: {Preview}",
+                message.Length > 60 ? message[..60] + "..." : message);
+
+            return message;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[ProactiveOrchestrator] Failed to generate message");
-            return "ORION a détecté quelque chose mais n'a pas pu formuler de message.";
+            _logger.LogError(ex, "[ProactiveOrchestrator] Backend trigger failed");
+            return string.Empty;
         }
     }
+
+    private static string GetFallbackMessage(string pattern, string context) => pattern switch
+    {
+        "skip_meal"  => "T'as mangé ? Tu es inactif depuis plusieurs heures.",
+        "overwork"   => "Tu travailles depuis longtemps. Prends une pause.",
+        "meal_time"  => "C'est l'heure de manger.",
+        "break_time" => "Pause méritée.",
+        "night_time" => "Il se fait tard. Pense à dormir.",
+        "high_cpu"   => "Ton CPU est surchargé. Ferme ce que tu n'utilises pas.",
+        "high_ram"   => "RAM presque pleine. Redémarre ou ferme des apps.",
+        _            => context
+    };
 
     private async Task NotifyAll(string message, string pattern = "proactive")
     {
-        // 1. Envoyer au backend → SSE → frontend → Web Speech API (chemin principal)
-        //    Le frontend parle via Web Speech API si le browser est ouvert
-        var backendReached = await SendToBackendAsync(message, pattern);
-
-        // 2. Fallback TTS local si le frontend n'est pas joignable (browser fermé)
-        //    PowerShell SAPI parle directement — PAS de popup Windows
-        if (!backendReached)
+        // Le /trigger a déjà broadcasté via SSE si le backend est joignable.
+        // Ici on gère uniquement le fallback TTS local (browser fermé).
+        var ttsNotifier = _notifiers.FirstOrDefault(n => n.Name == "PowerShellTtsNotifier" && n.IsAvailable);
+        if (ttsNotifier != null)
         {
-            var ttsNotifier = _notifiers.FirstOrDefault(n => n.Name == "PowerShellTtsNotifier" && n.IsAvailable);
-            if (ttsNotifier != null)
+            try
             {
-                try
-                {
-                    await ttsNotifier.SpeakAsync(message);
-                    _logger.LogInformation("[ProactiveOrchestrator] Fallback TTS (PowerShell) utilisé");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[ProactiveOrchestrator] Fallback TTS échoué");
-                }
-            }
-        }
-        // Aucun Toast/popup Windows — ORION parle, il n'affiche pas
-    }
-
-    private async Task<bool> SendToBackendAsync(string message, string pattern)
-    {
-        try
-        {
-            var payload = new
-            {
-                type = "proactive",
-                title = "ORION",
-                message,
-                priority = "normal",
-                speak = true,
-                timestamp = DateTime.UtcNow
-            };
-
-            var json = JsonSerializer.Serialize(payload);
-            var content = new StringContent(json, Encoding.UTF8, "application/json");
-            var url = $"{_backendHttpUrl}/api/proactivenotification/notify";
-
-            var response = await _httpClient.PostAsync(url, content);
-
-            if (response.IsSuccessStatusCode)
-            {
-                _logger.LogInformation("[ProactiveOrchestrator] SSE → frontend: {Preview}",
+                await ttsNotifier.SpeakAsync(message);
+                _logger.LogInformation("[ProactiveOrchestrator] Fallback TTS local: {Preview}",
                     message.Length > 50 ? message[..50] + "..." : message);
-                return true;
             }
-
-            _logger.LogWarning("[ProactiveOrchestrator] Backend returned {Status}", response.StatusCode);
-            return false;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[ProactiveOrchestrator] Backend injoignable — fallback TTS local");
-            return false;
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[ProactiveOrchestrator] Fallback TTS échoué");
+            }
         }
     }
 }

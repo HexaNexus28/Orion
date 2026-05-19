@@ -60,6 +60,12 @@ public static class ServiceCollectionExtensions
             var options = sp.GetRequiredService<DaemonOptions>();
             return new GitCommitAction(options);
         });
+        services.AddSingleton<IAction, ListFilesAction>();
+        services.AddSingleton<IAction, KillProcessAction>();
+        services.AddSingleton<IAction, GetClipboardAction>();
+        services.AddSingleton<IAction, SetClipboardAction>();
+        services.AddSingleton<IAction, TypeTextAction>();
+        services.AddSingleton<IAction, CaptureScreenAction>();
 
         // TTS Speakers
         services.AddSingleton<KokoroSpeaker>(sp =>

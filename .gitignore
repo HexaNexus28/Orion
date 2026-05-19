@@ -130,3 +130,5 @@ cache/
 notes/
 TODO.md
 todo.md
+# Added by code-review-graph
+.code-review-graph/

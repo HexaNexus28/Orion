@@ -1,27 +1,29 @@
 using Microsoft.Extensions.Logging;
-using Microsoft.ML.OnnxRuntime;
-using Microsoft.ML.OnnxRuntime.Tensors;
+using KokoroSharp;
+using KokoroSharp.Core;
+using KokoroSharp.Processing;
 using Orion.Daemon.Core.Interfaces;
 using System.Runtime.InteropServices;
 
 namespace Orion.Daemon.Notifiers;
 
 /// <summary>
-/// KokoroSpeaker - TTS via Kokoro ONNX
+/// KokoroSpeaker - TTS via KokoroSharp (Kokoro ONNX + espeak-ng phonémisation)
 /// 
-/// Kokoro = moteur TTS neuronal open source
-/// ONNX Runtime = inférence locale rapide
-/// 
-/// Avantage : voix naturelle, 0 coût API, 100% offline
-/// Nécessite : kokoro.onnx + voices.json dans /models
+/// Voix naturelle, 0 coût API, 100% offline
+/// Supporte le français nativement via espeak-ng intégré
 /// </summary>
 public class KokoroSpeaker : INotifier
 {
     private readonly ILogger _logger;
-    private InferenceSession? _session;
-    private bool _isAvailable = false;
-    private readonly string _modelPath;
-    private readonly string _voicesPath;
+    private KokoroTTS? _tts;
+    private KokoroVoice? _voice;
+    private bool _isAvailable;
+    private readonly SemaphoreSlim _initLock = new(1, 1);
+    private bool _isInitializing;
+
+    private const int SampleRate = 24000;
+    private const float SpeechSpeed = 1.0f;
 
     public string Name => "KokoroSpeaker";
     public bool IsAvailable => _isAvailable;
@@ -29,53 +31,56 @@ public class KokoroSpeaker : INotifier
     public KokoroSpeaker(ILogger logger)
     {
         _logger = logger;
-        _modelPath = Path.Combine(AppContext.BaseDirectory, "Voicemodels", "kokoro.onnx");
-        _voicesPath = Path.Combine(AppContext.BaseDirectory, "Voicemodels", "voices.json");
-        
-        InitializeKokoro();
+        _ = Task.Run(InitializeAsync);
     }
 
-    private void InitializeKokoro()
+    private async Task InitializeAsync()
     {
+        if (_isInitializing) return;
+        await _initLock.WaitAsync();
         try
         {
-            if (!File.Exists(_modelPath))
+            if (_isAvailable) return;
+            _isInitializing = true;
+
+            _logger.LogInformation("[KokoroSpeaker] Loading KokoroSharp model (may download ~320MB on first run)...");
+
+            // LoadModel auto-télécharge si le modèle n'est pas présent
+            _tts = await Task.Run(() => KokoroTTS.LoadModel());
+
+            // Lister les voix disponibles
+            var voices = KokoroVoiceManager.Voices.ToList();
+            _logger.LogInformation("[KokoroSpeaker] Available voices: {Voices}",
+                string.Join(", ", voices.Select(v => v.Name)));
+
+            // Voix française — ff_siwis (French female)
+            _voice = KokoroVoiceManager.GetVoice("ff_siwis");
+            if (_voice == null)
             {
-                _logger.LogWarning("[KokoroSpeaker] Model not found at {Path}. Run: wget https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro.onnx", _modelPath);
+                _logger.LogWarning("[KokoroSpeaker] Voice 'ff_siwis' not found, trying fallbacks...");
+                // Fallback : toute voix française (préfixe ff_) ou af_heart
+                _voice = voices.FirstOrDefault(v => v.Name.StartsWith("ff_"))
+                      ?? KokoroVoiceManager.GetVoice("af_heart");
+            }
+
+            if (_voice == null)
+            {
+                _logger.LogError("[KokoroSpeaker] No suitable voice found");
                 return;
             }
 
-            var sessionOptions = new SessionOptions
-            {
-                InterOpNumThreads = 4,
-                IntraOpNumThreads = 4,
-                GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL
-            };
-
-            // GPU si disponible (DirectML sur Windows)
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-            {
-                try
-                {
-                    sessionOptions.AppendExecutionProvider_DML(0);
-                    _logger.LogInformation("[KokoroSpeaker] Using DirectML GPU");
-                }
-                catch
-                {
-                    _logger.LogInformation("[KokoroSpeaker] Using CPU");
-                }
-            }
-
-            _session = new InferenceSession(_modelPath, sessionOptions);
             _isAvailable = true;
-
-            _logger.LogInformation("[KokoroSpeaker] Kokoro ONNX initialized");
-            _logger.LogInformation("[KokoroSpeaker] Model: {Model}", _modelPath);
+            _logger.LogInformation("[KokoroSpeaker] Ready — Voice: {Voice}", _voice.Name);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[KokoroSpeaker] Failed to initialize Kokoro");
+            _logger.LogError(ex, "[KokoroSpeaker] Failed to initialize KokoroSharp");
             _isAvailable = false;
+        }
+        finally
+        {
+            _isInitializing = false;
+            _initLock.Release();
         }
     }
 
@@ -89,7 +94,7 @@ public class KokoroSpeaker : INotifier
     /// </summary>
     public async Task<byte[]?> SynthesizeToWavAsync(string text)
     {
-        if (!_isAvailable || _session == null)
+        if (!_isAvailable || _tts == null || _voice == null)
         {
             _logger.LogWarning("[KokoroSpeaker] Not available for synthesis");
             return null;
@@ -97,17 +102,98 @@ public class KokoroSpeaker : INotifier
 
         try
         {
-            _logger.LogInformation("[KokoroSpeaker] Synthesizing to WAV: {Preview}",
+            _logger.LogInformation("[KokoroSpeaker] Synthesizing: {Preview}",
                 text.Length > 40 ? text[..40] + "..." : text);
 
-            var wavBytes = await RunInferenceAsync(text);
-            _logger.LogInformation("[KokoroSpeaker] WAV bytes: {Bytes}", wavBytes?.Length ?? 0);
+            var allSamples = new List<float>();
+            var tcs = new TaskCompletionSource<bool>();
+
+            int[] tokens = Tokenizer.Tokenize(text);
+
+            if (tokens.Length == 0)
+            {
+                _logger.LogWarning("[KokoroSpeaker] Tokenization returned empty tokens");
+                return null;
+            }
+
+            var segments = SegmentationSystem.SplitToSegments(tokens, new DefaultSegmentationConfig());
+            int remaining = segments.Count;
+
+            var job = KokoroJob.Create(segments, _voice, SpeechSpeed, samples =>
+            {
+                lock (allSamples)
+                {
+                    allSamples.AddRange(samples);
+                    remaining--;
+                    if (remaining <= 0)
+                        tcs.TrySetResult(true);
+                }
+            });
+
+            _tts.EnqueueJob(job);
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            cts.Token.Register(() => tcs.TrySetCanceled());
+
+            await tcs.Task;
+
+            if (allSamples.Count == 0)
+            {
+                _logger.LogWarning("[KokoroSpeaker] No audio generated");
+                return null;
+            }
+
+            var wavBytes = ConvertToWav(allSamples.ToArray(), SampleRate);
+            _logger.LogInformation("[KokoroSpeaker] WAV: {Kb}KB ({Samples} samples)",
+                wavBytes.Length / 1024, allSamples.Count);
             return wavBytes;
+        }
+        catch (TaskCanceledException)
+        {
+            _logger.LogWarning("[KokoroSpeaker] Synthesis timeout");
+            return null;
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[KokoroSpeaker] Failed to synthesize to WAV");
+            _logger.LogError(ex, "[KokoroSpeaker] Synthesis failed");
             return null;
+        }
+    }
+
+    /// <summary>
+    /// Stream synthesis — yields WAV bytes per segment for lower latency.
+    /// Each segment (~1-2 sentences) is returned as soon as ready.
+    /// </summary>
+    public async IAsyncEnumerable<byte[]> SynthesizeStreamAsync(string text)
+    {
+        if (!_isAvailable || _tts == null || _voice == null)
+        {
+            _logger.LogWarning("[KokoroSpeaker] Not available for streaming synthesis");
+            yield break;
+        }
+
+        int[] tokens = Tokenizer.Tokenize(text);
+        if (tokens.Length == 0) yield break;
+
+        var segments = SegmentationSystem.SplitToSegments(tokens, new DefaultSegmentationConfig());
+        var channel = System.Threading.Channels.Channel.CreateUnbounded<float[]>();
+        int remaining = segments.Count;
+
+        var job = KokoroJob.Create(segments, _voice, SpeechSpeed, samples =>
+        {
+            channel.Writer.TryWrite(samples);
+            if (Interlocked.Decrement(ref remaining) <= 0)
+                channel.Writer.TryComplete();
+        });
+
+        _tts.EnqueueJob(job);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+
+        await foreach (var samples in channel.Reader.ReadAllAsync(cts.Token))
+        {
+            if (samples.Length > 0)
+                yield return ConvertToWav(samples, SampleRate);
         }
     }
 
@@ -116,7 +202,7 @@ public class KokoroSpeaker : INotifier
     /// </summary>
     public async Task SpeakAsync(string text)
     {
-        if (!_isAvailable || _session == null)
+        if (!_isAvailable || _tts == null || _voice == null)
         {
             _logger.LogWarning("[KokoroSpeaker] Not available");
             return;
@@ -124,10 +210,10 @@ public class KokoroSpeaker : INotifier
 
         try
         {
-            _logger.LogInformation("[KokoroSpeaker] Speaking locally: {Preview}",
+            _logger.LogInformation("[KokoroSpeaker] Speaking: {Preview}",
                 text.Length > 30 ? text[..30] + "..." : text);
 
-            var wavBytes = await RunInferenceAsync(text);
+            var wavBytes = await SynthesizeToWavAsync(text);
             if (wavBytes != null)
                 await PlayAudioAsync(wavBytes);
         }
@@ -135,56 +221,6 @@ public class KokoroSpeaker : INotifier
         {
             _logger.LogError(ex, "[KokoroSpeaker] Failed to speak");
         }
-    }
-
-    private async Task<byte[]?> RunInferenceAsync(string text)
-    {
-        var phonemes = TextToPhonemes(text);
-        var phonemeIds = PhonemesToIds(phonemes);
-        var voiceId = 0;
-
-        var inputTensor = new DenseTensor<long>(phonemeIds, new[] { phonemeIds.Length, 1 });
-        var voiceTensor = new DenseTensor<long>(new long[] { voiceId }, new[] { 1, 1 });
-        var speedTensor = new DenseTensor<float>(new float[] { 1.0f }, new[] { 1 });
-
-        var inputs = new List<NamedOnnxValue>
-        {
-            NamedOnnxValue.CreateFromTensor("tokens", inputTensor),
-            NamedOnnxValue.CreateFromTensor("voice", voiceTensor),
-            NamedOnnxValue.CreateFromTensor("speed", speedTensor)
-        };
-
-        var results = _session!.Run(inputs);
-        using (results)
-        {
-            var audioData = results.First().AsTensor<float>().ToArray();
-            return await Task.FromResult(ConvertToWav(audioData, 24000));
-        }
-    }
-
-    /// <summary>
-    /// Phonémisation basique (placeholder)
-    /// En production: utiliser espeak-ng ou phonemizer
-    /// </summary>
-    private string TextToPhonemes(string text)
-    {
-        // Simplification: passer le texte directement
-        // Kokoro attend des phonèmes IPA
-        // TODO: Intégrer espeak-ng pour vraie phonémisation
-        return text.ToLower()
-            .Replace("hello", "həˈloʊ")
-            .Replace("bonjour", "bɔ̃ʒuʁ")
-            .Replace("orion", "ɔˈɹaɪən");
-    }
-
-    /// <summary>
-    /// Conversion phonèmes → IDs (simplifié)
-    /// </summary>
-    private long[] PhonemesToIds(string phonemes)
-    {
-        // Mapping basique: chaque caractère = un ID
-        // En production: utiliser le vocabulaire Kokoro officiel
-        return phonemes.Select(c => (long)(c % 256)).ToArray();
     }
 
     /// <summary>
@@ -214,27 +250,25 @@ public class KokoroSpeaker : INotifier
     /// <summary>
     /// Convertit float[] audio en WAV PCM 16-bit
     /// </summary>
-    private byte[] ConvertToWav(float[] audioData, int sampleRate)
+    private static byte[] ConvertToWav(float[] audioData, int sampleRate)
     {
         using var ms = new MemoryStream();
         using var writer = new BinaryWriter(ms);
 
-        // Header WAV
         writer.Write("RIFF".ToCharArray());
-        writer.Write(36 + audioData.Length * 2); // File size
+        writer.Write(36 + audioData.Length * 2);
         writer.Write("WAVE".ToCharArray());
         writer.Write("fmt ".ToCharArray());
-        writer.Write(16); // Subchunk1Size
-        writer.Write((short)1); // AudioFormat (PCM)
-        writer.Write((short)1); // NumChannels (mono)
+        writer.Write(16);
+        writer.Write((short)1);
+        writer.Write((short)1);
         writer.Write(sampleRate);
-        writer.Write(sampleRate * 2); // ByteRate
-        writer.Write((short)2); // BlockAlign
-        writer.Write((short)16); // BitsPerSample
+        writer.Write(sampleRate * 2);
+        writer.Write((short)2);
+        writer.Write((short)16);
         writer.Write("data".ToCharArray());
-        writer.Write(audioData.Length * 2); // Subchunk2Size
+        writer.Write(audioData.Length * 2);
 
-        // Data PCM 16-bit
         foreach (var sample in audioData)
         {
             var pcm = (short)(Math.Clamp(sample, -1f, 1f) * 32767);

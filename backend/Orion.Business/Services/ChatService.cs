@@ -1,3 +1,4 @@
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs;
 using Orion.Core.DTOs.Requests;
@@ -5,9 +6,11 @@ using Orion.Core.DTOs.Responses;
 using Orion.Core.Entities;
 using Orion.Core.Enums;
 using Orion.Core.Interfaces.Agents;
+using Orion.Core.Interfaces.Daemon;
 using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Core.Interfaces.Services;
+using Orion.Business.LLM;
 
 namespace Orion.Business.Services;
 
@@ -16,19 +19,28 @@ public class ChatService : IChatService
     private readonly IConversationAgent _conversationAgent;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
-    private readonly VoiceNotificationService _voiceNotification;
+    private readonly ILLMRouter _llmRouter;
+    private readonly PromptBuilder _promptBuilder;
+    private readonly IDaemonClient _daemonClient;
+    private readonly IVoiceNotificationService _voiceNotification;
     private readonly ILogger<ChatService> _logger;
 
     public ChatService(
         IConversationAgent conversationAgent,
         IUnitOfWork unitOfWork,
         IAuditService auditService,
-        VoiceNotificationService voiceNotification,
+        ILLMRouter llmRouter,
+        PromptBuilder promptBuilder,
+        IDaemonClient daemonClient,
+        IVoiceNotificationService voiceNotification,
         ILogger<ChatService> logger)
     {
         _conversationAgent = conversationAgent;
         _unitOfWork = unitOfWork;
         _auditService = auditService;
+        _llmRouter = llmRouter;
+        _promptBuilder = promptBuilder;
+        _daemonClient = daemonClient;
         _voiceNotification = voiceNotification;
         _logger = logger;
     }
@@ -136,48 +148,18 @@ public class ChatService : IChatService
     }
 
     /// <summary>
-    /// Stream a message response word by word (Server-Sent Events)
-    /// Phase 4: Real-time streaming for voice interface
+    /// Stream a message response token by token — délègue à ConversationAgent
     /// </summary>
     public async IAsyncEnumerable<string> StreamMessageAsync(
-        ChatRequest request, 
+        ChatRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         _auditService.SetCorrelationId(Guid.NewGuid().ToString("N"));
         _logger.LogInformation("[ChatService] Streaming message for session {SessionId}", request.SessionId);
 
-        // For now, simulate streaming by processing normally and yielding words
-        // In production, this should connect to ILLMClient.StreamAsync for true streaming
-        var response = await _conversationAgent.ProcessAsync(request, ct);
-
-        if (response.Success && response.Data != null)
+        await foreach (var chunk in _conversationAgent.StreamAsync(request, ct))
         {
-            var content = response.Data.Response;
-            var words = content.Split(' ');
-
-            foreach (var word in words)
-            {
-                yield return word + " ";
-                await Task.Delay(50, ct); // Simulate typing delay
-            }
-
-            // Audit the streamed message
-            var metadata = System.Text.Json.JsonSerializer.Serialize(new
-            {
-                sessionId = request.SessionId,
-                wordCount = words.Length,
-                duration = words.Length * 50
-            });
-            await _auditService.LogAsync(
-                entityType: "ChatMessageStream",
-                entityId: Guid.NewGuid().ToString(),
-                action: "Stream",
-                metadata: metadata
-            );
-        }
-        else
-        {
-            yield return response.Message ?? "Error processing message";
+            yield return chunk;
         }
     }
 }

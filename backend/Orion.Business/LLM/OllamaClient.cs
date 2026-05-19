@@ -282,7 +282,15 @@ public class OllamaClient : ILLMClient
         return lowerError.Contains("memory") ||
                lowerError.Contains("system memory") ||
                lowerError.Contains("not found") ||
-               lowerError.Contains("unavailable");
+               lowerError.Contains("unavailable") ||
+               lowerError.Contains("model") ||
+               lowerError.Contains("hôte") ||
+               lowerError.Contains("host") ||
+               lowerError.Contains("socket") ||
+               lowerError.Contains("connection") ||
+               lowerError.Contains("forbidden") ||
+               lowerError.Contains("401") ||
+               lowerError.Contains("403");
     }
 
     public async Task StreamAsync(LLMRequest request, Func<string, Task> onChunk, CancellationToken ct = default)

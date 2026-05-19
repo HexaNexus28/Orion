@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { chatService } from '../services/chatService';
-import { transcribeBlob } from '../services/voiceApi';
+import { converseStream } from '../services/voiceApi';
 import type { OrionState } from '../types';
 
 interface ChatMessage {
@@ -12,6 +12,7 @@ interface ChatMessage {
 
 interface UseChatOptions {
   onStateChange?: (state: OrionState) => void;
+  onAudioChunk?: (chunk: ArrayBuffer) => void;
 }
 
 export const useChat = (options: UseChatOptions = {}) => {
@@ -59,29 +60,39 @@ export const useChat = (options: UseChatOptions = {}) => {
     }
   }, [options]);
 
-  const sendVoiceMessage = useCallback(async (audioBlob: Blob) => {
+  const sendVoiceMessage = useCallback(async (audioBlob: Blob, sessionId?: string, language: string = 'fr') => {
     options.onStateChange?.('listening');
+    setIsStreaming(true);
+    setError(null);
 
     try {
-      // 1. Transcribe
-      const transcribeRes = await transcribeBlob(audioBlob);
-      if (!transcribeRes.success || !transcribeRes.data) {
-        throw new Error(transcribeRes.message || 'Transcription failed');
-      }
-
-      const transcript = transcribeRes.data.transcript;
-      if (!transcript.trim()) {
-        throw new Error('No speech detected');
-      }
-
-      // 2. Send as text message
-      await sendMessage(transcript);
+      await converseStream(
+        audioBlob,
+        (transcript) => {
+          const userMsg: ChatMessage = {
+            id: Date.now().toString(),
+            role: 'user',
+            content: transcript,
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, userMsg]);
+          options.onStateChange?.('thinking');
+        },
+        (chunk) => {
+          options.onAudioChunk?.(chunk);
+        },
+        sessionId,
+        language
+      );
+      options.onStateChange?.('idle');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Voice processing failed';
       setError(errorMsg);
       options.onStateChange?.('error');
+    } finally {
+      setIsStreaming(false);
     }
-  }, [sendMessage, options]);
+  }, [options]);
 
   const clear = useCallback(() => {
     setMessages([]);

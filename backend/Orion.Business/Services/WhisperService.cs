@@ -1,5 +1,5 @@
 using Microsoft.Extensions.Logging;
-using Orion.Core.Common;
+using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Services;
 using Whisper.net;
 using Whisper.net.Ggml;
@@ -33,7 +33,7 @@ public class WhisperService : IWhisperService, IDisposable
     public WhisperService(ILogger<WhisperService> logger)
     {
         _logger = logger;
-        _modelPath = Path.Combine(AppContext.BaseDirectory, "models", "whisper", "ggml-base.bin");
+        _modelPath = Path.Combine(AppContext.BaseDirectory, "models", "whisper", "ggml-small.bin");
         
         // Initialisation lazy - ne bloque pas le constructeur
         _ = InitializeAsync();
@@ -59,8 +59,8 @@ public class WhisperService : IWhisperService, IDisposable
             // Télécharger le modèle s'il n'existe pas
             if (!File.Exists(_modelPath))
             {
-                _logger.LogInformation("[Whisper] Téléchargement du modèle base...");
-                await DownloadModelAsync(GgmlType.Base, _modelPath);
+                _logger.LogInformation("[Whisper] Téléchargement du modèle small...");
+                await DownloadModelAsync(GgmlType.Small, _modelPath);
                 _logger.LogInformation("[Whisper] Modèle téléchargé avec succès");
             }
 
@@ -99,7 +99,7 @@ public class WhisperService : IWhisperService, IDisposable
     /// <summary>
     /// Transcrit un stream audio
     /// </summary>
-    public async Task<Result<string>> TranscribeAsync(Stream audioStream, string? language = null)
+    public async Task<ApiResponse<string>> TranscribeAsync(Stream audioStream, string? language = null)
     {
         try
         {
@@ -109,7 +109,7 @@ public class WhisperService : IWhisperService, IDisposable
                 await InitializeAsync();
                 if (!IsReady)
                 {
-                    return Result<string>.Failure("Whisper non initialisé");
+                    return ApiResponse<string>.ErrorResponse("Whisper non initialisé", 503);
                 }
             }
 
@@ -131,19 +131,19 @@ public class WhisperService : IWhisperService, IDisposable
             var transcript = text.ToString().Trim();
             _logger.LogDebug("[Whisper] Transcrit: {Length} caractères", transcript.Length);
             
-            return Result<string>.Success(transcript);
+            return ApiResponse<string>.SuccessResponse(transcript);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[Whisper] Erreur de transcription");
-            return Result<string>.Failure($"Erreur STT: {ex.Message}");
+            return ApiResponse<string>.ErrorResponse($"Erreur STT: {ex.Message}", 500);
         }
     }
 
     /// <summary>
     /// Transcrit des données audio brutes
     /// </summary>
-    public async Task<Result<string>> TranscribeAsync(byte[] audioData, string? language = null)
+    public async Task<ApiResponse<string>> TranscribeAsync(byte[] audioData, string? language = null)
     {
         using var stream = new MemoryStream(audioData);
         return await TranscribeAsync(stream, language);

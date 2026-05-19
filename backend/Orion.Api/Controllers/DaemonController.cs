@@ -3,6 +3,7 @@ using Orion.Business.Daemon;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
+using Orion.Core.Interfaces.Tools;
 
 namespace Orion.Api.Controllers;
 
@@ -12,11 +13,13 @@ public class DaemonController : ControllerBase
 {
     private readonly IDaemonClient _daemonClient;
     private readonly DaemonActionValidator _validator;
+    private readonly IToolRegistry _toolRegistry;
 
-    public DaemonController(IDaemonClient daemonClient, DaemonActionValidator validator)
+    public DaemonController(IDaemonClient daemonClient, DaemonActionValidator validator, IToolRegistry toolRegistry)
     {
         _daemonClient = daemonClient;
         _validator = validator;
+        _toolRegistry = toolRegistry;
     }
 
     [HttpGet("status")]
@@ -49,18 +52,9 @@ public class DaemonController : ControllerBase
     [HttpGet("tools")]
     public IActionResult GetAvailableTools()
     {
-        var tools = new[]
-        {
-            new { name = "open_app", description = "Open an application", parameters = new[] { "application" } },
-            new { name = "open_file", description = "Open a file in editor", parameters = new[] { "path", "editor" } },
-            new { name = "run_script", description = "Run PowerShell script", parameters = new[] { "script", "workingDir" } },
-            new { name = "open_url", description = "Open URL in browser", parameters = new[] { "url" } },
-            new { name = "system_status", description = "Get system info", parameters = Array.Empty<string>() },
-            new { name = "read_file", description = "Read file contents", parameters = new[] { "path", "maxLines" } },
-            new { name = "write_file", description = "Write to file", parameters = new[] { "path", "content" } },
-            new { name = "git_status", description = "Get git status", parameters = new[] { "path" } },
-            new { name = "git_commit", description = "Commit changes", parameters = new[] { "path", "message" } },
-        };
+        var tools = _toolRegistry.GetAllTools()
+            .Select(t => new { name = t.Name, description = t.Description })
+            .OrderBy(t => t.name);
 
         return Ok(ApiResponse<object>.SuccessResponse(tools));
     }
