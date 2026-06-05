@@ -132,3 +132,10 @@ TODO.md
 todo.md
 # Added by code-review-graph
 .code-review-graph/
+
+# ── IDE / AI assistants (configs locales / outils) ──
+.mcp.json
+.cursor/
+.windsurf/
+.windsurfrules
+.claude/settings.local.json
