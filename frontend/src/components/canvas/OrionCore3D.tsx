@@ -98,9 +98,6 @@ export const OrionCore3D: React.FC<OrionCore3DProps> = ({ onTap, onLongPress, on
   const isLongPressRef = useRef(false);
   const lastTapRef = useRef(0);
 
-  const config = STATE_CONFIGS[state] ?? STATE_CONFIGS.idle;
-
-
   const handlePointerDown = useCallback((e: ThreeEvent<PointerEvent>) => {
     e.stopPropagation();
     isLongPressRef.current = false;

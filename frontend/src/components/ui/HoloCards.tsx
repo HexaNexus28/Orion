@@ -1,6 +1,6 @@
 // components/ui/HoloCards.tsx
 // Draggable holographic info cards — floating over the 3D canvas
-import { useState, useRef } from 'react';
+import { useState } from 'react';
 import { motion, useDragControls } from 'framer-motion';
 
 export interface HoloCard {
@@ -20,7 +20,6 @@ interface HoloCardItemProps {
 
 const HoloCardItem: React.FC<HoloCardItemProps> = ({ card, index, onClose }) => {
   const dragControls = useDragControls();
-  const constraintRef = useRef<HTMLDivElement>(null);
 
   const accent = card.color ?? '#22d3ee';
 
