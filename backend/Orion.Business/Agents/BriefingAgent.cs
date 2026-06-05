@@ -41,7 +41,7 @@ public class BriefingAgent : IBriefingAgent
 
         var request = new LLMRequest
         {
-            SystemPrompt = "Tu es ORION, l'assistant IA personnel de Yawo Zoglo. Génère uniquement le briefing demandé, sans introduction ni conclusion supplémentaire.",
+            SystemPrompt = "Tu es ORION, l'assistant IA personnel de l'utilisateur. Génère uniquement le briefing demandé, sans introduction ni conclusion supplémentaire.",
             Messages = [new LLMMessage { Role = "user", Content = prompt }],
             Temperature = 0.7f,
             MaxTokens = 300
@@ -79,7 +79,7 @@ public class BriefingAgent : IBriefingAgent
         _logger.LogInformation("[BriefingAgent] Generating proactive message for pattern: {Pattern}", pattern);
 
         var profiles = await _unitOfWork.UserProfile.GetAllAsync(ct);
-        var userName = profiles.FirstOrDefault(p => p.Key == "name")?.Value ?? "Yawo";
+        var userName = profiles.FirstOrDefault(p => p.Key == "name")?.Value ?? "User";
 
         var prompt = BuildProactivePrompt(pattern, context, userName);
 

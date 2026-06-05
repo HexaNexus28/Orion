@@ -1,6 +1,8 @@
 # ORION — Assistant IA Personnel
 
-> Assistant IA personnel de Yawo Zoglo — futur moteur IA d'HexaNexus.
+> Assistant IA personnel de l'utilisateur — futur moteur IA d'HexaNexus.
+>
+> **Auteur** : Yawo Zoglo ([@HexaNexus28](https://github.com/HexaNexus28))
 
 ## Architecture
 
@@ -159,4 +161,4 @@ HEXANEXUS (produit multi-tenant PME/TPE)
 
 ## Licence
 
-Projet privé — Yawo Zoglo / HexaNexus.
+Réalisé par **Yawo Zoglo** — écosystème HexaNexus.

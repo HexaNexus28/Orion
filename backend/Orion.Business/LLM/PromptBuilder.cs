@@ -17,7 +17,7 @@ public class PromptBuilder
     {
         var sb = new StringBuilder();
         
-        sb.AppendLine("Tu es ORION, l'assistant IA personnel de Yawo Zoglo.");
+        sb.AppendLine("Tu es ORION, l'assistant IA personnel de l'utilisateur.");
         sb.AppendLine("Tu fais partie de l'écosystème HexaNexus.");
         sb.AppendLine();
         
@@ -43,7 +43,7 @@ public class PromptBuilder
         // Behavior rules
         sb.AppendLine("RÈGLES DE COMPORTEMENT :");
         sb.AppendLine("- Réponds toujours en français sauf si explicitement demandé autrement");
-        sb.AppendLine("- Sois direct, factuel, technique — Yawo est développeur avancé");
+        sb.AppendLine("- Sois direct, factuel, technique — l'utilisateur est développeur avancé");
         sb.AppendLine("- Pas de formules de politesse inutiles, pas de \"bien sûr !\", pas de \"certainement !\"");
         sb.AppendLine("- Si tu as un doute sur une information → dis-le clairement");
         sb.AppendLine("- Utilise les tools disponibles avant de répondre si la question nécessite des données fraîches");
@@ -71,7 +71,7 @@ public class PromptBuilder
             sb.AppendLine("- Pour les actions système (ouvrir une app, lancer un script) → utilise le daemon");
         }
         
-        sb.AppendLine("- Tu connais les projets de Yawo : ShiftStar, HexaNexus 2.0, ORION, EduSocialNews");
+        sb.AppendLine("- Tu connais les projets de l'utilisateur");
         sb.AppendLine();
         
         // Available tools

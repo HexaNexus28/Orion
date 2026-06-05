@@ -135,7 +135,7 @@ public async IAsyncEnumerable<string> StreamAsync(
 
     // 5. Build system prompt
     var systemPrompt = _promptBuilder.BuildSystemPrompt(
-        new Dictionary<string, string> { ["name"] = "Yawo" },
+        new Dictionary<string, string> { ["name"] = "User" },
         new List<MemoryVector>(),
         new List<ToolCallDto>(),
         daemonConnected: _daemonClient.IsConnected,

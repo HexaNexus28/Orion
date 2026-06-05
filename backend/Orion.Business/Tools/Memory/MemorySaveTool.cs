@@ -9,7 +9,7 @@ namespace Orion.Business.Tools.Memory;
 /// <summary>
 /// memory_save - Sauvegarde un fait important
 /// ORION décide seul quand c'est critique
-/// Ex: utilisateur annonce qu'Areas France a signé → ORION sauvegarde sans qu'on demande
+/// Ex: utilisateur annonce qu'un client a signé → ORION sauvegarde sans qu'on demande
 /// </summary>
 public class MemorySaveTool : ITool
 {

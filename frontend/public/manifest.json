@@ -1,7 +1,7 @@
 {
   "name": "ORION - Assistant IA",
   "short_name": "ORION",
-  "description": "Assistant IA personnel de Yawo Zoglo - Interface temps réel avec Ollama/Claude",
+  "description": "Assistant IA personnel - Interface temps réel avec Ollama/Claude",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",

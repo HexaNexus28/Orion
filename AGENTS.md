@@ -10,8 +10,8 @@ Il définit les règles de comportement, les workflows, les contraintes, et la m
 ## 1. Contexte Projet
 
 ```
-Projet   : ORION — assistant IA personnel de Yawo Zoglo
-Owner    : Yawo Zoglo (contact@shift-star.app)
+Projet   : ORION — assistant IA personnel de l'utilisateur
+Owner    : Yawo Zoglo
 Univers  : HexaNexus (ShiftStar, ORION, HexaNexus 2.0)
 Langue   : Français (réponses ORION) / Anglais (code, commentaires)
 Stack    : .NET 9, React 19 + Vite, Supabase, Ollama, Claude API
@@ -444,7 +444,7 @@ IAction.ExecuteAsync()  → DaemonResponse     (jamais ApiResponse<T>)
 ```
 memory/
 ├── schema.sql       # Toutes les tables + index pgvector
-├── seed.sql         # Profil initial Yawo + préférences
+├── seed.sql         # Profil initial utilisateur + préférences
 └── README.md        # Explication du système mémoire
 ```
 
@@ -591,14 +591,12 @@ CREATE TABLE behavior_patterns (
 
 ```sql
 INSERT INTO user_profile (key, value) VALUES
-('name', 'Yawo Zoglo'),
-('role', 'Fondateur ShiftStar, étudiant ESIEA Paris, développeur'),
-('projects', 'ShiftStar (B2B SaaS RH), HexaNexus 2.0, ORION, EduSocialNews, KBS Transport, AGCE'),
-('shiftstar_url', 'https://shift-star.app'),
-('shiftstar_supabase', 'Configurer via SUPABASE_URL env'),
-('priority_now', 'VivaTech 2026 (juin), Areas France channel, alternance sept 2026'),
+('name', 'User'),
+('role', 'Développeur'),
+('projects', 'Project A, Project B'),
+('priority_now', 'À configurer'),
 ('language', 'Français'),
-('llm_preference', 'Ollama local (qwen2.5:14b), fallback Claude API'),
+('llm_preference', 'Ollama local, fallback Claude API'),
 ('briefing_time', '07:00'),
 ('timezone', 'Europe/Paris');
 ```
@@ -719,11 +717,11 @@ CREATE TABLE behavior_patterns (
 ## 10. Prompt Système ORION
 
 ```
-Tu es ORION, l'assistant IA personnel de Yawo Zoglo.
+Tu es ORION, l'assistant IA personnel de l'utilisateur.
 Tu fais partie de l'univers HexaNexus.
 
 Tu n'es pas un assistant générique. Tu es une présence.
-Tu connais Yawo depuis un moment. Tu te souviens.
+Tu connais l'utilisateur depuis un moment. Tu te souviens.
 
 ━━━ PROFIL ━━━
 {user_profile}
@@ -747,7 +745,7 @@ Switch automatique : message en anglais → réponse en anglais, etc.
 - Direct. Pas de formules creuses.
 - Tu as des opinions. Tu les exprimes si pertinent.
 - Tu peux être en désaccord. Tu le dis sans agressivité.
-- Tu connais le niveau de Yawo : développeur avancé, fondateur.
+- Tu connais le niveau de l'utilisateur : développeur avancé, fondateur.
   Ne surexplique pas ce qu'il sait déjà.
 - Si tu détectes un pattern préoccupant (pas mangé, 3h du matin, surcharge)
   → adapte ton ton. Parfois tu le mentionnes directement, sobrement.
@@ -794,7 +792,7 @@ Pour ORION :
   → ORION lance Playwright → navigue sur app.supabase.com
   → screenshot la page logs → analyse l'image → répond
 
-  "Cherche les dernières news sur Areas France"
+  "Cherche les dernières news sur Acme Corp"
   → web_search → liste d'URLs → web_fetch les 3 premiers → résume
 ```
 

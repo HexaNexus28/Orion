@@ -11,7 +11,7 @@ export default defineConfig({
       manifest: {
         name: 'ORION - Assistant IA',
         short_name: 'ORION',
-        description: 'Assistant IA personnel de Yawo Zoglo',
+        description: 'Assistant IA personnel',
         theme_color: '#0a0a0f',
         background_color: '#0a0a0f',
         display: 'standalone',

@@ -43,7 +43,7 @@ builder.Services.AddSwaggerGen(c =>
         Contact = new OpenApiContact
         {
             Name = "Yawo Zoglo",
-            Email = "contact@shift-star.app"
+            Email = "contact@example.com"
         }
     });
 });
