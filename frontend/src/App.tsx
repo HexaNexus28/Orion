@@ -11,6 +11,7 @@ import { useGestureControl } from './hooks/useGestureControl';
 import { useVAD } from './hooks/useVAD';
 import { useVoiceWS } from './hooks/useVoiceWS';
 import { useStream } from './hooks/useStream';
+import { ToolActivityStrip } from './components/overlay/ToolActivityStrip';
 import { useOrionNotifications } from './hooks/useOrionNotifications';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
@@ -18,7 +19,7 @@ const SWIPE_THRESHOLD = 80;
 
 const App: React.FC = () => {
   const { state: entityState, setState, setAmplitude, updateAmplitude, amplitudeRef } = useEntity();
-  const { text: responseText, isStreaming, streamMessage, reset, appendChunk, setStreaming } = useStream();
+  const { text: responseText, isStreaming, tools: toolActivity, streamMessage, reset, appendChunk, pushTool, setStreaming } = useStream();
   const { daemonConnected } = useOrionStatus();
   const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
   const spokenUpToRef = useRef(0);
@@ -243,6 +244,19 @@ const App: React.FC = () => {
     onLLMChunk: (chunk) => {
       appendChunk(chunk);
     },
+    onNoSpeech: () => {
+      // Bruit ambiant capte par le VAD : on revient au repos, sans afficher d'erreur.
+      setStreaming(false);
+      setState('idle');
+    },
+    onToolStart: (tool, args) => {
+      console.log('[App] ORION execute:', tool);
+      pushTool({ tool, args, status: 'running', iteration: 0 });
+    },
+    onToolResult: (tool, ok, summary) => {
+      console.log('[App] Outil termine:', tool, ok);
+      pushTool({ tool, status: ok ? 'ok' : 'failed', summary, iteration: 0 });
+    },
     onLLMDone: (fullText) => {
       console.log('[App] LLM done:', fullText.substring(0, 60) + '...');
       // Keep isStreaming=true until TTS finishes — text stays "live" while ORION speaks
@@ -296,6 +310,13 @@ const App: React.FC = () => {
     isProcessingVoiceRef.current = true;
     setState('thinking');
 
+    // Consommer la prise : sans ça, `audioBlobRef` reste non-nul après le tour et la condition
+    // ligne ~375 redevient vraie dès que `isTurnActive` retombe (fin de réponse d'ORION).
+    // Un tour fantôme repartait alors sur le bruit ambiant accumulé côté serveur — ORION
+    // répondait à côté, comme s'il n'avait pas écouté. Le déclencheur doit être un FRONT
+    // (une prise = un tour), pas un état permanent.
+    audioBlobRef.current = null;
+
     // Tell WebSocket server that speech ended → triggers STT + LLM + TTS
     endAudio();
 
@@ -305,6 +326,7 @@ const App: React.FC = () => {
       isProcessingVoiceRef.current = false;
     }, 500);
   }, [isInputVisible, setState, endAudio]);
+
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
@@ -398,6 +420,9 @@ const App: React.FC = () => {
         onLongPress={processVoiceTurn}
         onDoubleTap={handleOpenSettings}
       />
+
+      {/* Trace des actions — ce qu'ORION FAIT, pas seulement ce qu'il dit */}
+      <ToolActivityStrip tools={toolActivity} />
 
       {/* HoloCards draggables — données structurées extraites de la réponse */}
       {!isStreaming && responseText && (

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { apiClient } from './api';
 import { ENDPOINTS } from '../config/endpoints';
-import type { ApiResponse, BriefingDto } from '../types/dto';
+import type { ApiResponse, BriefingDto } from '../types';
 
 // Briefing Service - Future BriefingController
 class BriefingService {

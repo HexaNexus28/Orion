@@ -1,6 +1,7 @@
 // index.ts - Réexportation centrale des types ORION
 
 import type { OrionState } from './models/entityState';
+import type { ToolActivity } from './dto/agentDto';
 export type { OrionState };
 
 // =============================================================================
@@ -34,6 +35,12 @@ export type {
   ChatMessage,
   ToolCallDto,
 } from './dto/chatDto';
+
+export type {
+  AgentEvent,
+  AgentEventType,
+  ToolActivity,
+} from './dto/agentDto';
 
 export type {
   ToolInfo,
@@ -78,6 +85,10 @@ export interface OrionEntityProps {
   onLongPress?: () => void;
   onLongPressEnd?: () => void;
   onDoubleTap?: () => void;
+}
+
+export interface ToolActivityStripProps {
+  tools: ToolActivity[];
 }
 
 export interface ResponseTextProps {

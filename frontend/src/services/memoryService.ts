@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
 import { apiClient } from './api';
 import { ENDPOINTS } from '../config/endpoints';
-import type { ApiResponse, MemoryVectorDto } from '../types/dto';
+import type { ApiResponse, MemoryVectorDto } from '../types';
 
 // Memory Service - Future MemoryController
 class MemoryService {

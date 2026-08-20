@@ -1,6 +1,6 @@
 import axios, { AxiosInstance } from 'axios';
 import { axiosConfig } from '../config/endpoints';
-import type { ApiResponse } from '../types/dto';
+import type { ApiResponse } from '../types';
 
 // Create axios instance with default config
 const apiClient: AxiosInstance = axios.create(axiosConfig);
