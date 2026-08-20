@@ -87,6 +87,15 @@ export interface OrionEntityProps {
   onDoubleTap?: () => void;
 }
 
+export interface VoiceStatusHintProps {
+  state: OrionState;
+  isListening: boolean;
+  isSpeaking: boolean;
+  /** Le micro a été refusé : seul cas actionnable, il prime sur l'état courant. */
+  micDenied: boolean;
+  onRetryMic: () => void;
+}
+
 export interface ToolActivityStripProps {
   tools: ToolActivity[];
 }

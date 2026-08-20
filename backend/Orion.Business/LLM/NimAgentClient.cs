@@ -108,13 +108,16 @@ public class NimAgentClient : ILLMAgentClient
     {
         try
         {
-            var payload = new
+            var payload = new Dictionary<string, object>
             {
-                model,
-                stream = false,
-                max_tokens = 4,
-                messages = new[] { new { role = "user", content = "ping" } }
+                ["model"] = model,
+                ["stream"] = false,
+                ["max_tokens"] = 4,
+                ["messages"] = new[] { new { role = "user", content = "ping" } }
             };
+
+            if (!_options.EnableThinking)
+                payload["chat_template_kwargs"] = new { thinking = false };
 
             using var http = CreateClient();
             using var response = await http.PostAsJsonAsync("chat/completions", payload, ct);
@@ -149,6 +152,11 @@ public class NimAgentClient : ILLMAgentClient
         };
 
         if (request.MaxTokens is > 0) payload["max_tokens"] = request.MaxTokens.Value;
+
+        // Coupe la trace de raisonnement à la source. Sans ça elle finit dans `content` dès que
+        // le budget de tokens est serré — et le TTS la lit à voix haute.
+        if (!_options.EnableThinking)
+            payload["chat_template_kwargs"] = new { thinking = false };
 
         if (request.Tools is { Count: > 0 })
         {

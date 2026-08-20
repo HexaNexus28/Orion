@@ -25,5 +25,15 @@ public class NimOptions
 
     public int TimeoutSeconds { get; set; } = 120;
 
+    /// <summary>
+    /// Mode « réflexion » des modèles Nemotron. Désactivé par défaut, et ce n'est pas un détail :
+    /// avec un budget de tokens serré, la trace de raisonnement consomme tout et **déborde dans
+    /// la réponse**. Observé le 2026-08-20 — ORION affichait et PRONONÇAIT « Okay, the user is
+    /// telling me that the RAM is at 95%... » au lieu du message destiné à l'utilisateur.
+    /// Vérifié : `chat_template_kwargs.thinking=false` supprime la fuite ; le préfixe `/no_think`
+    /// est ignoré par ce modèle.
+    /// </summary>
+    public bool EnableThinking { get; set; } = false;
+
     public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey);
 }

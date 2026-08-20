@@ -12,6 +12,7 @@ import { useVAD } from './hooks/useVAD';
 import { useVoiceWS } from './hooks/useVoiceWS';
 import { useStream } from './hooks/useStream';
 import { ToolActivityStrip } from './components/overlay/ToolActivityStrip';
+import { VoiceStatusHint } from './components/overlay/VoiceStatusHint';
 import { useOrionNotifications } from './hooks/useOrionNotifications';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
@@ -420,6 +421,20 @@ const App: React.FC = () => {
         onLongPress={processVoiceTurn}
         onDoubleTap={handleOpenSettings}
       />
+
+      {/* Ce qu'ORION fait, et ce que l'utilisateur peut faire maintenant */}
+      {!isInputVisible && (
+        <VoiceStatusHint
+          state={entityState}
+          isListening={isListening}
+          isSpeaking={isSpeaking}
+          micDenied={Boolean(voiceError) && !isListening}
+          onRetryMic={() => {
+            setVoiceError(null);
+            void startPassiveListeningRef.current?.();
+          }}
+        />
+      )}
 
       {/* Trace des actions — ce qu'ORION FAIT, pas seulement ce qu'il dit */}
       <ToolActivityStrip tools={toolActivity} />
