@@ -1,5 +1,3 @@
-using Microsoft.Extensions.Logging;
-using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Enums;
 using Orion.Core.Interfaces.LLM;
@@ -9,48 +7,22 @@ namespace Orion.Business.Services;
 
 public class LLMService : ILLMService
 {
-    private readonly ILLMRouter _llmRouter;
-    private readonly ILogger<LLMService> _logger;
+    private readonly ILLMAgentClient _llmClient;
 
-    public LLMService(ILLMRouter llmRouter, ILogger<LLMService> logger)
+    public LLMService(ILLMAgentClient llmClient)
     {
-        _llmRouter = llmRouter;
-        _logger = logger;
+        _llmClient = llmClient;
     }
 
-    public async Task<ApiResponse<LLMResponse>> CompleteAsync(LLMRequest request, CancellationToken ct = default)
+    public ApiResponse<LLMStatusDto> GetStatus()
     {
-        return await _llmRouter.CompleteAsync(request, ct);
-    }
+        var provider = _llmClient.Provider;
 
-    public async Task<ApiResponse<LLMResponse>> CompleteWithPromptAsync(
-        string systemPrompt, string userMessage, CancellationToken ct = default)
-    {
-        var request = new LLMRequest
+        return ApiResponse<LLMStatusDto>.SuccessResponse(new LLMStatusDto
         {
-            SystemPrompt = systemPrompt,
-            Messages = new List<LLMMessage>
-            {
-                new() { Role = "user", Content = userMessage }
-            }
-        };
-
-        return await _llmRouter.CompleteAsync(request, ct);
-    }
-
-    public async Task StreamAsync(LLMRequest request, Func<string, Task> onChunk, CancellationToken ct = default)
-    {
-        await _llmRouter.StreamAsync(request, onChunk, ct);
-    }
-
-    public Task<ApiResponse<bool>> IsAvailableAsync(CancellationToken ct = default)
-    {
-        var isAvailable = _llmRouter.ActiveProvider != LLMProvider.None;
-        return Task.FromResult(ApiResponse<bool>.SuccessResponse(isAvailable));
-    }
-
-    public LLMProvider GetActiveProvider()
-    {
-        return _llmRouter.ActiveProvider;
+            Provider = provider,
+            Model = _llmClient.ModelId,
+            IsOnline = provider != LLMProvider.None
+        });
     }
 }

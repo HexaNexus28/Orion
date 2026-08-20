@@ -16,15 +16,16 @@ public class HealthService : IHealthService
 
     public ApiResponse<HealthCheckDto> GetHealthStatus()
     {
-        var provider = _llmService.GetActiveProvider();
-        var providerName = provider == LLMProvider.None || provider == default 
-            ? "None" 
-            : provider.ToString();
-        
+        var status = _llmService.GetStatus();
+        var llm = status.Data;
+
         var health = new HealthCheckDto
         {
             Status = "healthy",
-            LlmProvider = providerName,
+            LlmProvider = llm is null || llm.Provider == LLMProvider.None
+                ? nameof(LLMProvider.None)
+                : llm.Provider.ToString(),
+            LlmModel = llm?.Model ?? "aucun",
             Timestamp = DateTime.UtcNow
         };
 

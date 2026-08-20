@@ -7,17 +7,19 @@ using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
 
+using Orion.Business.LLM;
+
 namespace Orion.Business.Agents;
 
 public class BriefingAgent : IBriefingAgent
 {
-    private readonly ILLMRouter _llmRouter;
+    private readonly ILLMAgentClient _llmClient;
     private readonly IUnitOfWork _unitOfWork;
     private readonly ILogger<BriefingAgent> _logger;
 
-    public BriefingAgent(ILLMRouter llmRouter, IUnitOfWork unitOfWork, ILogger<BriefingAgent> logger)
+    public BriefingAgent(ILLMAgentClient llmClient, IUnitOfWork unitOfWork, ILogger<BriefingAgent> logger)
     {
-        _llmRouter = llmRouter;
+        _llmClient = llmClient;
         _unitOfWork = unitOfWork;
         _logger = logger;
     }
@@ -47,23 +49,27 @@ public class BriefingAgent : IBriefingAgent
             MaxTokens = 300
         };
 
-        var llmResponse = await _llmRouter.CompleteAsync(request, ct);
-        if (!llmResponse.Success || llmResponse.Data == null)
+        string briefingText;
+        try
         {
-            _logger.LogWarning("[BriefingAgent] LLM unavailable: {Msg}", llmResponse.Message);
+            briefingText = await _llmClient.CompleteTextAsync(request, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[BriefingAgent] LLM indisponible");
             return ApiResponse<BriefingDto>.ErrorResponse("LLM non disponible pour le briefing", 503);
         }
 
         var briefing = new BriefingDto
         {
             Id = Guid.NewGuid(),
-            Content = llmResponse.Data.Content.Trim(),
+            Content = briefingText.Trim(),
             CreatedAt = now,
             Stats = new Dictionary<string, object>
             {
                 ["memoriesUsed"] = recentMemories.Count,
                 ["profileKeys"] = profileDict.Count,
-                ["model"] = llmResponse.Data.Model ?? "unknown"
+                ["model"] = _llmClient.ModelId
             }
         };
 
@@ -91,15 +97,19 @@ public class BriefingAgent : IBriefingAgent
             MaxTokens = 80
         };
 
-        var llmResponse = await _llmRouter.CompleteAsync(request, ct);
-        if (!llmResponse.Success || llmResponse.Data == null)
+        try
         {
-            // Fallback to contextual message if LLM unavailable
-            var fallback = GetFallbackMessage(pattern, context);
-            return ApiResponse<string>.SuccessResponse(fallback);
+            var message = await _llmClient.CompleteTextAsync(request, ct);
+            if (!string.IsNullOrWhiteSpace(message))
+                return ApiResponse<string>.SuccessResponse(message.Trim());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[BriefingAgent] LLM indisponible, repli sur un message contextuel");
         }
 
-        return ApiResponse<string>.SuccessResponse(llmResponse.Data.Content.Trim());
+        // Repli contextuel : un message proactif muet vaut moins qu'un message generique.
+        return ApiResponse<string>.SuccessResponse(GetFallbackMessage(pattern, context));
     }
 
     private static string BuildBriefingPrompt(
