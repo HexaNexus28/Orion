@@ -211,6 +211,7 @@ builder.Services.AddScoped<IBriefingAgent, BriefingAgent>();
 builder.Services.AddScoped<ILLMService, LLMService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IMemoryService, MemoryService>();
+builder.Services.AddScoped<IMemoryConsolidator, MemoryConsolidator>();
 builder.Services.AddScoped<IToolService, ToolService>();
 builder.Services.AddScoped<IBriefingService, BriefingService>();
 builder.Services.AddScoped<IAuditService, AuditService>();

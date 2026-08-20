@@ -17,9 +17,7 @@ public interface IMemoryService
     Task<ApiResponse<bool>> UpdateMemoryAsync(string id, string content, CancellationToken ct = default);
     Task<ApiResponse<bool>> DeleteMemoryAsync(string id, CancellationToken ct = default);
     Task<ApiResponse<List<MemoryVectorDto>>> GetAllMemoriesAsync(CancellationToken ct = default);
-    
-    // === Réflexion autonome ===
-    Task<ApiResponse<string>> ReflectAsync(CancellationToken ct = default);
+
     
     // === Profil utilisateur ===
     Task<ApiResponse<Dictionary<string, string>>> GetUserProfileAsync(CancellationToken ct = default);

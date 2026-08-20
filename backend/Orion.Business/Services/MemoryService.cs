@@ -168,43 +168,6 @@ public class MemoryService : IMemoryService
         }
     }
 
-    public async Task<ApiResponse<string>> ReflectAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var memories = await _unitOfWork.Memory.GetAllAsync(ct);
-            var recentMemories = memories
-                .Where(m => m.CreatedAt > DateTime.UtcNow.AddDays(-7))
-                .OrderByDescending(m => m.Importance)
-                .Take(20)
-                .ToList();
-
-            if (!recentMemories.Any())
-            {
-                return ApiResponse<string>.SuccessResponse("Aucun souvenir récent à analyser.");
-            }
-
-            // Simple reflection summary (could be enhanced with LLM)
-            var patterns = recentMemories
-                .GroupBy(m => m.Source ?? "unknown")
-                .Select(g => $"- {g.Key}: {g.Count()} souvenirs")
-                .ToList();
-
-            var summary = $"Synthèse hebdomadaire:\n" +
-                $"Total souvenirs analysés: {recentMemories.Count}\n\n" +
-                $"Répartition par source:\n{string.Join("\n", patterns)}\n\n" +
-                $"Thèmes principaux: {string.Join(", ", recentMemories.Take(5).Select(m => m.Content.Substring(0, Math.Min(30, m.Content.Length)) + "..."))}";
-
-            _logger.LogInformation("Memory reflection completed, analyzed {Count} memories", recentMemories.Count);
-            return ApiResponse<string>.SuccessResponse(summary);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to generate memory reflection");
-            return ApiResponse<string>.ErrorResponse("Failed to generate reflection", 500);
-        }
-    }
-
     public async Task<ApiResponse<Dictionary<string, string>>> GetUserProfileAsync(CancellationToken ct = default)
     {
         var profiles = await _unitOfWork.UserProfile.GetAllAsync(ct);
