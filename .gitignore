@@ -139,3 +139,6 @@ todo.md
 .windsurf/
 .windsurfrules
 .claude/settings.local.json
+
+# Graphify — graphe de connaissance local, regenerable
+graphify-out/

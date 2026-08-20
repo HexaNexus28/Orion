@@ -1,0 +1,30 @@
+# Vendored / build artifacts — exclu de l'indexation Graphify (source only)
+node_modules/
+bin/
+obj/
+dist/
+.git/
+.code-review-graph/
+*.nuget.props
+*.nuget.targets
+packages/
+
+# Secrets — jamais indexés
+.env
+.env.*
+*.pem
+*.key
+*.crt
+*.pfx
+secrets.json
+tokens.json
+appsettings.Development.json
+appsettings.Local.json
+
+# Docs/images — couche sémantique désactivée (2026-07-03) : llama3.2:3b (backend local, 0 coût)
+# répond en prose au lieu du JSON structuré attendu -> boucle de bisection sans jamais aboutir.
+# Le graphe de code AST (déjà validé utile) n'a pas besoin de cette couche. Revoir si un backend
+# plus capable est disponible (modèle local plus gros, ou budget pour un backend cloud ponctuel).
+*.md
+*.mdx
+
