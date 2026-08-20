@@ -1,8 +1,9 @@
-using System.Text.Json;
+using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using Orion.Business.LLM;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Entities;
@@ -13,13 +14,20 @@ using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Core.Interfaces.Services;
 using Orion.Core.Interfaces.Tools;
-using Orion.Business.LLM;
 
 namespace Orion.Business.Agents;
 
+/// <summary>
+/// Orchestre un tour de conversation : persistance, contexte RAG, prompt, outils —
+/// puis délègue TOUT le raisonnement à <see cref="IAgentLoop"/>.
+///
+/// L'agent ne parle plus jamais au LLM directement : c'est ce qui garantit que le chemin
+/// streamé et le chemin agrégé se comportent à l'identique.
+/// </summary>
 public class ConversationAgent : IConversationAgent
 {
-    private readonly ILLMRouter _llmRouter;
+    private readonly IAgentLoop _agentLoop;
+    private readonly ILLMAgentClient _llmClient;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IEmbeddingService _embeddingService;
     private readonly PromptBuilder _promptBuilder;
@@ -28,7 +36,8 @@ public class ConversationAgent : IConversationAgent
     private readonly ILogger<ConversationAgent> _logger;
 
     public ConversationAgent(
-        ILLMRouter llmRouter,
+        IAgentLoop agentLoop,
+        ILLMAgentClient llmClient,
         IUnitOfWork unitOfWork,
         IEmbeddingService embeddingService,
         PromptBuilder promptBuilder,
@@ -36,7 +45,8 @@ public class ConversationAgent : IConversationAgent
         IDaemonClient daemonClient,
         ILogger<ConversationAgent> logger)
     {
-        _llmRouter = llmRouter;
+        _agentLoop = agentLoop;
+        _llmClient = llmClient;
         _unitOfWork = unitOfWork;
         _embeddingService = embeddingService;
         _promptBuilder = promptBuilder;
@@ -45,419 +55,319 @@ public class ConversationAgent : IConversationAgent
         _logger = logger;
     }
 
+    // ── Tour complet (réponse agrégée) ──────────────────────────────────────────
+
     public async Task<ApiResponse<ChatResponse>> ProcessAsync(ChatRequest request, CancellationToken ct = default)
     {
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-        try
+        var prepared = await PrepareStreamAsync(request, ct);
+        if (!prepared.Success || prepared.Data is null)
+            return ApiResponse<ChatResponse>.ErrorResponse(prepared.Message ?? "Preparation impossible", prepared.StatusCode);
+
+        var context = prepared.Data;
+        var content = new StringBuilder();
+        var toolsCalled = new List<ToolCallDto>();
+        ToolCallDto? pending = null;
+        string? failure = null;
+
+        await foreach (var evt in StreamLLMAsync(context, ct))
         {
-            // 1. Get or create conversation
-            Conversation conversation;
-            if (request.SessionId.HasValue)
+            switch (evt.Type)
             {
-                conversation = await _unitOfWork.Conversations.GetByIdAsync(request.SessionId.Value, ct);
-                if (conversation == null)
-                {
-                    return ApiResponse<ChatResponse>.NotFoundResponse("Session introuvable");
-                }
+                case AgentEventType.Token:
+                    content.Append(evt.Text);
+                    break;
+
+                case AgentEventType.ToolStart:
+                    pending = new ToolCallDto
+                    {
+                        ToolName = evt.ToolName ?? "?",
+                        Input = evt.ToolArgs ?? "{}"
+                    };
+                    toolsCalled.Add(pending);
+                    break;
+
+                case AgentEventType.ToolResult:
+                    if (pending is not null) pending.Result = evt.ToolSummary;
+                    pending = null;
+                    break;
+
+                case AgentEventType.Error:
+                    failure = evt.Text;
+                    break;
             }
-            else
-            {
-                conversation = new Conversation
-                {
-                    Id = Guid.NewGuid(),
-                    Type = ConversationType.Chat,
-                    StartedAt = DateTime.UtcNow,
-                    LlmProvider = _llmRouter.ActiveProvider
-                };
-                await _unitOfWork.Conversations.AddAsync(conversation, ct);
-            }
-
-            // 2. Save user message
-            var userMessage = new Message
-            {
-                Id = Guid.NewGuid(),
-                ConversationId = conversation.Id,
-                Role = MessageRole.User,
-                Content = request.Message,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.Messages.AddAsync(userMessage, ct);
-
-            // 3. Build message history (last 10) - include current message since SaveChanges hasn't happened yet
-            var recentMessages = await _unitOfWork.Messages.GetByConversationIdAsync(conversation.Id, ct);
-            var messageHistory = recentMessages.TakeLast(9).Select(m => new LLMMessage
-            {
-                Role = m.Role.ToString().ToLower(),
-                Content = m.Content
-            }).ToList();
-
-            // Add current user message (not yet saved to DB)
-            messageHistory.Add(new LLMMessage
-            {
-                Role = "user",
-                Content = request.Message
-            });
-
-            // 4. Build tool definitions from registry
-            var allTools = _toolRegistry.GetAllTools().ToList();
-            var toolDefinitions = allTools.Select(t => new ToolDefinition
-            {
-                Name = t.Name,
-                Description = t.Description,
-                Parameters = t.InputSchema
-            }).ToList();
-
-            _logger.LogInformation("[ConversationAgent] {ToolCount} tools available", toolDefinitions.Count);
-
-            // 5. RAG — embedding + recherche souvenirs + profil réel
-            var userProfile = await BuildUserProfileAsync(ct);
-            var relevantMemories = await BuildRelevantMemoriesAsync(request.Message, ct);
-
-            // 6. Build system prompt with real data
-            var systemPrompt = _promptBuilder.BuildSystemPrompt(
-                userProfile,
-                relevantMemories,
-                new List<ToolCallDto>(),
-                daemonConnected: _daemonClient.IsConnected,
-                _llmRouter.ActiveProvider,
-                voiceMode: request.VoiceMode
-            );
-
-            // 7. Build ToolExecutor callback
-            async Task<string> ToolExecutor(string toolName, string argsJson)
-            {
-                _logger.LogInformation("[ConversationAgent] Executing tool: {ToolName}", toolName);
-
-                var tool = _toolRegistry.GetTool(toolName);
-                if (tool == null)
-                {
-                    _logger.LogWarning("[ConversationAgent] Tool not found: {ToolName}", toolName);
-                    return JsonSerializer.Serialize(new { error = $"Tool '{toolName}' not found" });
-                }
-
-                JsonObject inputArgs;
-                try
-                {
-                    inputArgs = string.IsNullOrWhiteSpace(argsJson) || argsJson == "{}"
-                        ? new JsonObject()
-                        : JsonNode.Parse(argsJson)?.AsObject() ?? new JsonObject();
-                }
-                catch
-                {
-                    inputArgs = new JsonObject();
-                }
-
-                try
-                {
-                    var result = await tool.ExecuteAsync(inputArgs, ct);
-                    if (result.Success && result.Data != null)
-                        return JsonSerializer.Serialize(result.Data);
-                    return JsonSerializer.Serialize(new { error = result.Message ?? "Tool execution failed" });
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "[ConversationAgent] Tool {ToolName} threw exception", toolName);
-                    return JsonSerializer.Serialize(new { error = ex.Message });
-                }
-            }
-
-            // 8. Build LLM request
-            var llmRequest = new LLMRequest
-            {
-                SystemPrompt = systemPrompt,
-                Messages = messageHistory,
-                Model = null, // Use default from router
-                Temperature = 0.7f,
-                Tools = toolDefinitions.Count > 0 ? toolDefinitions : null,
-                ToolExecutor = toolDefinitions.Count > 0 ? ToolExecutor : null
-            };
-
-            // 9. Call LLM
-            _logger.LogInformation("[ConversationAgent] Calling LLM with {MessageCount} messages", messageHistory.Count);
-            var llmResponse = await _llmRouter.CompleteAsync(llmRequest, ct);
-
-            _logger.LogInformation("[ConversationAgent] LLM response - Success: {Success}, Content length: {Length}",
-                llmResponse.Success,
-                llmResponse.Data?.Content?.Length ?? 0);
-
-            if (!llmResponse.Success)
-            {
-                return ApiResponse<ChatResponse>.ErrorResponse(
-                    llmResponse.Message ?? "LLM indisponible",
-                    llmResponse.StatusCode);
-            }
-
-            if (string.IsNullOrEmpty(llmResponse.Data?.Content))
-            {
-                _logger.LogWarning("[ConversationAgent] LLM returned empty content");
-            }
-
-            // 10. Save assistant response + embedding for future RAG
-            var assistantMessage = new Message
-            {
-                Id = Guid.NewGuid(),
-                ConversationId = conversation.Id,
-                Role = MessageRole.Assistant,
-                Content = llmResponse.Data!.Content,
-                CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.Messages.AddAsync(assistantMessage, ct);
-
-            // 11. Save all changes
-            await _unitOfWork.SaveChangesAsync(ct);
-
-            stopwatch.Stop();
-            _logger.LogInformation(
-                "Conversation processed in {ElapsedMs}ms - Session: {SessionId}, Provider: {Provider}",
-                stopwatch.ElapsedMilliseconds,
-                conversation.Id,
-                _llmRouter.ActiveProvider);
-
-            // 12. Return response
-            return ApiResponse<ChatResponse>.SuccessResponse(new ChatResponse
-            {
-                Response = llmResponse.Data.Content,
-                SessionId = conversation.Id,
-                LlmProvider = _llmRouter.ActiveProvider,
-                MemoryUsed = false, // TODO: implement memory
-                ToolsCalled = null
-            });
         }
-        catch (Exception ex)
+
+        stopwatch.Stop();
+
+        if (failure is not null && content.Length == 0)
+            return ApiResponse<ChatResponse>.ErrorResponse(failure, 503);
+
+        _logger.LogInformation(
+            "[ConversationAgent] Tour traite en {ElapsedMs}ms — session {SessionId}, {Tools} outil(s)",
+            stopwatch.ElapsedMilliseconds, context.SessionId, toolsCalled.Count);
+
+        return ApiResponse<ChatResponse>.SuccessResponse(new ChatResponse
         {
-            _logger.LogError(ex, "Failed to process conversation");
-            return ApiResponse<ChatResponse>.ErrorResponse("Internal error processing conversation", 500);
-        }
+            Response = content.ToString(),
+            SessionId = context.SessionId,
+            LlmProvider = _llmClient.Provider,
+            MemoryUsed = context.MemoryUsed,
+            ToolsCalled = toolsCalled.Count > 0 ? toolsCalled : null
+        });
     }
 
-    // ── Phase 1 : Prepare (ApiResponse pattern — DB + prompt) ───────────────────
+    // ── Phase 1 : préparation (DB + prompt) ─────────────────────────────────────
+
     public async Task<ApiResponse<StreamContext>> PrepareStreamAsync(ChatRequest request, CancellationToken ct = default)
     {
         try
         {
-            // 1. Get or create conversation
             Conversation conversation;
             try
             {
-                if (request.SessionId.HasValue)
-                {
-                    conversation = await _unitOfWork.Conversations.GetByIdAsync(request.SessionId.Value, ct);
-                    if (conversation == null)
-                    {
-                        conversation = new Conversation
-                        {
-                            Id = request.SessionId.Value,
-                            Type = ConversationType.Chat,
-                            StartedAt = DateTime.UtcNow,
-                            LlmProvider = _llmRouter.ActiveProvider
-                        };
-                        await _unitOfWork.Conversations.AddAsync(conversation, ct);
-                    }
-                }
-                else
-                {
-                    conversation = new Conversation
-                    {
-                        Id = Guid.NewGuid(),
-                        Type = ConversationType.Chat,
-                        StartedAt = DateTime.UtcNow,
-                        LlmProvider = _llmRouter.ActiveProvider
-                    };
-                    await _unitOfWork.Conversations.AddAsync(conversation, ct);
-                }
+                conversation = await ResolveConversationAsync(request, ct);
 
-                // 2. Save user message
-                var userMessage = new Message
+                await _unitOfWork.Messages.AddAsync(new Message
                 {
                     Id = Guid.NewGuid(),
                     ConversationId = conversation.Id,
                     Role = MessageRole.User,
                     Content = request.Message,
                     CreatedAt = DateTime.UtcNow
-                };
-                await _unitOfWork.Messages.AddAsync(userMessage, ct);
+                }, ct);
+
                 await _unitOfWork.SaveChangesAsync(ct);
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                // Un tour annulé (barge-in) n'est PAS une panne de base. Sans ce filtre, une
+                // interruption normale se signalait « Base de donnees inaccessible » — un
+                // diagnostic faux qui envoie chercher le problème au mauvais endroit.
+                throw;
             }
             catch (Exception dbEx)
             {
-                _logger.LogError(dbEx, "[ConversationAgent/Prepare] DB unreachable — {Type}: {Msg}", dbEx.GetType().Name, dbEx.Message);
-                return ApiResponse<StreamContext>.ErrorResponse($"Base de données inaccessible: {dbEx.Message}", 503);
+                _logger.LogError(dbEx, "[ConversationAgent/Prepare] Base inaccessible — {Type}: {Msg}",
+                    dbEx.GetType().Name, dbEx.Message);
+                return ApiResponse<StreamContext>.ErrorResponse($"Base de donnees inaccessible: {dbEx.Message}", 503);
             }
 
-            // 3. Build message history
-            var recentMessages = await _unitOfWork.Messages.GetByConversationIdAsync(conversation.Id, ct);
-            var messageHistory = recentMessages.TakeLast(9).Select(m => new LLMMessage
+            var history = await _unitOfWork.Messages.GetByConversationIdAsync(conversation.Id, ct);
+            var messages = history.TakeLast(9).Select(m => new LLMMessage
             {
-                Role = m.Role.ToString().ToLower(),
+                Role = m.Role.ToString().ToLowerInvariant(),
                 Content = m.Content
             }).ToList();
-            messageHistory.Add(new LLMMessage { Role = "user", Content = request.Message });
+            messages.Add(new LLMMessage { Role = "user", Content = request.Message });
 
-            // 4. Build tools
-            var allTools = _toolRegistry.GetAllTools().ToList();
-            var toolDefinitions = allTools.Select(t => new ToolDefinition
-            {
-                Name = t.Name,
-                Description = t.Description,
-                Parameters = t.InputSchema
-            }).ToList();
+            // Un outil qui ne peut PAS aboutir n'est pas proposé au modèle.
+            //
+            // Demander dans le prompt « n'appelle pas les outils [PC requis] » ne suffit pas :
+            // mesuré le 2026-08-20, `llama3.2:3b` appelle quand même `type_text` pour « dis
+            // bonjour ». Retirer l'outil du catalogue rend l'erreur impossible par construction
+            // au lieu de compter sur l'obéissance du modèle — et allège le prompt d'autant.
+            var daemonConnected = _daemonClient.IsConnected;
+            var registered = _toolRegistry.GetAllTools()
+                .Where(t => daemonConnected || !t.RequiresDaemon)
+                .ToList();
 
-            // 5. Build system prompt (with RAG + voice mode)
-            var userProfileStream = await BuildUserProfileAsync(ct);
-            var memoriesStream = await BuildRelevantMemoriesAsync(request.Message, ct);
+            var tools = registered
+                .Select(t => new ToolDefinition
+                {
+                    Name = t.Name,
+                    Description = t.Description,
+                    Parameters = t.InputSchema
+                })
+                .ToList();
+
+            var profile = await BuildUserProfileAsync(ct);
+            var memories = await BuildRelevantMemoriesAsync(request.Message, ct);
+
+            // Les outils réellement enregistrés, avec leurs descriptions et métadonnées.
+            // La liste passée ici était systématiquement vide : la section « outils » du prompt
+            // ne s'affichait donc jamais (docs/jarvis-gap-analysis.md §1.7).
             var systemPrompt = _promptBuilder.BuildSystemPrompt(
-                userProfileStream,
-                memoriesStream,
-                new List<ToolCallDto>(),
-                daemonConnected: _daemonClient.IsConnected,
-                _llmRouter.ActiveProvider,
+                profile,
+                memories,
+                registered,
+                daemonConnected,
+                _llmClient.Provider,
                 voiceMode: request.VoiceMode);
 
-            // 6. Build LLM request
-            var llmRequest = new LLMRequest
-            {
-                SystemPrompt = systemPrompt,
-                Messages = messageHistory,
-                Temperature = 0.7f,
-                Tools = toolDefinitions.Count > 0 ? toolDefinitions : null
-            };
-
-            _logger.LogInformation("[ConversationAgent/Prepare] Session {Sid} — {Tools} tools", conversation.Id, toolDefinitions.Count);
+            _logger.LogInformation(
+                "[ConversationAgent/Prepare] Session {Sid} — {Tools} outils proposes (PC joignable: {Daemon}), {Memories} souvenir(s)",
+                conversation.Id, tools.Count, daemonConnected, memories.Count);
 
             return ApiResponse<StreamContext>.SuccessResponse(new StreamContext
             {
                 SessionId = conversation.Id,
                 ConversationId = conversation.Id,
-                LlmRequest = llmRequest
+                MemoryUsed = memories.Count > 0,
+                LlmRequest = new LLMRequest
+                {
+                    SystemPrompt = systemPrompt,
+                    Messages = messages,
+                    Temperature = 0.7f,
+                    Tools = tools.Count > 0 ? tools : null
+                }
             });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[ConversationAgent/Prepare] Failed");
-            return ApiResponse<StreamContext>.ErrorResponse($"Erreur préparation stream: {ex.Message}");
+            _logger.LogError(ex, "[ConversationAgent/Prepare] Echec");
+            return ApiResponse<StreamContext>.ErrorResponse($"Erreur preparation: {ex.Message}");
         }
     }
 
-    // ── Phase 2 : Stream LLM (yield chunks + save at end) ────────────────────────
-    public async IAsyncEnumerable<string> StreamLLMAsync(
+    // ── Phase 2 : boucle agent ──────────────────────────────────────────────────
+
+    public async IAsyncEnumerable<AgentEvent> StreamLLMAsync(
         StreamContext context,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var fullResponse = new StringBuilder();
-        var channel = Channel.CreateUnbounded<string>();
+        var content = new StringBuilder();
 
-        var streamTask = _llmRouter.StreamAsync(context.LlmRequest, async chunk =>
+        await foreach (var evt in _agentLoop.RunAsync(context.LlmRequest, ExecuteToolAsync, ct))
         {
-            fullResponse.Append(chunk);
-            await channel.Writer.WriteAsync(chunk, ct);
-        }, ct).ContinueWith(t =>
-        {
-            if (t.IsFaulted)
-            {
-                // Unwrap AggregateException so the channel propagates the inner exception directly
-                var inner = t.Exception?.InnerException ?? t.Exception;
-                channel.Writer.Complete(inner);
-            }
-            else
-            {
-                channel.Writer.Complete();
-            }
-        }, TaskScheduler.Default);
-
-        await foreach (var chunk in channel.Reader.ReadAllAsync(ct))
-        {
-            yield return chunk;
+            if (evt.Type == AgentEventType.Token) content.Append(evt.Text);
+            yield return evt;
         }
 
-        await streamTask;
-
-        // Save assistant response (best-effort — don't crash the stream)
+        // Sauvegarde au mieux — une panne d'écriture ne doit pas casser le flux déjà rendu.
         try
         {
-            var assistantMessage = new Message
+            await _unitOfWork.Messages.AddAsync(new Message
             {
                 Id = Guid.NewGuid(),
                 ConversationId = context.ConversationId,
                 Role = MessageRole.Assistant,
-                Content = fullResponse.ToString(),
+                Content = content.ToString(),
                 CreatedAt = DateTime.UtcNow
-            };
-            await _unitOfWork.Messages.AddAsync(assistantMessage, ct);
+            }, ct);
             await _unitOfWork.SaveChangesAsync(ct);
-            _logger.LogInformation("[ConversationAgent/Stream] Done — {Chars} chars", fullResponse.Length);
+
+            _logger.LogInformation("[ConversationAgent/Stream] Termine — {Chars} caracteres", content.Length);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "[ConversationAgent/Stream] Failed to save assistant message");
+            _logger.LogError(ex, "[ConversationAgent/Stream] Sauvegarde de la reponse impossible");
         }
     }
 
-    // ── Legacy combined (used by VoiceController HTTP) ────────────────────────────
-    public async IAsyncEnumerable<string> StreamAsync(
+    public async IAsyncEnumerable<AgentEvent> StreamAsync(
         ChatRequest request,
-        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        var prepResult = await PrepareStreamAsync(request, ct);
-        if (!prepResult.Success || prepResult.Data == null)
+        var prepared = await PrepareStreamAsync(request, ct);
+        if (!prepared.Success || prepared.Data is null)
         {
-            _logger.LogError("[ConversationAgent/Stream] Prepare failed: {Msg}", prepResult.Message);
+            _logger.LogError("[ConversationAgent/Stream] Preparation echouee: {Msg}", prepared.Message);
+            yield return AgentEvent.Error(prepared.Message ?? "Preparation impossible", 0);
             yield break;
         }
 
-        await foreach (var chunk in StreamLLMAsync(prepResult.Data, ct))
+        await foreach (var evt in StreamLLMAsync(prepared.Data, ct))
         {
-            yield return chunk;
+            yield return evt;
         }
     }
 
-    // ── Private helpers ─────────────────────────────────────────────────────────
+    // ── Privé ───────────────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Build user profile from database or fallback to default.
-    /// TODO: Multi-user — load from authenticated user context instead of default profile
-    /// </summary>
+    private async Task<Conversation> ResolveConversationAsync(ChatRequest request, CancellationToken ct)
+    {
+        if (request.SessionId.HasValue)
+        {
+            var existing = await _unitOfWork.Conversations.GetByIdAsync(request.SessionId.Value, ct);
+            if (existing is not null) return existing;
+
+            var restored = new Conversation
+            {
+                Id = request.SessionId.Value,
+                Type = ConversationType.Chat,
+                StartedAt = DateTime.UtcNow,
+                LlmProvider = _llmClient.Provider
+            };
+            await _unitOfWork.Conversations.AddAsync(restored, ct);
+            return restored;
+        }
+
+        var created = new Conversation
+        {
+            Id = Guid.NewGuid(),
+            Type = ConversationType.Chat,
+            StartedAt = DateTime.UtcNow,
+            LlmProvider = _llmClient.Provider
+        };
+        await _unitOfWork.Conversations.AddAsync(created, ct);
+        return created;
+    }
+
+    /// <summary>Exécute un outil du registre pour le compte de la boucle agent.</summary>
+    private async Task<string> ExecuteToolAsync(string toolName, string argumentsJson, CancellationToken ct)
+    {
+        var tool = _toolRegistry.GetTool(toolName);
+        if (tool is null)
+        {
+            _logger.LogWarning("[ConversationAgent] Outil inconnu: {ToolName}", toolName);
+            return JsonSerializer.Serialize(new { error = $"Outil '{toolName}' introuvable" });
+        }
+
+        JsonObject input;
+        try
+        {
+            input = string.IsNullOrWhiteSpace(argumentsJson)
+                ? new JsonObject()
+                : JsonNode.Parse(argumentsJson)?.AsObject() ?? new JsonObject();
+        }
+        catch (JsonException)
+        {
+            input = new JsonObject();
+        }
+
+        var result = await tool.ExecuteAsync(input, ct);
+
+        if (result.Success && result.Data is { Success: true })
+            return JsonSerializer.Serialize(result.Data.Data);
+
+        var error = result.Data?.Error ?? result.Message ?? "Execution de l'outil echouee";
+        return JsonSerializer.Serialize(new { error });
+    }
+
     private async Task<Dictionary<string, string>> BuildUserProfileAsync(CancellationToken ct)
     {
         try
         {
             var profiles = await _unitOfWork.UserProfile.GetAllAsync(ct);
-            var profileDict = profiles.ToDictionary(p => p.Key, p => p.Value);
-            if (profileDict.Count > 0)
-            {
-                _logger.LogInformation("[ConversationAgent] Loaded {Count} profile keys", profileDict.Count);
-                return profileDict;
-            }
+            var dict = profiles.ToDictionary(p => p.Key, p => p.Value);
+            if (dict.Count > 0) return dict;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[ConversationAgent] Failed to load user profile, using fallback");
+            _logger.LogWarning(ex, "[ConversationAgent] Profil utilisateur illisible, repli par defaut");
         }
 
-        // Fallback default — TODO: replace with auth context in multi-user scenario
         return new Dictionary<string, string> { ["name"] = "Utilisateur" };
     }
 
-    /// <summary>
-    /// Search relevant memories via RAG (embedding + pgvector similarity search)
-    /// </summary>
     private async Task<List<MemoryVector>> BuildRelevantMemoriesAsync(string message, CancellationToken ct)
     {
         try
         {
-            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(message, ct);
-            if (embeddingResponse.Success && embeddingResponse.Data?.Length > 0)
+            var embedding = await _embeddingService.GenerateEmbeddingAsync(message, ct);
+            if (embedding.Success && embedding.Data?.Length > 0)
             {
-                var memories = await _unitOfWork.Memory.SearchSimilarAsync(embeddingResponse.Data, 5, ct);
-                var memoryList = memories.ToList();
-                _logger.LogInformation("[ConversationAgent] RAG: {MemoryCount} memories found", memoryList.Count);
-                return memoryList;
+                var memories = await _unitOfWork.Memory.SearchSimilarAsync(embedding.Data, 5, ct);
+                return memories.ToList();
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "[ConversationAgent] RAG failed, continuing without memories");
+            _logger.LogWarning(ex, "[ConversationAgent] RAG indisponible, on continue sans souvenirs");
         }
+
         return new List<MemoryVector>();
     }
 }

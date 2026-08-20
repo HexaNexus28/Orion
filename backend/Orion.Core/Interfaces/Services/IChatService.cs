@@ -15,8 +15,8 @@ public interface IChatService
     Task<ApiResponse<List<ConversationSummaryDto>>> GetConversationsAsync(int page = 1, int pageSize = 20, CancellationToken ct = default);
     
     /// <summary>
-    /// Stream une réponse LLM mot par mot (Server-Sent Events)
-    /// Phase 4 : Pour interface temps réel
+    /// Déroule la boucle agent et émet des événements typés (tokens, appels d'outils, fin).
+    /// L'UI peut ainsi montrer ce qu'ORION FAIT, pas seulement ce qu'il dit.
     /// </summary>
-    IAsyncEnumerable<string> StreamMessageAsync(ChatRequest request, CancellationToken ct = default);
+    IAsyncEnumerable<AgentEvent> StreamMessageAsync(ChatRequest request, CancellationToken ct = default);
 }
