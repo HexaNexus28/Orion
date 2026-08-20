@@ -101,14 +101,22 @@ public class ProactiveOrchestrator
                 return; // différé au briefing, ou tu — dans les deux cas on n'interrompt pas
 
             // Le backend rédige le message et le diffuse en SSE. S'il est injoignable,
-            // GenerateProactiveMessage retombe sur un message local.
-            var message = await GenerateProactiveMessage(e);
+            // on retombe sur un message local.
+            var (message, clientsPrevenus) = await GenerateProactiveMessage(e);
 
-            if (!string.IsNullOrEmpty(message))
+            if (string.IsNullOrEmpty(message)) return;
+
+            // DEUX VOIX : le front prononce déjà le message reçu en SSE. Parler AUSSI en local
+            // faisait entendre la même phrase deux fois — le commentaire disait « fallback si
+            // le navigateur est fermé », mais rien ne vérifiait qu'il l'était.
+            // Le backend renvoie déjà le nombre de clients SSE prévenus : il suffisait de le lire.
+            if (clientsPrevenus > 0)
             {
-                // TTS local : si le navigateur est fermé, le daemon parle quand même.
-                await NotifyAll(message, e.Pattern);
+                _logger.LogDebug("[Proactif] {N} client(s) SSE parlent deja — pas de TTS local", clientsPrevenus);
+                return;
             }
+
+            await NotifyAll(message, e.Pattern);
         }
         catch (Exception ex)
         {
@@ -116,18 +124,21 @@ public class ProactiveOrchestrator
         }
     }
 
-    private async Task<string> GenerateProactiveMessage(PatternDetectedEventArgs pattern)
+    /// <summary>
+    /// Renvoie le message ET le nombre de clients SSE déjà prévenus — c'est ce chiffre qui
+    /// décide si le daemon doit parler à son tour ou se taire.
+    /// </summary>
+    private async Task<(string Message, int ClientsPrevenus)> GenerateProactiveMessage(PatternDetectedEventArgs pattern)
     {
-        // Déléguer au backend → LLM génère un message personnalisé
-        var backendMessage = await TriggerLLMMessageAsync(pattern.Pattern, pattern.Context);
+        var (backendMessage, clients) = await TriggerLLMMessageAsync(pattern.Pattern, pattern.Context);
         if (!string.IsNullOrEmpty(backendMessage))
-            return backendMessage;
+            return (backendMessage, clients);
 
-        // Fallback local si backend injoignable
-        return GetFallbackMessage(pattern.Pattern, pattern.Context);
+        // Backend injoignable : personne n'a été prévenu, donc le daemon parle.
+        return (GetFallbackMessage(pattern.Pattern, pattern.Context), 0);
     }
 
-    private async Task<string> TriggerLLMMessageAsync(string pattern, string context)
+    private async Task<(string Message, int ClientsPrevenus)> TriggerLLMMessageAsync(string pattern, string context)
     {
         try
         {
@@ -140,25 +151,25 @@ public class ProactiveOrchestrator
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("[ProactiveOrchestrator] Trigger returned {Status}", response.StatusCode);
-                return string.Empty;
+                return (string.Empty, 0);
             }
 
             var body = await response.Content.ReadAsStringAsync();
             using var doc = System.Text.Json.JsonDocument.Parse(body);
-            var message = doc.RootElement
-                .GetProperty("data")
-                .GetProperty("message")
-                .GetString() ?? string.Empty;
+            var data = doc.RootElement.GetProperty("data");
 
-            _logger.LogInformation("[ProactiveOrchestrator] LLM message: {Preview}",
-                message.Length > 60 ? message[..60] + "..." : message);
+            var message = data.GetProperty("message").GetString() ?? string.Empty;
+            var clients = data.TryGetProperty("clientsNotified", out var c) ? c.GetInt32() : 0;
 
-            return message;
+            _logger.LogInformation("[ProactiveOrchestrator] LLM message ({Clients} client(s) SSE): {Preview}",
+                clients, message.Length > 60 ? message[..60] + "..." : message);
+
+            return (message, clients);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[ProactiveOrchestrator] Backend trigger failed");
-            return string.Empty;
+            return (string.Empty, 0);
         }
     }
 

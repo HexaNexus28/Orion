@@ -1,6 +1,7 @@
 using Orion.Daemon.Actions;
 using Orion.Daemon.Core.Configuration;
 using Orion.Daemon.Core.Interfaces;
+using Orion.Daemon.Core.Proactive;
 using Orion.Daemon.Notifiers;
 
 namespace Orion.Daemon.Extensions;
@@ -17,6 +18,17 @@ public static class ServiceCollectionExtensions
             configuration.GetSection("Daemon").Bind(options);
             return options;
         });
+
+        // La boucle de decision est PARTAGEE : l'orchestrateur y ecrit, l'action `proactive_deferred`
+        // y lit. Deux instances signifieraient une file d'attente sans sortie.
+        services.AddSingleton<IProactiveDecider>(sp =>
+        {
+            var proactive = new ProactiveOptions();
+            configuration.GetSection("Proactive").Bind(proactive);
+            return new ProactiveDecider(proactive);
+        });
+        services.AddSingleton<IAction>(sp =>
+            new ProactiveDeferredAction(sp.GetRequiredService<IProactiveDecider>()));
 
         // Action registry
         services.AddSingleton<IActionRegistry, ActionRegistry>();

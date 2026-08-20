@@ -14,6 +14,7 @@ public class DaemonWorker : BackgroundService
     private readonly ProactiveOptions _proactiveOptions;
     private readonly WorkOptions _workOptions;
     private readonly IActionRegistry _actionRegistry;
+    private readonly IProactiveDecider _decider;
     private DaemonWebSocketManager? _wsManager;
     private ProactiveOrchestrator? _proactiveOrchestrator;
 
@@ -22,13 +23,15 @@ public class DaemonWorker : BackgroundService
         DaemonOptions options,
         ProactiveOptions proactiveOptions,
         WorkOptions workOptions,
-        IActionRegistry actionRegistry)
+        IActionRegistry actionRegistry,
+        IProactiveDecider decider)
     {
         _logger = logger;
         _options = options;
         _proactiveOptions = proactiveOptions;
         _workOptions = workOptions;
         _actionRegistry = actionRegistry;
+        _decider = decider;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -93,7 +96,7 @@ public class DaemonWorker : BackgroundService
                 _wsManager,
                 _proactiveOptions,
                 _options,
-                new ProactiveDecider(_proactiveOptions),
+                _decider,
                 _logger);
 
             _proactiveOrchestrator.Start();
