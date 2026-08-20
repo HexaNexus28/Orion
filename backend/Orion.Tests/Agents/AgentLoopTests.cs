@@ -202,17 +202,32 @@ public class AgentLoopTests
     [Fact]
     public async Task Le_budget_d_iterations_borne_une_boucle_infinie()
     {
-        // Un modèle qui redemande sans fin le même outil ne doit pas tourner indéfiniment,
-        // et l'arrêt doit être VISIBLE — pas un silence.
+        // Un modèle qui redemande sans fin le même outil ne doit pas tourner indéfiniment.
         var turns = Enumerable.Range(0, 10).Select(_ => TurnWithTool("open_app", "{}")).ToArray();
         var client = new ScriptedLLMClient(turns);
 
-        var events = await CollectAsync(BuildLoop(client, maxIterations: 3), BuildRequest(),
+        await CollectAsync(BuildLoop(client, maxIterations: 3), BuildRequest(),
             (_, _, _) => Task.FromResult("{\"ok\":true}"));
 
-        Assert.Equal(3, client.ReceivedRequests.Count);
-        var error = Assert.Single(events, e => e.Type == AgentEventType.Error);
-        Assert.Contains("Budget", error.Text);
+        // 3 iterations d'outils + 1 tour de conclusion.
+        Assert.Equal(4, client.ReceivedRequests.Count);
+    }
+
+    [Fact]
+    public async Task Budget_epuise_l_utilisateur_recoit_QUAND_MEME_une_reponse()
+    {
+        // Régression vécue : six outils declenches, budget epuise, et l'utilisateur recevait
+        // une reponse VIDE. Le dernier tour se fait sans outils pour forcer une conclusion.
+        var turns = Enumerable.Range(0, 10).Select(_ => TurnWithTool("list_files", "{}")).ToArray();
+        var client = new ScriptedLLMClient(turns);
+
+        var events = await CollectAsync(BuildLoop(client, maxIterations: 2), BuildRequest(),
+            (_, _, _) => Task.FromResult("{\"ok\":true}"));
+
+        // Le tour de conclusion ne doit proposer AUCUN outil — sinon la boucle ne se ferme jamais.
+        Assert.Null(client.ReceivedRequests[^1].Tools);
+        Assert.Contains(events, e => e.Type == AgentEventType.Done);
+        Assert.DoesNotContain(events, e => e.Type == AgentEventType.Error);
     }
 
     [Fact]

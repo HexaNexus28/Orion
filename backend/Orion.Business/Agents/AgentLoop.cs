@@ -128,13 +128,52 @@ public class AgentLoop : IAgentLoop
             }
         }
 
-        // Budget épuisé : le modèle redemande des outils sans converger. On le dit —
-        // un silence ici serait exactement le fallback muet qui a coûté des mois.
-        _logger.LogWarning("[AgentLoop] Budget d'iterations epuise ({Max})", maxIterations);
-        yield return AgentEvent.Error(
-            $"Budget d'iterations epuise ({maxIterations} allers-retours). "
-            + "La chaine d'outils est trop longue, ou le modele boucle sur le meme outil.",
-            maxIterations);
+        // Budget épuisé : le modèle redemande des outils sans converger.
+        // On ne rend PAS la main sur une réponse vide — c'est ce que voyait l'utilisateur :
+        // six outils déclenchés et rien à lire. Un dernier tour SANS outils force le modèle
+        // à conclure avec ce qu'il a déjà récolté.
+        _logger.LogWarning("[AgentLoop] Budget epuise ({Max}) — tour de conclusion sans outils", maxIterations);
+
+        var closing = new LLMRequest
+        {
+            SystemPrompt = request.SystemPrompt,
+            Messages = messages,
+            Model = request.Model,
+            Temperature = request.Temperature,
+            MaxTokens = request.MaxTokens,
+            Tools = null // <- la contrainte : impossible d'appeler un outil de plus
+        };
+
+        var lastTokens = Channel.CreateUnbounded<string>();
+        var lastTask = RunTurnAsync(closing, lastTokens, ct);
+
+        await foreach (var token in lastTokens.Reader.ReadAllAsync(ct))
+        {
+            yield return AgentEvent.Token(token, maxIterations);
+        }
+
+        string? closingFailure = null;
+        try
+        {
+            await lastTask;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[AgentLoop] Tour de conclusion echoue");
+            closingFailure = ex.Message;
+        }
+
+        if (closingFailure is not null)
+        {
+            yield return AgentEvent.Error(closingFailure, maxIterations);
+            yield break;
+        }
+
+        yield return AgentEvent.Done(maxIterations);
     }
 
     private async Task<LLMTurn> RunTurnAsync(LLMRequest request, Channel<string> tokens, CancellationToken ct)

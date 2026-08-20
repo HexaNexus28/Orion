@@ -105,6 +105,9 @@ public class PromptBuilder
         sb.AppendLine("- une salutation ou une politesse — « bonjour », « merci », « ok », « ça va ? »");
         sb.AppendLine("- une question de connaissance générale dont tu connais déjà la réponse");
         sb.AppendLine("- une demande d'explication, d'avis, de reformulation ou de code");
+        sb.AppendLine("- **une question dont la réponse figure déjà dans ce prompt** — profil de");
+        sb.AppendLine("  l'utilisateur, souvenirs remontés, contexte courant. Ces informations sont");
+        sb.AppendLine("  sous tes yeux : n'ouvre RIEN pour aller les rechercher ailleurs.");
         sb.AppendLine("En cas de doute : réponds d'abord et propose l'outil ensuite.");
         sb.AppendLine("Un outil déclenché à tort dérange plus qu'une question posée.");
         sb.AppendLine();
