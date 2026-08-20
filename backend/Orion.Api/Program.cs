@@ -51,6 +51,10 @@ builder.Services.AddSwaggerGen(c =>
 // ========== CONFIGURATION OPTIONS ==========
 builder.Services.Configure<OllamaOptions>(
     builder.Configuration.GetSection(OllamaOptions.SectionName));
+builder.Services.Configure<AgentOptions>(
+    builder.Configuration.GetSection(AgentOptions.SectionName));
+builder.Services.Configure<NimOptions>(
+    builder.Configuration.GetSection(NimOptions.SectionName));
 builder.Services.Configure<SupabaseOptions>(
     builder.Configuration.GetSection(SupabaseOptions.SectionName));
 builder.Services.Configure<DaemonOptions>(
@@ -80,16 +84,46 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
 logger.LogInformation(" Repositories & UnitOfWork registered");
 
-// ========== LLM CLIENTS ==========
-builder.Services.AddHttpClient<ILLMClient, OllamaClient>("Ollama", client =>
+
+// ========== BOUCLE AGENT (chantier 1 — Jarvis) ==========
+// Transport dedie : streaming AVEC tools, ce que ILLMClient ne peut structurellement pas porter.
+var ollamaBaseUrl = builder.Configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
+var ollamaTimeout = builder.Configuration.GetValue<int?>("Ollama:TimeoutSeconds") ?? 120;
+builder.Services.AddHttpClient(OllamaAgentClient.HttpClientName, client =>
 {
-    client.Timeout = TimeSpan.FromMinutes(3); // 3 min timeout for model loading
+    client.BaseAddress = new Uri(ollamaBaseUrl);
+    // Valeur de config, pas une constante en dur : sur un modele local en CPU, la PREMIERE
+    // requete paie le chargement du modele ET l'evaluation a froid du prompt systeme
+    // (242 s mesurees le 2026-08-20). Les suivantes tombent a moins d'une seconde grace au
+    // cache de prefixe. Un provider distant n'a evidemment pas ce probleme.
+    client.Timeout = TimeSpan.FromSeconds(ollamaTimeout);
+});
+// NVIDIA NIM — cerveau distant, compatible OpenAI.
+var nimBaseUrl = builder.Configuration["Nim:BaseUrl"] ?? "https://integrate.api.nvidia.com/v1";
+var nimTimeout = builder.Configuration.GetValue<int?>("Nim:TimeoutSeconds") ?? 120;
+builder.Services.AddHttpClient(NimAgentClient.HttpClientName, client =>
+{
+    // L'URL de base DOIT finir par '/' pour que les chemins relatifs se concatenent.
+    client.BaseAddress = new Uri(nimBaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(nimTimeout);
 });
 
-logger.LogInformation(" LLM Client registered (Ollama HTTP mode)");
+// Singletons : chaque client memorise le modele qui repond reellement, elu une fois par la sonde.
+builder.Services.AddSingleton<NimAgentClient>();
+builder.Services.AddSingleton<OllamaAgentClient>();
 
-// ========== LLM ROUTER ==========
-builder.Services.AddSingleton<ILLMRouter, LLMRouter>();
+// L'ORDRE EST LA POLITIQUE : distant d'abord (qualite), local en dernier (hors-ligne degrade).
+builder.Services.AddSingleton<ILLMAgentClient>(sp => new LLMCascade(
+    new ILLMAgentClient[]
+    {
+        sp.GetRequiredService<NimAgentClient>(),
+        sp.GetRequiredService<OllamaAgentClient>(),
+    },
+    sp.GetRequiredService<ILogger<LLMCascade>>()));
+
+builder.Services.AddScoped<IAgentLoop, AgentLoop>();
+logger.LogInformation(" Agent loop registered (cascade NIM -> Ollama, streaming + tools)");
+
 builder.Services.AddSingleton<PromptBuilder>();
 
 // ========== INTERNET TOOLS (Phase 3) ==========
@@ -174,8 +208,8 @@ builder.Services.AddScoped<IConversationAgent, ConversationAgent>();
 builder.Services.AddScoped<IBriefingAgent, BriefingAgent>();
 
 // ========== BUSINESS SERVICES (API Interface) ==========
-builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<ILLMService, LLMService>();
+builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IMemoryService, MemoryService>();
 builder.Services.AddScoped<IToolService, ToolService>();
 builder.Services.AddScoped<IBriefingService, BriefingService>();
@@ -269,6 +303,30 @@ else
 
 app.MapControllers();
 app.MapHealthChecks("/health");
+
+// ========== SONDE LLM AU DEMARRAGE ==========
+// On APPELLE le modele au lieu de faire confiance a la config : un modele liste par
+// `ollama list` peut etre retire ou verrouille par abonnement. Sans cette sonde, la panne
+// est invisible et ORION bascule en silence sur un modele degrade
+// (docs/jarvis-gap-analysis.md §1.10 / §1.11).
+using (var probeScope = app.Services.CreateScope())
+{
+    var llmClient = probeScope.ServiceProvider.GetRequiredService<ILLMAgentClient>();
+    using var probeCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+    if (await llmClient.ProbeAsync(probeCts.Token))
+    {
+        logger.LogInformation(" LLM operationnel — {Provider} / {Model}",
+            llmClient.Provider, llmClient.ModelId);
+    }
+    else
+    {
+        logger.LogCritical(
+            " AUCUN FOURNISSEUR LLM ACCESSIBLE. Verifie la cle NIM (section 'Nim:ApiKey') et "
+            + "qu'Ollama tourne ({BaseUrl}). ORION demarre mais ne pourra ni repondre ni agir.",
+            ollamaBaseUrl);
+    }
+}
 
 logger.LogInformation(" ORION API ready - Health check at /health");
 
