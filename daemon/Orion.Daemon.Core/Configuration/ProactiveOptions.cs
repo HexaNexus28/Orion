@@ -53,6 +53,24 @@ public class ProactiveOptions
     public int CooldownMinutes { get; set; } = 15;
 
     /// <summary>
+    /// Durée sur une application de travail au-delà de laquelle on considère l'utilisateur
+    /// concentré. Interrompre coûte alors bien plus cher qu'à un autre moment.
+    /// </summary>
+    public int ConcentrationApresMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Au-delà, le dernier signal d'activité est jugé périmé et on cesse de s'y fier.
+    /// Suspendre les alertes sur une donnée morte serait pire que d'interrompre à tort.
+    /// </summary>
+    public int FraicheurActiviteMinutes { get; set; } = 3;
+
+    /// <summary>
+    /// Ce qu'on ajoute au seuil d'interruption pendant une session concentrée : seul ce qui
+    /// est nettement plus urgent passe. Les incidents critiques restent hors de ce filtre.
+    /// </summary>
+    public int MalusConcentration { get; set; } = 25;
+
+    /// <summary>
     /// Patterns utilisateur à surveiller
     /// </summary>
     public List<string> MonitoredPatterns { get; set; } = new()

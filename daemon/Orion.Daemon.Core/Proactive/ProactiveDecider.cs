@@ -17,13 +17,20 @@ namespace Orion.Daemon.Core.Proactive;
 public class ProactiveDecider : IProactiveDecider
 {
     private readonly ProactiveOptions _options;
+    private readonly IActivityContext _activite;
 
     private readonly Dictionary<string, DateTime> _derniereParole = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<DateTime> _interruptions = new();
     private readonly List<SignalDiffere> _differes = new();
     private readonly object _verrou = new();
 
-    public ProactiveDecider(ProactiveOptions options) => _options = options;
+    public ProactiveDecider(ProactiveOptions options, IActivityContext? activite = null)
+    {
+        _options = options;
+        // Sans contexte fourni, un contexte neutre : la décision reste correcte, simplement
+        // aveugle à ce que fait l'utilisateur.
+        _activite = activite ?? new ActivityContext(options);
+    }
 
     /// <summary>
     /// Urgence de base par pattern, de 0 à 100.
@@ -78,8 +85,20 @@ public class ProactiveDecider : IProactiveDecider
                 return ProactiveDecision.Parler(score, "incident critique");
 
             // 3. Sous le seuil d'interruption : vrai, mais ça attendra le briefing.
-            if (score < _options.SeuilInterruption)
-                return ProactiveDecision.Differer(score, "pas assez urgent pour interrompre");
+            //    Le seuil MONTE pendant une session concentrée : reprendre le fil d'un
+            //    raisonnement de code coûte bien plus qu'une lecture interrompue. Les incidents
+            //    critiques sont déjà passés à l'étape 2, ils ne sont donc jamais bloqués ici.
+            var etat = _activite.Etat(maintenant);
+            var seuil = etat.TravailConcentre
+                ? _options.SeuilInterruption + _options.MalusConcentration
+                : _options.SeuilInterruption;
+
+            if (score < seuil)
+            {
+                return ProactiveDecision.Differer(score, etat.TravailConcentre
+                    ? $"concentre sur {etat.Application} depuis {(int)etat.Duree.TotalMinutes} min — seuil releve a {seuil}"
+                    : "pas assez urgent pour interrompre");
+            }
 
             // 4. Budget d'attention — ce qui sépare un collègue d'un spammeur de notifications.
             var depuisUneHeure = _interruptions.Count(i => maintenant - i < TimeSpan.FromHours(1));

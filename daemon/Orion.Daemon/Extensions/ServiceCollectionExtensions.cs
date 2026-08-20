@@ -21,11 +21,18 @@ public static class ServiceCollectionExtensions
 
         // La boucle de decision est PARTAGEE : l'orchestrateur y ecrit, l'action `proactive_deferred`
         // y lit. Deux instances signifieraient une file d'attente sans sortie.
+        services.AddSingleton<IActivityContext>(sp =>
+        {
+            var proactive = new ProactiveOptions();
+            configuration.GetSection("Proactive").Bind(proactive);
+            return new ActivityContext(proactive);
+        });
         services.AddSingleton<IProactiveDecider>(sp =>
         {
             var proactive = new ProactiveOptions();
             configuration.GetSection("Proactive").Bind(proactive);
-            return new ProactiveDecider(proactive);
+            // Le contexte est PARTAGE : ProcessWatcher y ecrit, le decider y lit.
+            return new ProactiveDecider(proactive, sp.GetRequiredService<IActivityContext>());
         });
         services.AddSingleton<IAction>(sp =>
             new ProactiveDeferredAction(sp.GetRequiredService<IProactiveDecider>()));
