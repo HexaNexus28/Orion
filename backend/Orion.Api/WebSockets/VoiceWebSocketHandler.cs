@@ -1,3 +1,4 @@
+using Orion.Core.DTOs.Responses;
 using System.Buffers;
 using System.Net.WebSockets;
 using System.Text;
@@ -128,8 +129,15 @@ public class VoiceWebSocketHandler
                     break;
 
                 case "end_audio":
-                    // User stopped speaking — process the accumulated audio
-                    await ProcessTurnAsync(ct);
+                    // Le tour part en TACHE DE FOND, il n'est PAS attendu ici.
+                    //
+                    // Avant, `await ProcessTurnAsync(ct)` bloquait la boucle de reception pendant
+                    // toute la duree du tour (STT + LLM + TTS). Deux consequences graves :
+                    //   1. `interrupt` ne pouvait pas etre recu -> le barge-in documente etait
+                    //      structurellement impossible ;
+                    //   2. l'audio parle pendant qu'ORION repond s'empilait dans le tampon TCP,
+                    //      puis etait recolle au tour suivant -> ORION repondait a un melange.
+                    StartTurn(ct);
                     break;
 
                 case "interrupt":
@@ -150,26 +158,52 @@ public class VoiceWebSocketHandler
     }
 
     /// <summary>
-    /// Process one voice turn: STT → LLM stream → TTS stream
+    /// Prend un instantane de l'audio accumule et lance le tour en tache de fond.
+    /// L'instantane est fait ICI, de maniere synchrone, pour que la boucle de reception reste
+    /// la seule a toucher `_audioBuffer` — aucun verrou necessaire.
     /// </summary>
-    private async Task ProcessTurnAsync(CancellationToken ct)
+    private void StartTurn(CancellationToken ct)
     {
-        if (_audioBuffer.Count < 4000) // Less than ~125ms of audio at 16kHz
+        if (_audioBuffer.Count < MinimumAudioBytes)
         {
-            _logger.LogDebug("[VoiceWS] Audio too short ({Bytes} bytes), skipping", _audioBuffer.Count);
+            _logger.LogDebug("[VoiceWS] Audio trop court ({Bytes} octets), tour ignore", _audioBuffer.Count);
             _audioBuffer.Clear();
             return;
         }
 
-        // Create cancellation token for this turn (allows barge-in)
+        var audioData = _audioBuffer.ToArray();
+        _audioBuffer.Clear();
+
+        // Un nouveau tour annule le precedent (barge-in).
         CancelCurrentTurn();
         _turnCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
         var turnToken = _turnCts.Token;
 
-        // Grab audio and clear buffer
-        var audioData = _audioBuffer.ToArray();
-        _audioBuffer.Clear();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await ProcessTurnAsync(audioData, turnToken);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogInformation("[VoiceWS] Tour annule");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[VoiceWS] Tour en echec");
+            }
+        }, CancellationToken.None);
+    }
 
+    /// <summary>~125 ms d'audio a 16 kHz mono 16 bits — en dessous, ce n'est pas de la parole.</summary>
+    private const int MinimumAudioBytes = 4000;
+
+    /// <summary>
+    /// Process one voice turn: STT → LLM stream → TTS stream
+    /// </summary>
+    private async Task ProcessTurnAsync(byte[] audioData, CancellationToken turnToken)
+    {
         try
         {
             // ── Step 1: STT ──────────────────────────────────────────
@@ -182,10 +216,26 @@ public class VoiceWebSocketHandler
 
             if (turnToken.IsCancellationRequested) return;
 
-            if (!sttResult.Success || string.IsNullOrWhiteSpace(sttResult.Data))
+            // « Rien reconnu » et « la transcription a echoue » sont DEUX choses differentes.
+            // Les confondre affichait « STT failed » a chaque bruit ambiant capte par le VAD —
+            // une erreur alarmante pour un non-evenement, et un diagnostic faux.
+            if (!sttResult.Success)
             {
-                _logger.LogWarning("[VoiceWS] STT failed: {Msg}", sttResult.Message);
-                await SendJsonAsync(new { type = "error", message = "STT failed" }, turnToken);
+                _logger.LogWarning("[VoiceWS] Transcription en echec : {Msg}", sttResult.Message);
+                await SendJsonAsync(new
+                {
+                    type = "error",
+                    message = sttResult.Message ?? "La transcription a echoue"
+                }, turnToken);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(sttResult.Data))
+            {
+                // Prise vide : bruit, souffle, ou parole trop faible. On le dit calmement.
+                _logger.LogInformation("[VoiceWS] Aucune parole reconnue ({Kb}KB) — tour ignore",
+                    audioData.Length / 1024);
+                await SendJsonAsync(new { type = "no_speech" }, turnToken);
                 return;
             }
 
@@ -230,10 +280,29 @@ public class VoiceWebSocketHandler
             var ttsTasks = new List<Task>(); // Pipeline: TTS runs in parallel with LLM stream
             var isFirstChunk = true;
 
-            await foreach (var chunk in conversationAgent.StreamLLMAsync(streamContext, turnToken))
+            await foreach (var evt in conversationAgent.StreamLLMAsync(streamContext, turnToken))
             {
                 if (turnToken.IsCancellationRequested) break;
 
+                // Les actions d'ORION remontent à l'UI sans passer par le TTS.
+                if (evt.Type == AgentEventType.ToolStart)
+                {
+                    await SendJsonAsync(new { type = "tool_start", tool = evt.ToolName, args = evt.ToolArgs }, turnToken);
+                    continue;
+                }
+                if (evt.Type == AgentEventType.ToolResult)
+                {
+                    await SendJsonAsync(new { type = "tool_result", tool = evt.ToolName, ok = evt.ToolOk, summary = evt.ToolSummary }, turnToken);
+                    continue;
+                }
+                if (evt.Type == AgentEventType.Error)
+                {
+                    await SendJsonAsync(new { type = "error", message = evt.Text }, turnToken);
+                    continue;
+                }
+                if (evt.Type != AgentEventType.Token || string.IsNullOrEmpty(evt.Text)) continue;
+
+                var chunk = evt.Text;
                 fullResponse.Append(chunk);
                 sentenceBuffer.Append(chunk);
 

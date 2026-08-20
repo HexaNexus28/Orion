@@ -23,7 +23,17 @@ const SPEECH_THRESHOLD = 0.015;   // RMS amplitude — ajuster si trop/peu sensi
 const SILENCE_TIMEOUT_MS = 700;   // Silence avant de clôturer la prise (700ms pour conversation naturelle)
 const MIN_SPEECH_MS = 250;        // Durée min pour ne pas déclencher sur un bruit court
 const SAMPLE_RATE = 16000;
-const BUFFER_SIZE = 4096;
+
+// 2048 échantillons à 16 kHz = 128 ms par bloc.
+// Le RMS est calculé sur le bloc ENTIER : avec des blocs de 256 ms, un mot qui démarre en milieu
+// de bloc voit son énergie diluée par le silence qui précède, et le bloc est classé « silence ».
+const BUFFER_SIZE = 2048;
+
+// Pré-roll : blocs conservés en permanence AVANT la détection de parole.
+// Sans lui, l'attaque du premier mot est perdue — le seuil RMS n'est franchi qu'une fois la
+// voyelle installée. « Ouvre Notepad » arrivait en « ...vre Notepad » côté Whisper.
+// 4 blocs x 128 ms = 512 ms d'historique, largement de quoi couvrir une attaque de mot.
+const PREROLL_CHUNKS = 4;
 
 export const useVAD = (options: UseVADOptions = {}) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -34,6 +44,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const samplesRef = useRef<Float32Array[]>([]);
+  const prerollRef = useRef<Float32Array[]>([]);
   const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechStartTs = useRef<number | null>(null);
   const speakingRef = useRef(false);
@@ -85,6 +96,28 @@ export const useVAD = (options: UseVADOptions = {}) => {
     try {
       console.log('[VAD] Démarrage écoute...');
 
+      // Diagnostic explicite de l'autorisation micro.
+      // Sans ça, un micro refusé — ou une invite jamais validée — laisse `getUserMedia` en
+      // attente indéfinie : ORION reste silencieusement sourd et l'interface se contente
+      // d'afficher « vad inactif », sans jamais dire pourquoi. Observé au test Playwright.
+      if (navigator.permissions?.query) {
+        try {
+          const permission = await navigator.permissions.query({
+            name: 'microphone' as PermissionName,
+          });
+          if (permission.state === 'denied') {
+            console.warn('[VAD] Autorisation micro refusée');
+            onError?.("Micro refusé — autorise l'accès au microphone dans les réglages du navigateur, puis recharge la page.");
+            return;
+          }
+          if (permission.state === 'prompt') {
+            console.log('[VAD] En attente de l’autorisation micro…');
+          }
+        } catch {
+          // Permissions API indisponible (Safari) : on tente getUserMedia directement.
+        }
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           sampleRate: SAMPLE_RATE,
@@ -119,10 +152,18 @@ export const useVAD = (options: UseVADOptions = {}) => {
           if (!speakingRef.current) {
             speakingRef.current = true;
             speechStartTs.current = Date.now();
-            samplesRef.current = [];
             setIsSpeaking(true);
             onSpeechStart?.();
             console.log('[VAD] Parole détectée — RMS:', rms.toFixed(4));
+
+            // Rejoue le pré-roll : sans lui le début du premier mot est perdu.
+            samplesRef.current = [...prerollRef.current];
+            if (onAudioChunk) {
+              for (const buffered of prerollRef.current) {
+                onAudioChunk(floatTo16BitPCM(buffered));
+              }
+            }
+            prerollRef.current = [];
           }
           clearSilence();
           const chunk = new Float32Array(data);
@@ -132,6 +173,10 @@ export const useVAD = (options: UseVADOptions = {}) => {
             const int16 = floatTo16BitPCM(chunk);
             onAudioChunk(int16);
           }
+        } else if (!speakingRef.current) {
+          // Silence : on garde une fenêtre glissante pour le prochain démarrage de parole.
+          prerollRef.current.push(new Float32Array(data));
+          if (prerollRef.current.length > PREROLL_CHUNKS) prerollRef.current.shift();
         } else if (speakingRef.current) {
           const chunk = new Float32Array(data);
           samplesRef.current.push(chunk);
@@ -191,6 +236,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
     processorRef.current = null;
     streamRef.current = null;
     samplesRef.current = [];
+    prerollRef.current = [];
     speechStartTs.current = null;
 
     setIsListening(false);

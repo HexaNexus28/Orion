@@ -4,6 +4,9 @@ import { VoiceWebSocket } from '../services/voiceWebSocket';
 interface UseVoiceWSOptions {
   onTranscript?: (text: string) => void;
   onLLMChunk?: (text: string) => void;
+  onNoSpeech?: () => void;
+  onToolStart?: (tool: string, args?: string) => void;
+  onToolResult?: (tool: string, ok: boolean, summary?: string) => void;
   onLLMDone?: (fullText: string) => void;
   onOrionSpeaking?: (speaking: boolean) => void;
   onAmplitude?: (amplitude: number) => void;
@@ -142,6 +145,18 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       onLLMStart: () => {
         setIsTurnActive(true);
         cbRef.current.onOrionSpeaking?.(true);
+      },
+
+      onNoSpeech: () => {
+        cbRef.current.onNoSpeech?.();
+      },
+
+      onToolStart: (tool, args) => {
+        cbRef.current.onToolStart?.(tool, args);
+      },
+
+      onToolResult: (tool, ok, summary) => {
+        cbRef.current.onToolResult?.(tool, ok, summary);
       },
 
       onLLMChunk: (text) => {
