@@ -22,6 +22,8 @@ public class GetSystemStatusTool : ITool
     public string Name => "get_system_status";
     public string Description => "Retourne le statut du système Windows (CPU, RAM, disque, processus actifs)";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

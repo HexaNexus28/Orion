@@ -22,6 +22,8 @@ public class CaptureScreenTool : ITool
     public string Name => "capture_screen";
     public string Description => "Capture une screenshot de l'écran Windows complet et retourne l'image en base64";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

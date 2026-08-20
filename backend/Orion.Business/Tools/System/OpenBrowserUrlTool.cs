@@ -22,6 +22,8 @@ public class OpenBrowserUrlTool : ITool
     public string Name => "open_browser_url";
     public string Description => "Ouvre une URL dans le navigateur par défaut du PC";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

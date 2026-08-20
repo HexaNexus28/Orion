@@ -22,6 +22,9 @@ public class ClipboardTool : ITool
     public string Name => "clipboard";
     public string Description => "Lit ou écrit le presse-papiers Windows. Action 'get' retourne le contenu, 'set' l'écrase";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

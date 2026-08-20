@@ -22,6 +22,9 @@ public class TypeTextTool : ITool
     public string Name => "type_text";
     public string Description => "Simule la frappe clavier dans la fenêtre active sur le PC Windows";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

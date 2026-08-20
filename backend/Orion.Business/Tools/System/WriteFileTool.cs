@@ -22,6 +22,9 @@ public class WriteFileTool : ITool
     public string Name => "write_file";
     public string Description => "Écrit ou écrase le contenu d'un fichier local sur le PC Windows";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

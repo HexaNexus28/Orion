@@ -22,6 +22,9 @@ public class KillProcessTool : ITool
     public string Name => "kill_process";
     public string Description => "Termine un processus Windows par nom ou PID";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

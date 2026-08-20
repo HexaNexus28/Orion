@@ -22,6 +22,9 @@ public class RunScriptTool : ITool
     public string Name => "run_script";
     public string Description => "Exécute un script PowerShell sur le PC Windows et retourne la sortie";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

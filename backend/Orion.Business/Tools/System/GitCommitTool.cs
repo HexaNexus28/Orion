@@ -22,6 +22,9 @@ public class GitCommitTool : ITool
     public string Name => "git_commit";
     public string Description => "Effectue un commit git rapide avec un message depuis ORION";
 
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

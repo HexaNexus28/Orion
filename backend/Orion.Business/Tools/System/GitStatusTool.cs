@@ -22,6 +22,8 @@ public class GitStatusTool : ITool
     public string Name => "git_status";
     public string Description => "Retourne le statut git d'un dépôt (branche, fichiers modifiés)";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",

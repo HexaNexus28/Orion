@@ -22,6 +22,8 @@ public class ListFilesTool : ITool
     public string Name => "list_files";
     public string Description => "Liste les fichiers et dossiers d'un répertoire sur le PC Windows";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",
