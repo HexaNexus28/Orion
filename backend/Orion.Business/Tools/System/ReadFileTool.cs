@@ -22,6 +22,8 @@ public class ReadFileTool : ITool
     public string Name => "read_file";
     public string Description => "Lit le contenu d'un fichier local sur le PC Windows";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",
@@ -54,7 +56,7 @@ public class ReadFileTool : ITool
         {
             RequestId = Guid.NewGuid().ToString("N"),
             Action = "read_file",
-            Payload = new { filePath }
+            Payload = new { path = filePath }
         };
 
         var result = await _daemon.SendActionAsync(request, ct);

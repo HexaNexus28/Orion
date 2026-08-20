@@ -22,6 +22,8 @@ public class OpenAppTool : ITool
     public string Name => "open_app";
     public string Description => "Ouvre une application sur le PC Windows (whitelist sécurisée)";
 
+    public bool RequiresDaemon => true;
+
     public JsonObject InputSchema => new()
     {
         ["type"] = "object",
@@ -54,7 +56,7 @@ public class OpenAppTool : ITool
         {
             RequestId = Guid.NewGuid().ToString("N"),
             Action = "open_app",
-            Payload = new { appName }
+            Payload = new { application = appName }
         };
 
         var result = await _daemon.SendActionAsync(request, ct);
