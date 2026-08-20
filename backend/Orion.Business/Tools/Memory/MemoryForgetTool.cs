@@ -20,11 +20,16 @@ public class MemoryForgetTool : ITool
 
     public JsonObject InputSchema => new()
     {
-        ["id"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "ID du souvenir à supprimer"
-        }
+            ["id"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Identifiant du souvenir à oublier définitivement"
+            }
+        },
+        ["required"] = new JsonArray { "id" }
     };
 
     public MemoryForgetTool(IMemoryService memoryService, ILogger<MemoryForgetTool> logger)

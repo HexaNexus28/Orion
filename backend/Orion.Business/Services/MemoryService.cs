@@ -71,7 +71,20 @@ public class MemoryService : IMemoryService
             await _unitOfWork.Memory.AddAsync(memory, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
-            _logger.LogInformation("Memory saved: {Id}", memory.Id);
+            // La colonne pgvector est hors du modele EF : sans cette ecriture explicite, le
+            // souvenir est stocke SANS vecteur et reste invisible a la recherche semantique.
+            if (embedding.Length > 0)
+            {
+                await _unitOfWork.Memory.SaveEmbeddingAsync(memory.Id, embedding, ct);
+                _logger.LogInformation("[MemoryService] Souvenir {Id} enregistre ({Dims} dimensions)",
+                    memory.Id, embedding.Length);
+            }
+            else
+            {
+                _logger.LogWarning("[MemoryService] Souvenir {Id} enregistre SANS vecteur — il ne " +
+                    "remontera jamais dans une recherche", memory.Id);
+            }
+
             return ApiResponse<bool>.SuccessResponse(true);
         }
         catch (Exception ex)

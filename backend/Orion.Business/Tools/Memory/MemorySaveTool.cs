@@ -22,21 +22,26 @@ public class MemorySaveTool : ITool
 
     public JsonObject InputSchema => new()
     {
-        ["content"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "Le contenu du souvenir à sauvegarder"
+            ["content"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Le fait à retenir, formulé de façon autonome et compréhensible hors contexte"
+            },
+            ["source"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "D'où vient ce souvenir (conversation, briefing, observation)"
+            },
+            ["importance"] = new JsonObject
+            {
+                ["type"] = "number",
+                ["description"] = "Importance de 0.5 à 2.0 — 1.0 par défaut, 2.0 pour un fait structurant"
+            }
         },
-        ["source"] = new JsonObject
-        {
-            ["type"] = "string",
-            ["description"] = "Source du souvenir (conversation, email, etc.)"
-        },
-        ["importance"] = new JsonObject
-        {
-            ["type"] = "number",
-            ["description"] = "Importance du souvenir (0.5-2.0, défaut: 1.0)"
-        }
+        ["required"] = new JsonArray { "content" }
     };
 
     public MemorySaveTool(IMemoryService memoryService, ILogger<MemorySaveTool> logger)

@@ -21,16 +21,21 @@ public class MemoryUpdateTool : ITool
 
     public JsonObject InputSchema => new()
     {
-        ["id"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "ID du souvenir à mettre à jour"
+            ["id"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Identifiant du souvenir à corriger"
+            },
+            ["content"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Contenu corrigé, qui REMPLACE l'ancien"
+            }
         },
-        ["content"] = new JsonObject
-        {
-            ["type"] = "string",
-            ["description"] = "Nouveau contenu du souvenir"
-        }
+        ["required"] = new JsonArray { "id", "content" }
     };
 
     public MemoryUpdateTool(IMemoryService memoryService, ILogger<MemoryUpdateTool> logger)

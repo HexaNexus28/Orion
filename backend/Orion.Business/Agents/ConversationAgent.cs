@@ -356,6 +356,15 @@ public class ConversationAgent : IConversationAgent
     {
         try
         {
+            // Ne pas payer un embedding pour fouiller une memoire vide.
+            // Mesure du 2026-08-20 : ~800 ms a chaud, sur le CHEMIN CRITIQUE de chaque tour,
+            // alors que `memory_vectors` ne contenait aucune ligne. Pure perte.
+            if (await _unitOfWork.Memory.CountAsync(null, ct) == 0)
+            {
+                _logger.LogDebug("[ConversationAgent] Memoire vide — recherche RAG ignoree");
+                return new List<MemoryVector>();
+            }
+
             var embedding = await _embeddingService.GenerateEmbeddingAsync(message, ct);
             if (embedding.Success && embedding.Data?.Length > 0)
             {

@@ -177,6 +177,31 @@ public class PromptBuilderTests
     }
 
     [Fact]
+    public void La_doctrine_de_memoire_dit_quand_retenir_ET_quand_s_abstenir()
+    {
+        var prompt = Build(tools: new List<ITool>
+        {
+            new FakeTool("memory_save", "Enregistre un souvenir"),
+            new FakeTool("profile_update", "Met a jour le profil"),
+        });
+
+        Assert.Contains("Se souvenir", prompt);
+        Assert.Contains("fait DURABLE", prompt);
+        // Les deux moitiés comptent : sans le « quand s'abstenir », la mémoire devient du bruit.
+        Assert.Contains("N'enregistre RIEN", prompt);
+        Assert.Contains("AUTONOME", prompt);
+        Assert.Contains("profile_update", prompt);
+    }
+
+    [Fact]
+    public void Sans_outil_memoire_la_doctrine_disparait()
+    {
+        var prompt = Build(tools: new List<ITool> { new FakeTool("web_search", "Cherche") });
+
+        Assert.DoesNotContain("Se souvenir", prompt);
+    }
+
+    [Fact]
     public void Le_prompt_interdit_d_inventer_des_arguments_et_de_mentir()
     {
         var prompt = Build();

@@ -22,10 +22,14 @@ public class MemoryReflectTool : ITool
 
     public JsonObject InputSchema => new()
     {
-        ["format"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "Format du résumé (short, detailed, default: short)"
+            ["format"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Format de la synthèse : short (défaut) ou detailed"
+            }
         }
     };
 

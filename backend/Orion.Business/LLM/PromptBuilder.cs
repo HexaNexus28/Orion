@@ -123,6 +123,8 @@ public class PromptBuilder
         sb.AppendLine("- Ne prétends JAMAIS avoir fait quelque chose que tu n'as pas fait.");
         sb.AppendLine();
 
+        AppendMemoryDoctrine(sb, tools);
+
         var destructive = tools.Where(t => t.IsDestructive).ToList();
         if (destructive.Count > 0)
         {
@@ -155,6 +157,54 @@ public class PromptBuilder
             var suffix = flags.Count > 0 ? $"  [{string.Join(", ", flags)}]" : string.Empty;
             sb.AppendLine($"- {tool.Name} : {tool.Description}{suffix}");
         }
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Enseigne QUAND se souvenir. Sans cette doctrine, deux echecs symetriques : ou bien le
+    /// modele n'appelle jamais les outils memoire — et ORION reste amnesique d'une session a
+    /// l'autre — ou bien il archive chaque banalite, et la memoire devient du bruit qu'on ne
+    /// consulte plus. Le tri appartient au modele ; la regle de tri appartient au prompt.
+    /// </summary>
+    private static void AppendMemoryDoctrine(StringBuilder sb, IReadOnlyList<ITool> tools)
+    {
+        var names = tools.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        var canRemember = names.Contains("memory_save");
+        var canProfile = names.Contains("profile_update");
+
+        if (!canRemember && !canProfile) return;
+
+        sb.AppendLine("## Se souvenir");
+        sb.AppendLine("Tu gardes une mémoire entre les sessions. Elle n'a de valeur que si elle reste courte.");
+        sb.AppendLine();
+
+        if (canRemember)
+        {
+            sb.AppendLine("Appelle `memory_save` quand l'utilisateur te livre un fait DURABLE :");
+            sb.AppendLine("- une décision, un choix d'architecture, une contrainte de son projet");
+            sb.AppendLine("- une préférence de travail ou une correction qu'il t'apporte");
+            sb.AppendLine("- une échéance, un objectif, un élément de contexte qui vaudra encore dans six mois");
+            sb.AppendLine();
+            sb.AppendLine("N'enregistre RIEN quand il s'agit :");
+            sb.AppendLine("- d'une question ponctuelle et de sa réponse");
+            sb.AppendLine("- d'une information que tu sais déjà, ou qui figure déjà dans son profil");
+            sb.AppendLine("- de bavardage, de politesse, ou d'un état passager (« j'ai faim », « il pleut »)");
+            sb.AppendLine();
+            sb.AppendLine("Formule chaque souvenir de façon AUTONOME : il sera relu hors de cette conversation.");
+            sb.AppendLine("Écris « Yawo héberge son infrastructure sur un VPS IONOS », pas « il l'héberge là-bas ».");
+            sb.AppendLine("Un souvenir par fait — n'empile pas trois idées dans une phrase.");
+            sb.AppendLine();
+        }
+
+        if (canProfile)
+        {
+            sb.AppendLine("`profile_update` sert à ce qui définit l'utilisateur de façon stable :");
+            sb.AppendLine("nom, rôle, projets, langue, priorité du moment. Une clé = une valeur, qui REMPLACE");
+            sb.AppendLine("l'ancienne. Le profil reste petit ; tout le reste va dans `memory_save`.");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Enfin : ne dis pas que tu retiens quelque chose sans l'avoir réellement enregistré.");
         sb.AppendLine();
     }
 
