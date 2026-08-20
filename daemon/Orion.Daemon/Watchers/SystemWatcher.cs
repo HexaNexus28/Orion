@@ -19,9 +19,9 @@ public class SystemWatcher : IWatcher
     private const double CPU_WARNING_THRESHOLD = 90.0;  // 90%
     private const double RAM_WARNING_THRESHOLD = 85.0;  // 85%
     
-    // Cooldown anti-spam (minutes entre 2 alertes identiques)
-    private static readonly TimeSpan COOLDOWN = TimeSpan.FromMinutes(15);
-    private readonly Dictionary<string, DateTime> _lastTriggered = new();
+    // Le cooldown anti-repetition vit desormais dans ProactiveDecider : une regle qui doit
+    // valoir pour TOUS les watchers ne peut pas vivre dans l'un d'eux. Les quatre autres
+    // watchers n'en avaient d'ailleurs aucune.
 
     public string Name => "SystemWatcher";
     public bool IsRunning => _isRunning;
@@ -60,19 +60,6 @@ public class SystemWatcher : IWatcher
         _logger.LogInformation("[SystemWatcher] Stopped");
     }
 
-    private bool CanTrigger(string pattern)
-    {
-        if (_lastTriggered.TryGetValue(pattern, out var lastTime))
-        {
-            return DateTime.UtcNow - lastTime >= COOLDOWN;
-        }
-        return true;
-    }
-
-    private void RecordTrigger(string pattern)
-    {
-        _lastTriggered[pattern] = DateTime.UtcNow;
-    }
 
     private void CheckSystem(object? state)
     {
@@ -82,7 +69,7 @@ public class SystemWatcher : IWatcher
             if (_cpuCounter != null)
             {
                 var cpuUsage = _cpuCounter.NextValue();
-                if (cpuUsage > CPU_WARNING_THRESHOLD && CanTrigger("high_cpu"))
+                if (cpuUsage > CPU_WARNING_THRESHOLD)
                 {
                     _logger.LogWarning("[SystemWatcher] High CPU usage: {CpuUsage:F1}%", cpuUsage);
                     PatternDetected?.Invoke(this, new PatternDetectedEventArgs
@@ -91,7 +78,6 @@ public class SystemWatcher : IWatcher
                         Context = $"CPU à {cpuUsage:F1}% - ralentissement possible",
                         Metadata = new Dictionary<string, object> { ["cpu_percent"] = cpuUsage }
                     });
-                    RecordTrigger("high_cpu");
                 }
             }
 
@@ -99,7 +85,7 @@ public class SystemWatcher : IWatcher
             if (_ramCounter != null)
             {
                 var ramUsage = _ramCounter.NextValue();
-                if (ramUsage > RAM_WARNING_THRESHOLD && CanTrigger("high_ram"))
+                if (ramUsage > RAM_WARNING_THRESHOLD)
                 {
                     _logger.LogWarning("[SystemWatcher] High RAM usage: {RamUsage:F1}%", ramUsage);
                     PatternDetected?.Invoke(this, new PatternDetectedEventArgs
@@ -108,7 +94,6 @@ public class SystemWatcher : IWatcher
                         Context = $"RAM à {ramUsage:F1}% - fermer des applications?",
                         Metadata = new Dictionary<string, object> { ["ram_percent"] = ramUsage }
                     });
-                    RecordTrigger("high_ram");
                 }
             }
         }

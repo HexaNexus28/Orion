@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Orion.Daemon.Core.Configuration;
 using Orion.Daemon.Core.Interfaces;
+using Orion.Daemon.Core.Proactive;
 using Orion.Daemon.WebSocket;
 
 namespace Orion.Daemon;
@@ -24,6 +25,7 @@ public class ProactiveOrchestrator
     private readonly IEnumerable<INotifier> _notifiers;
     private readonly DaemonWebSocketManager _wsManager;
     private readonly ProactiveOptions _options;
+    private readonly IProactiveDecider _decider;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly string _backendHttpUrl;
@@ -34,8 +36,10 @@ public class ProactiveOrchestrator
         DaemonWebSocketManager wsManager,
         ProactiveOptions options,
         DaemonOptions daemonOptions,
+        IProactiveDecider decider,
         ILogger logger)
     {
+        _decider = decider;
         _watchers = watchers;
         _notifiers = notifiers;
         _wsManager = wsManager;
@@ -82,17 +86,27 @@ public class ProactiveOrchestrator
     {
         try
         {
-            _logger.LogInformation(
-                "[ProactiveOrchestrator] Pattern detected: {Pattern} from {Watcher}",
-                e.Pattern, sender?.GetType().Name ?? "Unknown");
+            // ── LA boucle de décision ────────────────────────────────────────────
+            // Avant, tout pattern détecté devenait une parole, immédiatement et sans
+            // condition. ORION n'avait aucun moyen de se taire.
+            var maintenant = DateTime.UtcNow;
+            var decision = _decider.Decider(e, maintenant);
+            _decider.Enregistrer(e, decision, maintenant);
 
-            // 1. Appeler le backend : LLM génère + broadcast SSE en une requête
-            // Si backend injoignable, GenerateProactiveMessage retourne un fallback local
+            _logger.LogInformation(
+                "[Proactif] {Pattern} ({Watcher}) — score {Score} → {Action} : {Raison}",
+                e.Pattern, sender?.GetType().Name ?? "?", decision.Score, decision.Action, decision.Raison);
+
+            if (decision.Action != ProactiveAction.Parler)
+                return; // différé au briefing, ou tu — dans les deux cas on n'interrompt pas
+
+            // Le backend rédige le message et le diffuse en SSE. S'il est injoignable,
+            // GenerateProactiveMessage retombe sur un message local.
             var message = await GenerateProactiveMessage(e);
 
             if (!string.IsNullOrEmpty(message))
             {
-                // 2. TTS local en parallèle (si frontend fermé, daemon parle quand même)
+                // TTS local : si le navigateur est fermé, le daemon parle quand même.
                 await NotifyAll(message, e.Pattern);
             }
         }
@@ -159,6 +173,12 @@ public class ProactiveOrchestrator
         "high_ram"   => "RAM presque pleine. Redémarre ou ferme des apps.",
         _            => context
     };
+
+    /// <summary>
+    /// Vide la file des signaux différés. Destiné au briefing : ce qui n'était pas assez
+    /// urgent pour interrompre reste vrai, et se dit une fois, groupé.
+    /// </summary>
+    public IReadOnlyList<SignalDiffere> RecupererDifferes() => _decider.DrainerDifferes();
 
     private async Task NotifyAll(string message, string pattern = "proactive")
     {
