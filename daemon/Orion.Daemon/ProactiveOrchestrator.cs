@@ -26,6 +26,7 @@ public class ProactiveOrchestrator
     private readonly DaemonWebSocketManager _wsManager;
     private readonly ProactiveOptions _options;
     private readonly IProactiveDecider _decider;
+    private Timer? _apprentissageTimer;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly string _backendHttpUrl;
@@ -69,11 +70,55 @@ public class ProactiveOrchestrator
             _logger.LogInformation("[ProactiveOrchestrator] Started watcher: {WatcherName}", watcher.Name);
         }
 
+        // Rafraichit les penalites apprises. Sans ce rappel periodique, un « ne me dis plus ca »
+        // ne prendrait effet qu'au prochain redemarrage du daemon.
+        _apprentissageTimer = new Timer(async _ => await RafraichirPenalitesAsync(), null,
+            TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(15));
+
         _logger.LogInformation("[ProactiveOrchestrator] All watchers started");
+    }
+
+    /// <summary>
+    /// Va chercher au backend ce qu'ORION a appris des refus de l'utilisateur.
+    /// Backend injoignable : on garde les dernieres penalites connues plutot que de repartir
+    /// a zero — reoublier ce que l'utilisateur a deja refuse serait le pire des comportements.
+    /// </summary>
+    private async Task RafraichirPenalitesAsync()
+    {
+        try
+        {
+            var reponse = await _httpClient.GetAsync($"{_backendHttpUrl}/api/proactivenotification/weights");
+            if (!reponse.IsSuccessStatusCode) return;
+
+            var body = await reponse.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return;
+
+            var penalites = data.EnumerateObject()
+                .Where(p => p.Value.ValueKind == JsonValueKind.Number)
+                .ToDictionary(p => p.Name, p => p.Value.GetInt32(), StringComparer.OrdinalIgnoreCase);
+
+            _decider.AppliquerPenalites(penalites);
+
+            if (penalites.Count > 0)
+            {
+                _logger.LogInformation("[Apprentissage] {N} signal(aux) attenue(s) : {Detail}",
+                    penalites.Count, string.Join(", ", penalites.Select(p => $"{p.Key}-{p.Value}")));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Apprentissage] Penalites non rafraichies");
+        }
     }
 
     public void Stop()
     {
+        _apprentissageTimer?.Dispose();
+        _apprentissageTimer = null;
+
         foreach (var watcher in _watchers)
         {
             watcher.PatternDetected -= OnPatternDetected;

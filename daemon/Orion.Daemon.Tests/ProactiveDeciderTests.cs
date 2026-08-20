@@ -174,6 +174,50 @@ public class ProactiveDeciderTests
         Assert.True(ramModeree.Score > decideur.Decider(Signal("break_time"), T0).Score);
     }
 
+    // ── Apprentissage : ORION cesse de dire ce qu'on ignore ─────────────────────
+
+    [Fact]
+    public void Une_penalite_apprise_fait_taire_un_signal_qui_passait()
+    {
+        var decideur = new ProactiveDecider(Options());
+        Assert.Equal(ProactiveAction.Parler, decideur.Decider(Signal("high_cpu"), T0).Action);
+
+        // L'utilisateur a refuse ce signal : sa penalite le fait passer sous le seuil.
+        decideur.AppliquerPenalites(new Dictionary<string, int> { ["high_cpu"] = 20 });
+
+        Assert.Equal(ProactiveAction.Differer, decideur.Decider(Signal("high_cpu"), T0).Action);
+    }
+
+    [Fact]
+    public void Une_penalite_forte_fait_descendre_un_signal_CRITIQUE_sous_le_seuil()
+    {
+        // Un utilisateur qui refuse obstinement doit pouvoir faire taire meme une alerte forte.
+        var decideur = new ProactiveDecider(Options());
+        Assert.Equal(ProactiveAction.Parler, decideur.Decider(Signal("vps_down"), T0).Action);
+
+        decideur.AppliquerPenalites(new Dictionary<string, int> { ["vps_down"] = 60 });
+
+        Assert.Equal(ProactiveAction.Differer, decideur.Decider(Signal("vps_down"), T0).Action);
+    }
+
+    [Fact]
+    public void Une_penalite_ne_touche_QUE_le_pattern_concerne()
+    {
+        var decideur = new ProactiveDecider(Options());
+        decideur.AppliquerPenalites(new Dictionary<string, int> { ["high_cpu"] = 50 });
+
+        Assert.Equal(ProactiveAction.Parler, decideur.Decider(Signal("high_ram"), T0).Action);
+    }
+
+    [Fact]
+    public void Sans_penalite_apprise_le_comportement_est_inchange()
+    {
+        var decideur = new ProactiveDecider(Options());
+        decideur.AppliquerPenalites(new Dictionary<string, int>());
+
+        Assert.Equal(ProactiveAction.Parler, decideur.Decider(Signal("vps_down"), T0).Action);
+    }
+
     [Fact]
     public void Un_pattern_inconnu_recoit_une_urgence_moyenne_et_ne_casse_rien()
     {

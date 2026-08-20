@@ -19,4 +19,11 @@ public interface IProactiveDecider
 
     /// <summary>Vide la file des signaux différés — appelé au briefing.</summary>
     IReadOnlyList<SignalDiffere> DrainerDifferes();
+
+    /// <summary>
+    /// Applique les pénalités APPRISES (0-100 par pattern), récupérées du backend.
+    /// C'est par là qu'ORION cesse de dire ce que l'utilisateur ignore : un signal rejeté
+    /// plusieurs fois voit son score baisser jusqu'à passer sous le seuil d'interruption.
+    /// </summary>
+    void AppliquerPenalites(IReadOnlyDictionary<string, int> penalites);
 }

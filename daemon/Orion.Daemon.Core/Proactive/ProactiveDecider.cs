@@ -22,6 +22,9 @@ public class ProactiveDecider : IProactiveDecider
     private readonly Dictionary<string, DateTime> _derniereParole = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<DateTime> _interruptions = new();
     private readonly List<SignalDiffere> _differes = new();
+
+    /// <summary>Pénalités apprises, rafraîchies périodiquement depuis le backend.</summary>
+    private Dictionary<string, int> _penalites = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _verrou = new();
 
     public ProactiveDecider(ProactiveOptions options, IActivityContext? activite = null)
@@ -62,9 +65,23 @@ public class ProactiveDecider : IProactiveDecider
 
     private const int UrgenceInconnue = 35;
 
+    public void AppliquerPenalites(IReadOnlyDictionary<string, int> penalites)
+    {
+        lock (_verrou)
+        {
+            _penalites = new Dictionary<string, int>(penalites, StringComparer.OrdinalIgnoreCase);
+        }
+    }
+
     public ProactiveDecision Decider(PatternDetectedEventArgs signal, DateTime maintenant)
     {
-        var score = Scorer(signal);
+        int penalite;
+        lock (_verrou)
+        {
+            _penalites.TryGetValue(signal.Pattern, out penalite);
+        }
+
+        var score = Math.Clamp(Scorer(signal) - penalite, 0, 100);
 
         lock (_verrou)
         {
@@ -81,6 +98,8 @@ public class ProactiveDecider : IProactiveDecider
 
             // 2. Un incident critique passe TOUJOURS, budget ou non.
             //    Perdre une alerte de service mort pour cause de quota serait absurde.
+            //    Le score a DEJA subi la penalite apprise : un utilisateur qui refuse
+            //    obstinement un signal peut donc le faire descendre sous ce seuil.
             if (score >= _options.SeuilCritique)
                 return ProactiveDecision.Parler(score, "incident critique");
 

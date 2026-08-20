@@ -155,6 +155,7 @@ builder.Services.AddScoped<MemoryUpdateTool>();
 builder.Services.AddScoped<MemoryForgetTool>();
 builder.Services.AddScoped<MemoryReflectTool>();
 builder.Services.AddScoped<ProfileUpdateTool>();
+builder.Services.AddScoped<ProactiveFeedbackTool>();
 
 // Register memory tools as ITool for ToolRegistry auto-discovery
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemorySaveTool>());
@@ -162,6 +163,7 @@ builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryUpdateTool>(
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryForgetTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MemoryReflectTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ProfileUpdateTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ProactiveFeedbackTool>());
 
 logger.LogInformation(" Memory tools registered (memory_save, memory_update, memory_forget, memory_reflect, profile_update)");
 
@@ -209,6 +211,7 @@ builder.Services.AddScoped<IBriefingAgent, BriefingAgent>();
 
 // ========== BUSINESS SERVICES (API Interface) ==========
 builder.Services.AddScoped<ILLMService, LLMService>();
+builder.Services.AddScoped<IProactiveLearningService, ProactiveLearningService>();
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IMemoryService, MemoryService>();
 builder.Services.AddScoped<IMemoryConsolidator, MemoryConsolidator>();
