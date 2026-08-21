@@ -6,6 +6,7 @@
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Drop existing tables (clean install)
+DROP TABLE IF EXISTS deferred_actions CASCADE;
 DROP TABLE IF EXISTS behavior_patterns CASCADE;
 DROP TABLE IF EXISTS audit_logs CASCADE;
 DROP TABLE IF EXISTS tool_executions CASCADE;
@@ -93,6 +94,31 @@ CREATE TABLE behavior_patterns (
     orion_response TEXT
 );
 
+-- Deferred actions — ce que le PC eteint n'a pas pu executer, et qu'ORION fera au reveil.
+-- Le daemon n'est pas deportable : ses outils agissent sur CE PC. Sans cette table, PC eteint
+-- donne un echec sec qui fait paraitre ORION casse alors qu'il fonctionne. Detail et
+-- justification : memory/migrations/004_deferred_actions.sql
+CREATE TABLE deferred_actions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tool_name       TEXT NOT NULL,
+    arguments       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    status          TEXT NOT NULL DEFAULT 'pending',
+    is_destructive  BOOLEAN NOT NULL DEFAULT FALSE,
+    origin          TEXT NOT NULL DEFAULT 'chat',
+    conversation_id UUID REFERENCES conversations(id) ON DELETE SET NULL,
+    requested_by    TEXT,
+    requested_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at      TIMESTAMPTZ NOT NULL DEFAULT NOW() + INTERVAL '24 hours',
+    resolved_at     TIMESTAMPTZ,
+    result          TEXT,
+    error           TEXT,
+
+    CONSTRAINT deferred_actions_status_valide CHECK (
+        status IN ('pending', 'awaiting_confirmation', 'executed', 'failed', 'expired', 'cancelled')
+    ),
+    CONSTRAINT deferred_actions_origin_valide CHECK (origin IN ('chat', 'proactive'))
+);
+
 -- Indexes
 CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
@@ -104,6 +130,10 @@ CREATE INDEX idx_audit_logs_action ON audit_logs(action);
 CREATE INDEX idx_audit_logs_correlation ON audit_logs(correlation_id);
 CREATE INDEX idx_behavior_patterns_type ON behavior_patterns(pattern_type);
 CREATE INDEX idx_behavior_patterns_observed ON behavior_patterns(observed_at);
+-- Index partiel : le drain ne lit que les deux etats encore vivants.
+CREATE INDEX idx_deferred_actions_en_attente ON deferred_actions (expires_at)
+    WHERE status IN ('pending', 'awaiting_confirmation');
+CREATE INDEX idx_deferred_actions_requested ON deferred_actions (requested_at DESC);
 
 -- pgvector HNSW index for fast similarity search
 CREATE INDEX ON memory_vectors USING ivfflat (embedding vector_cosine_ops);
@@ -116,3 +146,4 @@ ALTER TABLE user_profile ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tool_executions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE behavior_patterns ENABLE ROW LEVEL SECURITY;
+ALTER TABLE deferred_actions ENABLE ROW LEVEL SECURITY;

@@ -1,5 +1,7 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Orion.Core.Entities;
+using Orion.Core.Enums;
 
 namespace Orion.Data.Context;
 
@@ -16,6 +18,11 @@ public class OrionDbContext : DbContext
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
     public DbSet<BehaviorPattern> BehaviorPatterns { get; set; } = null!;
     public DbSet<ToolExecution> ToolExecutions { get; set; } = null!;
+    public DbSet<DeferredAction> DeferredActions { get; set; } = null!;
+
+    private static readonly ValueConverter<DeferredActionStatus, string> StatutDeferre = new(
+        v => v.ToSlug(),
+        v => DeferredActionStatusExtensions.FromSlug(v));
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -127,6 +134,33 @@ public class OrionDbContext : DbContext
             
             entity.HasIndex(e => e.PatternType);
             entity.HasIndex(e => e.ObservedAt);
+        });
+
+        // DeferredAction — la file des actions que le PC eteint n'a pas pu executer.
+        // Le statut est ecrit en snake_case pour rester lisible en SQL et pour que la
+        // contrainte CHECK de la migration 004 porte sur les memes valeurs que le code.
+        modelBuilder.Entity<DeferredAction>(entity =>
+        {
+            entity.ToTable("deferred_actions");
+            entity.HasKey(e => e.Id);
+            entity.Property(e => e.Id).HasColumnName("id");
+            entity.Property(e => e.ToolName).IsRequired().HasColumnName("tool_name");
+            entity.Property(e => e.Arguments).IsRequired().HasColumnType("jsonb").HasColumnName("arguments");
+            entity.Property(e => e.Status)
+                .IsRequired()
+                .HasColumnName("status")
+                .HasConversion(StatutDeferre);
+            entity.Property(e => e.IsDestructive).HasColumnName("is_destructive");
+            entity.Property(e => e.Origin).IsRequired().HasColumnName("origin");
+            entity.Property(e => e.ConversationId).HasColumnName("conversation_id");
+            entity.Property(e => e.RequestedBy).HasColumnName("requested_by");
+            entity.Property(e => e.RequestedAt).HasColumnType("timestamptz").HasColumnName("requested_at");
+            entity.Property(e => e.ExpiresAt).HasColumnType("timestamptz").HasColumnName("expires_at");
+            entity.Property(e => e.ResolvedAt).HasColumnType("timestamptz").HasColumnName("resolved_at");
+            entity.Property(e => e.Result).HasColumnName("result");
+            entity.Property(e => e.Error).HasColumnName("error");
+
+            entity.HasIndex(e => e.RequestedAt);
         });
 
         // ToolExecution

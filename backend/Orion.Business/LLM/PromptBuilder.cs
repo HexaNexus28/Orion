@@ -1,4 +1,4 @@
-using System.Text;
+﻿using System.Text;
 using Orion.Core.Entities;
 using Orion.Core.Enums;
 using Orion.Core.Interfaces.Tools;
@@ -141,12 +141,34 @@ public class PromptBuilder
 
         if (!daemonConnected)
         {
-            sb.AppendLine("## ⚠ LE PC DE L'UTILISATEUR N'EST PAS JOIGNABLE");
-            sb.AppendLine("Les outils qui agissent sur sa machine (ouvrir une application, lire ou");
-            sb.AppendLine("écrire un fichier, lancer un script, git) sont RETIRÉS de ton catalogue :");
-            sb.AppendLine("ils ne peuvent pas aboutir tant que son PC est éteint ou hors ligne.");
-            sb.AppendLine("Si on te demande une de ces actions, dis-le franchement et propose de la");
-            sb.AppendLine("refaire quand son PC sera de nouveau joignable.");
+            // « Indisponible » ne veut plus dire « impossible ». Sans ce paragraphe, le modèle
+            // voit un outil au catalogue, l'appelle, reçoit « mis en file » et l'annonce comme
+            // un échec — la file existerait sans que l'utilisateur en profite jamais.
+            var differables = tools.Where(t => t.RequiresDaemon && t.IsDeferrable).Select(t => t.Name).ToList();
+
+            sb.AppendLine("## ⚠ LE PC DE L'UTILISATEUR EST ÉTEINT");
+            sb.AppendLine("Tu fonctionnes normalement : seules ses MAINS sont absentes.");
+            sb.AppendLine("Les outils qui LISENT sa machine (fichiers, dossiers, état système,");
+            sb.AppendLine("capture d'écran) sont retirés de ton catalogue — une réponse demain");
+            sb.AppendLine("décrirait l'état d'hier, elle ne vaudrait rien.");
+            // Mesuré le 2026-08-21 : sans cette ligne, le modèle refuse correctement PUIS propose
+            // « je note ça pour le démarrage ? ». Il promet une file où la demande n'ira jamais.
+            sb.AppendLine("Ne propose donc PAS de les mettre en attente : elles n'y vont pas.");
+
+            if (differables.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"En revanche, ceux-ci restent utilisables : {string.Join(", ", differables)}.");
+                sb.AppendLine("Ils ne s'exécutent pas tout de suite : ils sont MIS EN FILE et partiront");
+                sb.AppendLine("dès que son PC se rallume. Ce n'est PAS un échec — appelle-les");
+                sb.AppendLine("normalement, puis annonce ce qui va se passer, sans rien promettre de plus");
+                sb.AppendLine("que ce que l'outil te répond.");
+                sb.AppendLine("Une action qui modifie l'état lui sera redemandée à son réveil avant de");
+                sb.AppendLine("partir : dis-le, c'est une garantie, pas une réserve.");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Ne prétends jamais que c'est déjà fait.");
             sb.AppendLine();
         }
 
@@ -154,7 +176,7 @@ public class PromptBuilder
         foreach (var tool in tools.OrderBy(t => t.Name, StringComparer.Ordinal))
         {
             var flags = new List<string>();
-            if (tool.RequiresDaemon) flags.Add("PC requis");
+            if (tool.RequiresDaemon) flags.Add(daemonConnected ? "PC requis" : "PC éteint — sera différé");
             if (tool.IsDestructive) flags.Add("modifie l'état");
 
             var suffix = flags.Count > 0 ? $"  [{string.Join(", ", flags)}]" : string.Empty;

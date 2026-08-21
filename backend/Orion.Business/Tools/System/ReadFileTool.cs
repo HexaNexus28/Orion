@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class ReadFileTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<ReadFileTool> _logger;
 
-    public ReadFileTool(IDaemonClient daemon, ILogger<ReadFileTool> logger)
+    public ReadFileTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "read_file";
@@ -40,11 +37,6 @@ public class ReadFileTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-        {
-            _logger.LogWarning("[ReadFileTool] Daemon non connecté");
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
-        }
 
         var filePath = input["filePath"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(filePath))

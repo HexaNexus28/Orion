@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class WriteFileTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<WriteFileTool> _logger;
 
-    public WriteFileTool(IDaemonClient daemon, ILogger<WriteFileTool> logger)
+    public WriteFileTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "write_file";
@@ -24,6 +21,9 @@ public class WriteFileTool : ITool
 
     public bool RequiresDaemon => true;
     public bool IsDestructive => true;
+
+    /// <summary>Le contenu à écrire est fourni dans l'appel, il ne dépend pas de l'instant.</summary>
+    public bool IsDeferrable => true;
 
     public JsonObject InputSchema => new()
     {
@@ -38,8 +38,6 @@ public class WriteFileTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
 
         var path = input["path"]?.GetValue<string>();
         var content = input["content"]?.GetValue<string>();

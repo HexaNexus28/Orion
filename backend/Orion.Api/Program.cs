@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using Orion.Api.Middleware;
 using Orion.Api.Services;
@@ -82,6 +82,10 @@ logger.LogInformation(" Database configured (PostgreSQL)");
 // ========== REPOSITORIES & UNIT OF WORK ==========
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 builder.Services.AddScoped<IToolRegistry, ToolRegistry>();
+
+// Point d'application UNIQUE de l'execution d'outil : c'est lui qui decide d'executer, de
+// differer ou de refuser. Ni la boucle agent ni l'API outils n'appellent ExecuteAsync en direct.
+builder.Services.AddScoped<IToolInvoker, ToolInvoker>();
 logger.LogInformation(" Repositories & UnitOfWork registered");
 
 
@@ -203,6 +207,9 @@ logger.LogInformation(" System tools registered (13 tools: status, git, app, bro
 builder.Services.AddSingleton<IDaemonClient, DaemonWebSocketClient>();
 builder.Services.AddSingleton<DaemonActionValidator>();
 
+// File des actions demandees pendant que le PC etait eteint.
+builder.Services.AddScoped<IDeferredActionService, DeferredActionService>();
+
 logger.LogInformation(" Daemon client registered");
 
 // ========== AGENTS (Business Layer Internals) ==========
@@ -260,6 +267,9 @@ builder.Services.AddHealthChecks();
 
 // ========== BACKGROUND SERVICES ==========
 builder.Services.AddHostedService<BriefingScheduler>();
+
+// Draine la file des le retour du daemon, et expire ce qui a trop attendu.
+builder.Services.AddHostedService<DeferredActionWatcher>();
 
 // ========== BUILD APP ==========
 var app = builder.Build();

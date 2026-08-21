@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class GitStatusTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<GitStatusTool> _logger;
 
-    public GitStatusTool(IDaemonClient daemon, ILogger<GitStatusTool> logger)
+    public GitStatusTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "git_status";
@@ -39,11 +36,6 @@ public class GitStatusTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-        {
-            _logger.LogWarning("[GitStatusTool] Daemon non connecté");
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
-        }
 
         var path = input["path"]?.GetValue<string>() ?? ".";
 

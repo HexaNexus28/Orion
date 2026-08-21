@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Orion.Business.LLM;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Entities;
@@ -16,18 +16,25 @@ public class PromptBuilderTests
 {
     private sealed class FakeTool : ITool
     {
-        public FakeTool(string name, string description, bool requiresDaemon = false, bool destructive = false)
+        public FakeTool(
+            string name,
+            string description,
+            bool requiresDaemon = false,
+            bool destructive = false,
+            bool deferrable = false)
         {
             Name = name;
             Description = description;
             RequiresDaemon = requiresDaemon;
             IsDestructive = destructive;
+            IsDeferrable = deferrable;
         }
 
         public string Name { get; }
         public string Description { get; }
         public bool RequiresDaemon { get; }
         public bool IsDestructive { get; }
+        public bool IsDeferrable { get; }
         public JsonObject InputSchema => new() { ["type"] = "object" };
 
         public Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
@@ -37,8 +44,9 @@ public class PromptBuilderTests
     private static readonly IReadOnlyList<ITool> Tools = new List<ITool>
     {
         new FakeTool("web_search", "Cherche sur le web"),
-        new FakeTool("open_app", "Ouvre une application", requiresDaemon: true),
-        new FakeTool("run_script", "Execute un script PowerShell", requiresDaemon: true, destructive: true),
+        new FakeTool("open_app", "Ouvre une application", requiresDaemon: true, deferrable: true),
+        new FakeTool("run_script", "Execute un script PowerShell", requiresDaemon: true, destructive: true, deferrable: true),
+        new FakeTool("list_files", "Liste un dossier", requiresDaemon: true),
     };
 
     private static string Build(
@@ -111,9 +119,38 @@ public class PromptBuilderTests
     {
         var prompt = Build(daemonConnected: false);
 
-        Assert.Contains("N'EST PAS JOIGNABLE", prompt);
-        Assert.Contains("RETIRÉS de ton catalogue", prompt);
+        Assert.Contains("LE PC DE L'UTILISATEUR EST ÉTEINT", prompt);
         Assert.Contains("PC de l'utilisateur joignable : NON", prompt);
+        Assert.Contains("Ne prétends jamais que c'est déjà fait.", prompt);
+    }
+
+    /// <summary>
+    /// Le défaut que ce test empêche : le modèle voit un outil au catalogue, l'appelle, reçoit
+    /// « mis en file » et l'annonce comme un échec. La file existerait alors sans que
+    /// l'utilisateur en profite jamais.
+    /// </summary>
+    [Fact]
+    public void Daemon_hors_ligne_le_prompt_dit_que_differer_n_est_pas_echouer()
+    {
+        var prompt = Build(daemonConnected: false);
+
+        Assert.Contains("MIS EN FILE", prompt);
+        Assert.Contains("Ce n'est PAS un échec", prompt);
+        Assert.Contains("open_app, run_script", prompt);
+        Assert.Contains("[PC éteint — sera différé]", prompt);
+    }
+
+    /// <summary>
+    /// L'autre moitié de la règle : une LECTURE ne se diffère pas. Répondre demain matin sur
+    /// l'état d'hier soir n'est pas rendre service, et encombrerait la file pour rien.
+    /// </summary>
+    [Fact]
+    public void Daemon_hors_ligne_les_lectures_ne_sont_pas_annoncees_comme_differables()
+    {
+        var prompt = Build(daemonConnected: false);
+
+        var differables = prompt[prompt.IndexOf("En revanche, ceux-ci restent utilisables")..];
+        Assert.DoesNotContain("list_files", differables[..200]);
     }
 
     [Fact]
@@ -121,7 +158,7 @@ public class PromptBuilderTests
     {
         var prompt = Build(daemonConnected: true);
 
-        Assert.DoesNotContain("N'EST PAS JOIGNABLE", prompt);
+        Assert.DoesNotContain("EST ÉTEINT", prompt);
         Assert.Contains("PC de l'utilisateur joignable : oui", prompt);
     }
 

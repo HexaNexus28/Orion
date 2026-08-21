@@ -48,6 +48,9 @@ Config : `backend/Orion.Api/appsettings.json` section `Ollama` + `Agent`.
 - `npm run build` (tsc) doit passer : zéro variable/import non utilisé
 - DTOs dans `Orion.Core`, jamais inline dans controllers
 - `ITool` + `ToolRegistry` pour tout tool · action daemon dans la whitelist avant impl
+- **Exécution d'outil : toujours via `IToolInvoker`**, jamais `tool.ExecuteAsync` en direct —
+  c'est le point unique qui décide d'exécuter, différer (PC éteint) ou refuser. Tout nouvel
+  outil daemon doit trancher `IsDeferrable` (cf. [docs/tools.md](docs/tools.md))
 - `CancellationToken` sur toute async DB/réseau, propagé · jamais `.Result`/`.Wait()`
 - Toute conversation persistée (aucune exception) · toute nouvelle route = MAJ `endpoints.ts`
 - Logs : tool call, daemon action, LLM fallback — tout loggué

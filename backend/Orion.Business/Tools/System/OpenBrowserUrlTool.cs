@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,18 +10,19 @@ namespace Orion.Business.Tools.System;
 public class OpenBrowserUrlTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<OpenBrowserUrlTool> _logger;
 
-    public OpenBrowserUrlTool(IDaemonClient daemon, ILogger<OpenBrowserUrlTool> logger)
+    public OpenBrowserUrlTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "open_browser_url";
     public string Description => "Ouvre une URL dans le navigateur par défaut du PC";
 
     public bool RequiresDaemon => true;
+
+    /// <summary>Une page à ouvrir garde son sens le lendemain matin.</summary>
+    public bool IsDeferrable => true;
 
     public JsonObject InputSchema => new()
     {
@@ -40,11 +40,6 @@ public class OpenBrowserUrlTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-        {
-            _logger.LogWarning("[OpenBrowserUrlTool] Daemon non connecté");
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
-        }
 
         var url = input["url"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(url))

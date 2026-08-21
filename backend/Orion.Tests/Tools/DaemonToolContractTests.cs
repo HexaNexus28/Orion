@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Moq;
 using Orion.Business.Tools.System;
 using Orion.Core.DTOs.Requests;
@@ -55,7 +54,7 @@ public class DaemonToolContractTests
     {
         // OpenAppAction lit payload.GetProperty("application") — PAS "appName".
         var (daemon, sent) = BuildDaemon();
-        var tool = new OpenAppTool(daemon.Object, Mock.Of<ILogger<OpenAppTool>>());
+        var tool = new OpenAppTool(daemon.Object);
 
         await tool.ExecuteAsync(new JsonObject { ["appName"] = "notepad" }, CancellationToken.None);
 
@@ -70,7 +69,7 @@ public class DaemonToolContractTests
     {
         // ReadFileAction lit payload.GetProperty("path") — PAS "filePath".
         var (daemon, sent) = BuildDaemon();
-        var tool = new ReadFileTool(daemon.Object, Mock.Of<ILogger<ReadFileTool>>());
+        var tool = new ReadFileTool(daemon.Object);
 
         await tool.ExecuteAsync(new JsonObject { ["filePath"] = @"C:\tmp\a.txt" }, CancellationToken.None);
 
@@ -83,7 +82,7 @@ public class DaemonToolContractTests
     public async Task WriteFileTool_envoie_path_et_content()
     {
         var (daemon, sent) = BuildDaemon();
-        var tool = new WriteFileTool(daemon.Object, Mock.Of<ILogger<WriteFileTool>>());
+        var tool = new WriteFileTool(daemon.Object);
 
         await tool.ExecuteAsync(
             new JsonObject { ["path"] = @"C:\tmp\a.txt", ["content"] = "bonjour" },
@@ -98,7 +97,7 @@ public class DaemonToolContractTests
     public async Task GitCommitTool_envoie_message()
     {
         var (daemon, sent) = BuildDaemon();
-        var tool = new GitCommitTool(daemon.Object, Mock.Of<ILogger<GitCommitTool>>());
+        var tool = new GitCommitTool(daemon.Object);
 
         await tool.ExecuteAsync(
             new JsonObject { ["path"] = @"C:\repo", ["message"] = "feat: test" },
@@ -111,7 +110,7 @@ public class DaemonToolContractTests
     public async Task OpenBrowserUrlTool_envoie_url()
     {
         var (daemon, sent) = BuildDaemon();
-        var tool = new OpenBrowserUrlTool(daemon.Object, Mock.Of<ILogger<OpenBrowserUrlTool>>());
+        var tool = new OpenBrowserUrlTool(daemon.Object);
 
         await tool.ExecuteAsync(new JsonObject { ["url"] = "https://example.com" }, CancellationToken.None);
 
@@ -122,7 +121,7 @@ public class DaemonToolContractTests
     public async Task RunScriptTool_envoie_script()
     {
         var (daemon, sent) = BuildDaemon();
-        var tool = new RunScriptTool(daemon.Object, Mock.Of<ILogger<RunScriptTool>>());
+        var tool = new RunScriptTool(daemon.Object);
 
         await tool.ExecuteAsync(new JsonObject { ["script"] = "Get-Date" }, CancellationToken.None);
 

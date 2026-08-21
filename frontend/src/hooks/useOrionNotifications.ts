@@ -3,7 +3,9 @@ import { apiClient } from '../services/api';
 import { ENDPOINTS, API_BASE } from '../config/endpoints';
 
 export interface OrionNotification {
-  type: 'info' | 'warning' | 'alert' | 'proactive';
+  /** `briefing` et `deferred` sont émis par le backend (BriefingScheduler,
+   *  DeferredActionWatcher) — ils manquaient à cette union. */
+  type: 'info' | 'warning' | 'alert' | 'proactive' | 'briefing' | 'deferred';
   title: string;
   message: string;
   priority: 'low' | 'normal' | 'high' | 'critical';

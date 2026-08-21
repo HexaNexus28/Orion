@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class GitCommitTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<GitCommitTool> _logger;
 
-    public GitCommitTool(IDaemonClient daemon, ILogger<GitCommitTool> logger)
+    public GitCommitTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "git_commit";
@@ -24,6 +21,9 @@ public class GitCommitTool : ITool
 
     public bool RequiresDaemon => true;
     public bool IsDestructive => true;
+
+    /// <summary>« Commit le travail » depuis le téléphone à 22 h : c'est LE cas d'usage de la file.</summary>
+    public bool IsDeferrable => true;
 
     public JsonObject InputSchema => new()
     {
@@ -46,11 +46,6 @@ public class GitCommitTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-        {
-            _logger.LogWarning("[GitCommitTool] Daemon non connecté");
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
-        }
 
         var message = input["message"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(message))

@@ -1,4 +1,4 @@
-using Orion.Core.Entities;
+﻿using Orion.Core.Entities;
 
 namespace Orion.Core.Interfaces.Repositories;
 
@@ -10,6 +10,7 @@ public interface IUnitOfWork : IDisposable, IAsyncDisposable
     IUserProfileRepository UserProfile { get; }
     IAuditLogRepository AuditLogs { get; }
     IBehaviorPatternRepository BehaviorPatterns { get; }
+    IDeferredActionRepository DeferredActions { get; }
     
     Task<int> SaveChangesAsync(CancellationToken ct = default);
     Task BeginTransactionAsync(CancellationToken ct = default);

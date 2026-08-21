@@ -5,6 +5,8 @@ import { HoloCards, parseHoloCards } from './components/ui/HoloCards';
 import { MemoryOverlay } from './components/overlay/MemoryOverlay';
 import { BriefingOverlay } from './components/overlay/BriefingOverlay';
 import { SettingsOverlay } from './components/overlay/SettingsOverlay';
+import { DeferredQueueOverlay } from './components/overlay/DeferredQueueOverlay';
+import { DeferredQueueBadge } from './components/overlay/DeferredQueueBadge';
 import { useEntity } from './context/EntityContext';
 import { useOrionStatus } from './context/OrionStatusContext';
 import { useGestureControl } from './hooks/useGestureControl';
@@ -14,6 +16,7 @@ import { useStream } from './hooks/useStream';
 import { ToolActivityStrip } from './components/overlay/ToolActivityStrip';
 import { VoiceStatusHint } from './components/overlay/VoiceStatusHint';
 import { useOrionNotifications } from './hooks/useOrionNotifications';
+import { useDeferredQueue } from './services/deferredService';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
 const SWIPE_THRESHOLD = 80;
@@ -23,6 +26,7 @@ const App: React.FC = () => {
   const { text: responseText, isStreaming, tools: toolActivity, streamMessage, reset, appendChunk, pushTool, setStreaming } = useStream();
   const { daemonConnected } = useOrionStatus();
   const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
+  const deferredQueue = useDeferredQueue();
   const spokenUpToRef = useRef(0);
   const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
 
@@ -30,6 +34,7 @@ const App: React.FC = () => {
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDeferredOpen, setIsDeferredOpen] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const isPassiveListeningRef = useRef(false);
@@ -51,7 +56,7 @@ const App: React.FC = () => {
     touchStartYRef.current = null;
 
     // Only trigger swipe when no overlay/input is open
-    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen) return;
+    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen || isDeferredOpen) return;
 
     if (deltaY > SWIPE_THRESHOLD) {
       setIsMemoryOpen(true);       // swipe up → mémoire
@@ -398,14 +403,24 @@ const App: React.FC = () => {
 
   // ── Daemon status flash ──────────────────────────────────────────────────────
   const prevDaemonRef = useRef(daemonConnected);
+  const refreshDeferred = deferredQueue.refresh;
   useEffect(() => {
     if (!prevDaemonRef.current && daemonConnected) {
       // Daemon just connected — brief visual feedback via entity state
       setState('responding');
       setTimeout(() => setState('idle'), 600);
+      // Le backend draine au même moment : la file affichée doit suivre, pas rester d'hier.
+      void refreshDeferred();
     }
     prevDaemonRef.current = daemonConnected;
-  }, [daemonConnected, setState]);
+  }, [daemonConnected, setState, refreshDeferred]);
+
+  // Le drain a fini et l'a annoncé : c'est le signal qui fait autorité sur l'état réel de la file.
+  useEffect(() => {
+    if (lastNotification?.type === 'deferred') {
+      void refreshDeferred();
+    }
+  }, [lastNotification, refreshDeferred]);
 
   return (
     <div
@@ -436,6 +451,15 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* Ce qui attend le reveil du PC — n'apparait que s'il y a quelque chose */}
+      {!isInputVisible && (
+        <DeferredQueueBadge
+          enAttente={deferredQueue.enAttente.length}
+          aConfirmer={deferredQueue.aConfirmer.length}
+          onOpen={() => setIsDeferredOpen(true)}
+        />
+      )}
+
       {/* Trace des actions — ce qu'ORION FAIT, pas seulement ce qu'il dit */}
       <ToolActivityStrip tools={toolActivity} />
 
@@ -458,6 +482,11 @@ const App: React.FC = () => {
       <MemoryOverlay isOpen={isMemoryOpen} onClose={() => setIsMemoryOpen(false)} />
       <BriefingOverlay isOpen={isBriefingOpen} onClose={() => setIsBriefingOpen(false)} />
       <SettingsOverlay isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <DeferredQueueOverlay
+        isOpen={isDeferredOpen}
+        onClose={() => setIsDeferredOpen(false)}
+        queue={deferredQueue}
+      />
 
       {/* Hand tracking video (caché) */}
       {isHandTrackingEnabled && (

@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class KillProcessTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<KillProcessTool> _logger;
 
-    public KillProcessTool(IDaemonClient daemon, ILogger<KillProcessTool> logger)
+    public KillProcessTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "kill_process";
@@ -37,8 +34,6 @@ public class KillProcessTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
 
         var name = input["name"]?.GetValue<string>();
         var pid = input["pid"]?.GetValue<int>();

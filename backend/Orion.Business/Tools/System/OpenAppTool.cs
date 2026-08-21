@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,18 +10,19 @@ namespace Orion.Business.Tools.System;
 public class OpenAppTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<OpenAppTool> _logger;
 
-    public OpenAppTool(IDaemonClient daemon, ILogger<OpenAppTool> logger)
+    public OpenAppTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "open_app";
     public string Description => "Ouvre une application sur le PC Windows (whitelist sécurisée)";
 
     public bool RequiresDaemon => true;
+
+    /// <summary>Lancer une application attend très bien le réveil du PC.</summary>
+    public bool IsDeferrable => true;
 
     public JsonObject InputSchema => new()
     {
@@ -40,11 +40,6 @@ public class OpenAppTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-        {
-            _logger.LogWarning("[OpenAppTool] Daemon non connecté");
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
-        }
 
         var appName = input["appName"]?.GetValue<string>();
         if (string.IsNullOrWhiteSpace(appName))

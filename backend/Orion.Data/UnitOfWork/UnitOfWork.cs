@@ -1,4 +1,4 @@
-using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Data.Context;
@@ -17,6 +17,7 @@ public class UnitOfWork : IUnitOfWork
     private IUserProfileRepository? _userProfile;
     private IAuditLogRepository? _auditLogs;
     private IBehaviorPatternRepository? _behaviorPatterns;
+    private IDeferredActionRepository? _deferredActions;
 
     public UnitOfWork(OrionDbContext context)
     {
@@ -40,6 +41,9 @@ public class UnitOfWork : IUnitOfWork
     
     public IBehaviorPatternRepository BehaviorPatterns => 
         _behaviorPatterns ??= new BehaviorPatternRepository(_context);
+
+    public IDeferredActionRepository DeferredActions =>
+        _deferredActions ??= new DeferredActionRepository(_context);
 
     public async Task<int> SaveChangesAsync(CancellationToken ct = default)
     {

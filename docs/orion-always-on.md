@@ -120,6 +120,11 @@ Les embeddings locaux (`nomic-embed-text`) tombent aussi quand le PC s'éteint. 
 > mémoire accumulée le rend plus cher.
 >
 > **Donc : trancher les embeddings AVANT le chantier 4 (mémoire), pas après.**
+>
+> 🔴 **Ça n'a pas été fait.** J4 a été livré le 2026-08-20 sur `nomic-embed-text` **local**, et la
+> table n'est plus vide. Chaque jour de mémoire accumulée renchérit la bascule. C'est aujourd'hui
+> le seul vrai bloquant du déploiement : sur le VPS il n'y a pas d'Ollama, donc la recherche
+> mémoire atterrirait morte. **J6b avant J6c, sans exception.**
 
 ---
 
@@ -130,11 +135,50 @@ L'ordre des chantiers ne change pas — celui-ci s'ajoute, il ne double pas les 
 | Chantier | État |
 |---|---|
 | J1 Boucle agent | ✅ livré et prouvé e2e |
-| J2 Prompts | à faire |
-| **J3 Cerveau NIM** | à faire — **inclut désormais le choix d'embedding distant** (§5) |
-| J4 Mémoire | à faire — **dépend du choix d'embedding** |
-| J5 Proactivité | à faire — n'a de sens qu'une fois le backend toujours-actif |
-| **J6 Déploiement 24/7** | **nouveau** — backend + base hébergés, file d'actions différées, PWA branchée dessus |
+| J2 Prompts | ✅ livré (2026-08-20) |
+| J3 Cerveau NIM | ✅ livré (2026-08-20) — **le choix d'embedding distant n'a PAS été tranché** (§5) |
+| J4 Mémoire | ✅ livré (2026-08-20), sur embeddings **locaux** — d'où la dette ci-dessous |
+| J5 Proactivité | ✅ livré (2026-08-20), 5 étages |
+| **J6a File d'actions différées** | ✅ **livré et prouvé en exécution réelle (2026-08-21)** |
+| **J6b Embedding distant** | ⛔ **bloquant du déploiement** — voir §5, et la dette a commencé à courir |
+| **J6c Déploiement VPS** | à faire — dépend de J6b |
 
-**J6 n'est pas un préalable** : les chantiers 2 à 4 se construisent et se testent en local, comme J1.
-Ils sont indifférents à l'endroit où le backend tournera plus tard — c'est de la config.
+**J6a n'attendait pas le déploiement** : il se teste en local en coupant simplement le daemon,
+et c'est lui qui rend le déploiement présentable — sans lui, chaque demande d'action avec le PC
+éteint répondrait « Daemon non connecté ».
+
+### Ce que J6a a réellement livré (2026-08-21)
+
+Point d'application **unique** : `IToolInvoker`. Avant lui, deux appelants exécutaient les outils
+chacun de leur côté et le garde « daemon absent » était recopié dans **treize** outils. Les treize
+copies ont disparu — une règle recopiée n'est pas une règle, c'est treize endroits où l'oublier.
+
+Un troisième drapeau sur `ITool` : **`IsDeferrable`**. Le catalogue se trie désormais par
+**utilité différée**, pas par disponibilité.
+
+| | PC éteint | pourquoi |
+|---|---|---|
+| `open_app`, `open_browser_url`, `git_commit`, `write_file` | **mis en file** | l'effet voulu est le même demain matin |
+| `read_file`, `list_files`, `git_status`, `get_system_status`, `capture_screen`, `clipboard`, `type_text`, `kill_process` | **refus franc** | une réponse sur l'état d'hier ne vaut rien |
+| `run_script` | **refus franc** | voir ci-dessous |
+
+⚠️ **`run_script` a d'abord été déclaré différable, puis retiré — trouvé à l'essai réel.**
+`list_files` étant hors catalogue, le modèle a **substitué** `run_script` avec un `Get-ChildItem`.
+La lecture refusée par la porte revenait par la fenêtre, et l'utilisateur se voyait promettre pour
+le lendemain une réponse qu'il voulait tout de suite. Un script est arbitraire : impossible de
+savoir s'il lit ou s'il écrit, donc impossible de savoir si le différer garde un sens.
+**On ne diffère pas ce qu'on ne comprend pas.** Verrouillé par `ToolDeferrabilityTests`.
+
+Les quatre règles du §3 sont tenues, et prouvées :
+
+| Règle | Où elle vit | Preuve |
+|---|---|---|
+| TTL 24 h | `expires_at` en base, pas dans le code | balayage périodique + test « expire au lieu de s'exécuter » |
+| Destructive = redemandée | `DeferredActionService.DrainAsync` | `write_file` et `git_commit` passés en `awaiting_confirmation` au réveil, jamais rejoués |
+| File visible et annulable | `DeferredActionsController` + pastille/overlay | annulation d'un `run_script` et d'un `git_commit` en direct |
+| Jamais de silence | `ToolInvoker.RefuserFranchement` + repli de réponse vide | ORION a répondu « ton PC est éteint », puis a écrit le fichier au réveil après confirmation |
+
+**Essai du 2026-08-21, sans daemon puis avec** : « Ouvre Notepad » → mis en file → daemon lancé →
+**Notepad tourne (PID 27048)**. « Écris ce fichier » → mis en file → au réveil, attente de
+confirmation → confirmé → **fichier présent sur le disque avec le bon contenu**. « Liste ce
+dossier » → refus honnête, rien en file.

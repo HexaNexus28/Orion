@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -17,6 +17,8 @@ public class DaemonWebSocketClient : IDaemonClient
     private readonly ConcurrentDictionary<string, TaskCompletionSource<byte[]?>> _pendingBinaryRequests = new();
 
     public bool IsConnected => _connections.Any(c => c.Value.State == WebSocketState.Open);
+
+    public event Action<string>? DaemonConnected;
     public string MachineName => _connections.Keys.FirstOrDefault() ?? "unknown";
 
     public DaemonWebSocketClient(ILogger<DaemonWebSocketClient> logger)
@@ -28,6 +30,19 @@ public class DaemonWebSocketClient : IDaemonClient
     {
         _connections[machineName] = webSocket;
         _logger.LogInformation("Daemon connected from {MachineName}", machineName);
+
+        // Le PC vient de se rallumer : prévenir avant d'entrer dans la boucle de réception,
+        // qui ne rend la main qu'à la déconnexion. Les abonnés (drain de la file différée)
+        // travaillent sur leur propre scope, d'où le try/catch : un abonné qui échoue ne doit
+        // pas empêcher le daemon de se connecter.
+        try
+        {
+            DaemonConnected?.Invoke(machineName);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Daemon] Un abonné à DaemonConnected a échoué — connexion maintenue");
+        }
 
         // Return the receive loop so the caller (middleware) can await it
         // without creating a second concurrent ReceiveAsync on the same socket

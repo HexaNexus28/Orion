@@ -38,6 +38,8 @@ Pour réinstaller from scratch (⚠️ perd toutes les données):
 |---------|-------------|------|
 | `001_add_behavior_patterns.sql` | Table behavior_patterns pour la détection de patterns utilisateur | 2025-04-07 |
 | `002_add_internet_tools_config.sql` | Documentation tools Phase 3 (config reste en appsettings) | 2025-04-07 |
+| `003_align_embedding_dimension.sql` | Aligne `memory_vectors.embedding` sur 768 dims (réalité vs doc) | 2026-08-20 |
+| `004_deferred_actions.sql` | File d'actions différées — ce que le PC éteint fera au réveil | 2026-08-21 |
 
 ## Notes
 

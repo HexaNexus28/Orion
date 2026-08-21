@@ -1,4 +1,4 @@
-using System.Text.Json.Nodes;
+﻿using System.Text.Json.Nodes;
 using Orion.Core.DTOs.Responses;
 
 namespace Orion.Core.Interfaces.Tools;
@@ -21,6 +21,16 @@ public interface ITool
     /// Le prompt impose une demande explicite avant de le déclencher.
     /// </summary>
     bool IsDestructive => false;
+
+    /// <summary>
+    /// L'outil garde un sens exécuté PLUS TARD, quand le PC se rallume.
+    ///
+    /// C'est l'utilité différée qui décide, pas la disponibilité. « Ouvre VS Code » ou
+    /// « commit le travail » attendent très bien jusqu'au matin. « Qu'est-ce qu'il y a dans ce
+    /// dossier ? » ne vaut plus rien demain : une réponse en retard de douze heures n'est pas
+    /// une réponse, et la mettre en file ne ferait qu'encombrer la file.
+    /// </summary>
+    bool IsDeferrable => false;
 
     Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default);
 }

@@ -1,9 +1,10 @@
-using System.Runtime.CompilerServices;
+﻿using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Logging;
 using Orion.Business.LLM;
+using Orion.Core.DTOs.Internal.Tools;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Entities;
@@ -32,6 +33,7 @@ public class ConversationAgent : IConversationAgent
     private readonly IEmbeddingService _embeddingService;
     private readonly PromptBuilder _promptBuilder;
     private readonly IToolRegistry _toolRegistry;
+    private readonly IToolInvoker _toolInvoker;
     private readonly IDaemonClient _daemonClient;
     private readonly ILogger<ConversationAgent> _logger;
 
@@ -42,6 +44,7 @@ public class ConversationAgent : IConversationAgent
         IEmbeddingService embeddingService,
         PromptBuilder promptBuilder,
         IToolRegistry toolRegistry,
+        IToolInvoker toolInvoker,
         IDaemonClient daemonClient,
         ILogger<ConversationAgent> logger)
     {
@@ -51,6 +54,7 @@ public class ConversationAgent : IConversationAgent
         _embeddingService = embeddingService;
         _promptBuilder = promptBuilder;
         _toolRegistry = toolRegistry;
+        _toolInvoker = toolInvoker;
         _daemonClient = daemonClient;
         _logger = logger;
     }
@@ -162,15 +166,20 @@ public class ConversationAgent : IConversationAgent
             }).ToList();
             messages.Add(new LLMMessage { Role = "user", Content = request.Message });
 
-            // Un outil qui ne peut PAS aboutir n'est pas proposé au modèle.
+            // Le catalogue se trie par UTILITÉ, pas par disponibilité.
             //
             // Demander dans le prompt « n'appelle pas les outils [PC requis] » ne suffit pas :
             // mesuré le 2026-08-20, `llama3.2:3b` appelle quand même `type_text` pour « dis
-            // bonjour ». Retirer l'outil du catalogue rend l'erreur impossible par construction
-            // au lieu de compter sur l'obéissance du modèle — et allège le prompt d'autant.
+            // bonjour ». Retirer l'outil rend l'erreur impossible par construction au lieu de
+            // compter sur l'obéissance du modèle.
+            //
+            // Mais depuis la file différée, « indisponible » ne veut plus dire « inutile » :
+            // « commit le travail » attend très bien le réveil du PC, alors que « qu'y a-t-il
+            // dans ce dossier ? » ne vaut plus rien demain. Ce sont donc les outils DIFFÉRABLES
+            // qui restent au catalogue, et les lectures qui en sortent.
             var daemonConnected = _daemonClient.IsConnected;
             var registered = _toolRegistry.GetAllTools()
-                .Where(t => daemonConnected || !t.RequiresDaemon)
+                .Where(t => daemonConnected || !t.RequiresDaemon || t.IsDeferrable)
                 .ToList();
 
             var tools = registered
@@ -205,6 +214,7 @@ public class ConversationAgent : IConversationAgent
                 SessionId = conversation.Id,
                 ConversationId = conversation.Id,
                 MemoryUsed = memories.Count > 0,
+                UserMessage = request.Message,
                 LlmRequest = new LLMRequest
                 {
                     SystemPrompt = systemPrompt,
@@ -229,10 +239,40 @@ public class ConversationAgent : IConversationAgent
     {
         var content = new StringBuilder();
 
-        await foreach (var evt in _agentLoop.RunAsync(context.LlmRequest, ExecuteToolAsync, ct))
+        // Le contexte suit l'appel jusqu'à la file : si l'outil doit être différé, ORION doit
+        // encore savoir à quel fil répondre et quelle phrase rappeler au réveil du PC.
+        var invocation = new ToolInvocationContext(
+            context.ConversationId,
+            ToolInvocationContext.OrigineChat,
+            context.UserMessage);
+
+        await foreach (var evt in _agentLoop.RunAsync(
+            context.LlmRequest,
+            (nom, arguments, token) => ExecuteToolAsync(nom, arguments, invocation, token),
+            ct))
         {
             if (evt.Type == AgentEventType.Token) content.Append(evt.Text);
             yield return evt;
+        }
+
+        // Le modèle peut rendre zéro caractère ET zéro appel d'outil, sans erreur : observé le
+        // 2026-08-21, PC éteint, sur une demande qu'aucun outil disponible ne pouvait servir.
+        // ORION renvoyait alors une chaîne vide — c'est-à-dire du SILENCE, la panne la plus
+        // coûteuse de ce projet, celle qui ne se signale jamais.
+        //
+        // On ne fabrique pas de contenu à sa place : on dit qu'il n'y a pas eu de réponse, et
+        // on le LOGGUE en avertissement. Un repli qui masque au lieu d'alerter serait un bug
+        // de plus, pas un correctif.
+        if (content.Length == 0)
+        {
+            _logger.LogWarning(
+                "[ConversationAgent/Stream] Le modèle n'a rien produit — session {SessionId}, PC joignable: {Daemon}",
+                context.ConversationId, _daemonClient.IsConnected);
+
+            const string aveu = "Je n'ai rien à te répondre sur ce coup-là — le modèle n'a rien produit. "
+                              + "Reformule, ou redemande-le-moi.";
+            content.Append(aveu);
+            yield return AgentEvent.Token(aveu, 1);
         }
 
         // Sauvegarde au mieux — une panne d'écriture ne doit pas casser le flux déjà rendu.
@@ -305,16 +345,19 @@ public class ConversationAgent : IConversationAgent
         return created;
     }
 
-    /// <summary>Exécute un outil du registre pour le compte de la boucle agent.</summary>
-    private async Task<string> ExecuteToolAsync(string toolName, string argumentsJson, CancellationToken ct)
+    /// <summary>
+    /// Rend le résultat d'un outil à la boucle agent, sous forme de JSON que le modèle relit.
+    ///
+    /// La DÉCISION (exécuter, différer, refuser) appartient à <see cref="IToolInvoker"/> :
+    /// l'agent ne fait plus que traduire. C'est ce qui garantit que l'API outils et la
+    /// conversation obéissent aux mêmes règles.
+    /// </summary>
+    private async Task<string> ExecuteToolAsync(
+        string toolName,
+        string argumentsJson,
+        ToolInvocationContext invocation,
+        CancellationToken ct)
     {
-        var tool = _toolRegistry.GetTool(toolName);
-        if (tool is null)
-        {
-            _logger.LogWarning("[ConversationAgent] Outil inconnu: {ToolName}", toolName);
-            return JsonSerializer.Serialize(new { error = $"Outil '{toolName}' introuvable" });
-        }
-
         JsonObject input;
         try
         {
@@ -327,7 +370,7 @@ public class ConversationAgent : IConversationAgent
             input = new JsonObject();
         }
 
-        var result = await tool.ExecuteAsync(input, ct);
+        var result = await _toolInvoker.InvokeAsync(toolName, input, invocation, ct);
 
         if (result.Success && result.Data is { Success: true })
             return JsonSerializer.Serialize(result.Data.Data);

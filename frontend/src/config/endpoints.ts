@@ -49,6 +49,14 @@ export const ENDPOINTS = {
   // WebSocket Voice — full-duplex pipeline (replaces /converse)
   voiceWS: '/ws/voice',
 
+  // DeferredActionsController - api/deferred-actions
+  // Ce qu'ORION n'a pas pu faire parce que le PC était éteint, et qu'il fera au réveil.
+  deferred: {
+    queue: '/api/deferred-actions',
+    confirm: (id: string) => `/api/deferred-actions/${id}/confirm`,
+    cancel: (id: string) => `/api/deferred-actions/${id}/cancel`,
+  },
+
   // ProactiveNotificationController - notifications temps réel daemon → frontend
   notifications: {
     stream: '/api/proactivenotification/stream',  // SSE - Server-Sent Events

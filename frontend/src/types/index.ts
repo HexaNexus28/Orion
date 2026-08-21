@@ -75,6 +75,11 @@ export type {
   HealthCheckDto,
 } from './dto/healthDto';
 
+export type {
+  DeferredActionDto,
+  DeferredStatus,
+} from './dto/deferredDto';
+
 // =============================================================================
 // COMPONENT PROPS
 // =============================================================================

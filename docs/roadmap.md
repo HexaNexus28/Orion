@@ -14,10 +14,23 @@
   sur les outils destructifs, vraie liste d'outils injectée avec descriptions et métadonnées
   (`ITool.RequiresDaemon` / `ITool.IsDestructive`), prompt voix distinct. Sections ordonnées
   **stable → volatil** pour le cache de préfixe. **Filtrage : un outil qui ne peut pas aboutir
-  n'est plus proposé au modèle.** 13 tests de prompt.
-- **J3 Cerveau** — client OpenAI-compatible (NVIDIA NIM), cascade explicite NIM → local.
-- **J4 Mémoire** — écriture auto à chaque tour, consolidation, schéma fermé 4 slots, garde-fous.
-- **J5 Proactivité** — watchers daemon → scoring d'urgence → prise de parole.
+  n'est plus proposé au modèle** — affiné en J6a : le tri se fait par *utilité différée*, pas par
+  disponibilité. 15 tests de prompt.
+- **J3 ✅ Cerveau** — client OpenAI-compatible (NVIDIA NIM), cascade explicite NIM → local.
+- **J4 ✅ Mémoire** — écriture auto à chaque tour, consolidation, schéma fermé 4 slots, garde-fous.
+  ⚠️ Livré sur embeddings **locaux** — dette ouverte, voir J6b.
+- **J5 ✅ Proactivité** — watchers daemon → scoring d'urgence → prise de parole, 5 étages.
+- **J6a ✅ File d'actions différées** (2026-08-21) — `IToolInvoker` devient le point d'application
+  unique de l'exécution d'outil (les 13 gardes `IsConnected` recopiés dans les outils ont disparu),
+  `ITool.IsDeferrable`, table `deferred_actions` + TTL 24 h, drain à la reconnexion du daemon,
+  confirmation des actions destructives **au réveil** sur l'état réel de la machine, file visible et
+  annulable dans la PWA. Prouvé en exécution réelle : Notepad ouvert au réveil, fichier écrit après
+  confirmation, lecture refusée franchement. 21 tests ajoutés (222 au total).
+- **J6b ⛔ Embedding distant** — **bloquant du déploiement** : `EmbeddingService` appelle Ollama en
+  local, absent du VPS ; `memory_vectors.embedding` est `vector(768)` et n'est plus vide.
+  Commence par une mesure (volume réel, catalogue NIM et sa dimension), pas par un choix.
+- **J6c Déploiement 24/7** — backend sur VPS derrière la façade Nginx (port loopback), base Supabase
+  Cloud, PWA branchée dessus. Dépend de J6b.
 
 ## Phases historiques
 

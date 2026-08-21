@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,12 +10,10 @@ namespace Orion.Business.Tools.System;
 public class CaptureScreenTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<CaptureScreenTool> _logger;
 
-    public CaptureScreenTool(IDaemonClient daemon, ILogger<CaptureScreenTool> logger)
+    public CaptureScreenTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "capture_screen";
@@ -35,8 +32,6 @@ public class CaptureScreenTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
 
         var savePath = input["savePath"]?.GetValue<string>();
 
