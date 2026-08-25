@@ -1,18 +1,12 @@
-using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
-using Orion.Core.Enums;
 
 namespace Orion.Core.Interfaces.Services;
 
 /// <summary>
-/// Service pour l'inférence LLM (Ollama/Kimi Cloud)
-/// Abstraction du LLMRouter pour la couche API
+/// Frontière métier au-dessus du transport LLM.
+/// Le métier interroge CE service, jamais un client LLM directement.
 /// </summary>
 public interface ILLMService
 {
-    Task<ApiResponse<LLMResponse>> CompleteAsync(LLMRequest request, CancellationToken ct = default);
-    Task<ApiResponse<LLMResponse>> CompleteWithPromptAsync(string systemPrompt, string userMessage, CancellationToken ct = default);
-    Task StreamAsync(LLMRequest request, Func<string, Task> onChunk, CancellationToken ct = default);
-    Task<ApiResponse<bool>> IsAvailableAsync(CancellationToken ct = default);
-    LLMProvider GetActiveProvider();
+    ApiResponse<LLMStatusDto> GetStatus();
 }

@@ -6,7 +6,7 @@ import type {
   DaemonActionResponse,
   DaemonStatus,
   DaemonToolInfo,
-} from '../types/dto';
+} from '../types';
 
 // Daemon Service - Matches DaemonController
 export const daemonService = {

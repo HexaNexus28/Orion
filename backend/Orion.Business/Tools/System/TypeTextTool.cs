@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,16 +10,17 @@ namespace Orion.Business.Tools.System;
 public class TypeTextTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<TypeTextTool> _logger;
 
-    public TypeTextTool(IDaemonClient daemon, ILogger<TypeTextTool> logger)
+    public TypeTextTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "type_text";
     public string Description => "Simule la frappe clavier dans la fenêtre active sur le PC Windows";
+
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
 
     public JsonObject InputSchema => new()
     {
@@ -35,8 +35,6 @@ public class TypeTextTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
 
         var text = input["text"]?.GetValue<string>();
         if (string.IsNullOrEmpty(text))

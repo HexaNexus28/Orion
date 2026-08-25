@@ -30,9 +30,16 @@ orion/
 **4 couches** — `Core` (rien) ← `Business`/`Data` ← `Api`. Retours : Data `T?`/`IEnumerable<T>` ·
 Business `ApiResponse<T>` · Controller `IActionResult`. Détail : [docs/architecture.md](docs/architecture.md).
 
-**LLM** : primary `deepseek-v4-flash:cloud`, fallback local `llama3.2:3b`, embeddings
-`nomic-embed-text`. TOUJOURS via `ILLMRouter`. Les modèles DOIVENT exister dans `ollama list` (sinon
-404 à chaque tour). Config : `backend/Orion.Api/appsettings.json` section `Ollama`.
+**LLM** : tout passe par `IAgentLoop` (jamais d'appel LLM direct depuis un agent ou un service).
+Transport via `ILLMAgentClient` — `ILLMClient`/`ILLMRouter` sont l'ancien chemin, sans outils.
+
+⚠️ **`ollama list` NE PROUVE RIEN** : il affiche les `:cloud` en cache local même retirés ou
+verrouillés par abonnement. Vérifié le 2026-08-20 : 7 modèles listés, **7 inutilisables**.
+Un modèle se vérifie en **l'appelant** — c'est le rôle de `ProbeAsync`, exécutée au démarrage.
+
+`NumCtx` est **obligatoire** dans la config : sans elle Ollama dimensionne le cache KV sur le
+contexte maximum du modèle (128k) et réclame ~15 Go pour un modèle de 2 Go → HTTP 500 intermittent.
+Config : `backend/Orion.Api/appsettings.json` section `Ollama` + `Agent`.
 
 **Règles dev** :
 - Repository Pattern obligatoire couche Data — zéro accès DB ailleurs
@@ -41,7 +48,20 @@ Business `ApiResponse<T>` · Controller `IActionResult`. Détail : [docs/archite
 - `npm run build` (tsc) doit passer : zéro variable/import non utilisé
 - DTOs dans `Orion.Core`, jamais inline dans controllers
 - `ITool` + `ToolRegistry` pour tout tool · action daemon dans la whitelist avant impl
+- **Exécution d'outil : toujours via `IToolInvoker`**, jamais `tool.ExecuteAsync` en direct —
+  c'est le point unique qui décide d'exécuter, différer (PC éteint) ou refuser. Tout nouvel
+  outil daemon doit trancher `IsDeferrable` (cf. [docs/tools.md](docs/tools.md))
 - `CancellationToken` sur toute async DB/réseau, propagé · jamais `.Result`/`.Wait()`
 - Toute conversation persistée (aucune exception) · toute nouvelle route = MAJ `endpoints.ts`
 - Logs : tool call, daemon action, LLM fallback — tout loggué
 - Commits conventionnels (`feat:`/`fix:`/`refactor:`/`chore:`/`docs:`)
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

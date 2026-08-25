@@ -224,8 +224,13 @@ public class VoiceController : ControllerBase
                 SessionId = sessionId != null && Guid.TryParse(sessionId, out var sid) ? sid : null
             };
 
-            await foreach (var chunk in _conversationAgent.StreamAsync(request, ct))
+            await foreach (var evt in _conversationAgent.StreamAsync(request, ct))
             {
+                // Seuls les tokens alimentent la synthèse vocale ; les événements d'outils
+                // sont du signal pour l'UI, pas du texte à lire à voix haute.
+                if (evt.Type != AgentEventType.Token || string.IsNullOrEmpty(evt.Text)) continue;
+
+                var chunk = evt.Text;
                 buffer.Append(chunk);
                 fullResponse.Append(chunk);
 

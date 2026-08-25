@@ -13,25 +13,29 @@ namespace Orion.Business.Tools.Memory;
 /// </summary>
 public class MemoryReflectTool : ITool
 {
-    private readonly IMemoryService _memoryService;
+    private readonly IMemoryConsolidator _consolidator;
     private readonly ILogger<MemoryReflectTool> _logger;
 
     public string Name => "memory_reflect";
     
-    public string Description => "Génère une synthèse hebdomadaire des souvenirs. Analyse les patterns et produit un résumé des apprentissages de la semaine.";
+    public string Description => "Consolide la mémoire : relit les échanges bruts et en distille les faits durables (règles, décisions, références, état en cours). À lancer en fin de session ou quand la mémoire s'alourdit.";
 
     public JsonObject InputSchema => new()
     {
-        ["format"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "Format du résumé (short, detailed, default: short)"
+            ["format"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Format de la synthèse : short (défaut) ou detailed"
+            }
         }
     };
 
-    public MemoryReflectTool(IMemoryService memoryService, ILogger<MemoryReflectTool> logger)
+    public MemoryReflectTool(IMemoryConsolidator consolidator, ILogger<MemoryReflectTool> logger)
     {
-        _memoryService = memoryService;
+        _consolidator = consolidator;
         _logger = logger;
     }
 
@@ -39,17 +43,23 @@ public class MemoryReflectTool : ITool
     {
         try
         {
-            var format = input["format"]?.ToString() ?? "short";
-            
-            _logger.LogInformation("Memory reflection started (format: {Format})", format);
+            _logger.LogInformation("[memory_reflect] Consolidation demandee");
 
-            var result = await _memoryService.ReflectAsync(ct);
+            var result = await _consolidator.ConsolidateAsync(ct);
 
             if (result.Success && result.Data != null)
             {
+                var rapport = result.Data;
                 return ApiResponse<ToolResult>.SuccessResponse(
-                    ToolResult.SuccessResult(new { reflection = result.Data }, Name),
-                    "Réflexion terminée");
+                    ToolResult.SuccessResult(new
+                    {
+                        resume = rapport.Resume,
+                        episodesExamines = rapport.EpisodesExamines,
+                        souvenirsEcrits = rapport.SouvenirsEcrits,
+                        etatsPerimesSupprimes = rapport.EtatsPerimesSupprimes,
+                        distilles = rapport.Distilles
+                    }, Name),
+                    rapport.Resume);
             }
 
             return ApiResponse<ToolResult>.ErrorResponse(

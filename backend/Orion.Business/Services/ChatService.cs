@@ -19,29 +19,17 @@ public class ChatService : IChatService
     private readonly IConversationAgent _conversationAgent;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditService _auditService;
-    private readonly ILLMRouter _llmRouter;
-    private readonly PromptBuilder _promptBuilder;
-    private readonly IDaemonClient _daemonClient;
-    private readonly IVoiceNotificationService _voiceNotification;
     private readonly ILogger<ChatService> _logger;
 
     public ChatService(
         IConversationAgent conversationAgent,
         IUnitOfWork unitOfWork,
         IAuditService auditService,
-        ILLMRouter llmRouter,
-        PromptBuilder promptBuilder,
-        IDaemonClient daemonClient,
-        IVoiceNotificationService voiceNotification,
         ILogger<ChatService> logger)
     {
         _conversationAgent = conversationAgent;
         _unitOfWork = unitOfWork;
         _auditService = auditService;
-        _llmRouter = llmRouter;
-        _promptBuilder = promptBuilder;
-        _daemonClient = daemonClient;
-        _voiceNotification = voiceNotification;
         _logger = logger;
     }
 
@@ -148,18 +136,18 @@ public class ChatService : IChatService
     }
 
     /// <summary>
-    /// Stream a message response token by token — délègue à ConversationAgent
+    /// Déroule la boucle agent — délègue à ConversationAgent.
     /// </summary>
-    public async IAsyncEnumerable<string> StreamMessageAsync(
+    public async IAsyncEnumerable<AgentEvent> StreamMessageAsync(
         ChatRequest request,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
         _auditService.SetCorrelationId(Guid.NewGuid().ToString("N"));
-        _logger.LogInformation("[ChatService] Streaming message for session {SessionId}", request.SessionId);
+        _logger.LogInformation("[ChatService] Boucle agent pour la session {SessionId}", request.SessionId);
 
-        await foreach (var chunk in _conversationAgent.StreamAsync(request, ct))
+        await foreach (var evt in _conversationAgent.StreamAsync(request, ct))
         {
-            yield return chunk;
+            yield return evt;
         }
     }
 }

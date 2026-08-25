@@ -1,6 +1,7 @@
 // index.ts - Réexportation centrale des types ORION
 
 import type { OrionState } from './models/entityState';
+import type { ToolActivity } from './dto/agentDto';
 export type { OrionState };
 
 // =============================================================================
@@ -36,6 +37,12 @@ export type {
 } from './dto/chatDto';
 
 export type {
+  AgentEvent,
+  AgentEventType,
+  ToolActivity,
+} from './dto/agentDto';
+
+export type {
   ToolInfo,
   MemorySaveRequest,
   MemoryUpdateRequest,
@@ -68,6 +75,11 @@ export type {
   HealthCheckDto,
 } from './dto/healthDto';
 
+export type {
+  DeferredActionDto,
+  DeferredStatus,
+} from './dto/deferredDto';
+
 // =============================================================================
 // COMPONENT PROPS
 // =============================================================================
@@ -78,6 +90,19 @@ export interface OrionEntityProps {
   onLongPress?: () => void;
   onLongPressEnd?: () => void;
   onDoubleTap?: () => void;
+}
+
+export interface VoiceStatusHintProps {
+  state: OrionState;
+  isListening: boolean;
+  isSpeaking: boolean;
+  /** Le micro a été refusé : seul cas actionnable, il prime sur l'état courant. */
+  micDenied: boolean;
+  onRetryMic: () => void;
+}
+
+export interface ToolActivityStripProps {
+  tools: ToolActivity[];
 }
 
 export interface ResponseTextProps {

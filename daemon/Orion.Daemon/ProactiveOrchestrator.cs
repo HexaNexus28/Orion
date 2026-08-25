@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using Orion.Daemon.Core.Configuration;
 using Orion.Daemon.Core.Interfaces;
+using Orion.Daemon.Core.Proactive;
 using Orion.Daemon.WebSocket;
 
 namespace Orion.Daemon;
@@ -24,6 +25,8 @@ public class ProactiveOrchestrator
     private readonly IEnumerable<INotifier> _notifiers;
     private readonly DaemonWebSocketManager _wsManager;
     private readonly ProactiveOptions _options;
+    private readonly IProactiveDecider _decider;
+    private Timer? _apprentissageTimer;
     private readonly ILogger _logger;
     private readonly HttpClient _httpClient;
     private readonly string _backendHttpUrl;
@@ -34,8 +37,10 @@ public class ProactiveOrchestrator
         DaemonWebSocketManager wsManager,
         ProactiveOptions options,
         DaemonOptions daemonOptions,
+        IProactiveDecider decider,
         ILogger logger)
     {
+        _decider = decider;
         _watchers = watchers;
         _notifiers = notifiers;
         _wsManager = wsManager;
@@ -65,11 +70,55 @@ public class ProactiveOrchestrator
             _logger.LogInformation("[ProactiveOrchestrator] Started watcher: {WatcherName}", watcher.Name);
         }
 
+        // Rafraichit les penalites apprises. Sans ce rappel periodique, un « ne me dis plus ca »
+        // ne prendrait effet qu'au prochain redemarrage du daemon.
+        _apprentissageTimer = new Timer(async _ => await RafraichirPenalitesAsync(), null,
+            TimeSpan.FromSeconds(20), TimeSpan.FromMinutes(15));
+
         _logger.LogInformation("[ProactiveOrchestrator] All watchers started");
+    }
+
+    /// <summary>
+    /// Va chercher au backend ce qu'ORION a appris des refus de l'utilisateur.
+    /// Backend injoignable : on garde les dernieres penalites connues plutot que de repartir
+    /// a zero — reoublier ce que l'utilisateur a deja refuse serait le pire des comportements.
+    /// </summary>
+    private async Task RafraichirPenalitesAsync()
+    {
+        try
+        {
+            var reponse = await _httpClient.GetAsync($"{_backendHttpUrl}/api/proactivenotification/weights");
+            if (!reponse.IsSuccessStatusCode) return;
+
+            var body = await reponse.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(body);
+
+            if (!doc.RootElement.TryGetProperty("data", out var data) || data.ValueKind != JsonValueKind.Object)
+                return;
+
+            var penalites = data.EnumerateObject()
+                .Where(p => p.Value.ValueKind == JsonValueKind.Number)
+                .ToDictionary(p => p.Name, p => p.Value.GetInt32(), StringComparer.OrdinalIgnoreCase);
+
+            _decider.AppliquerPenalites(penalites);
+
+            if (penalites.Count > 0)
+            {
+                _logger.LogInformation("[Apprentissage] {N} signal(aux) attenue(s) : {Detail}",
+                    penalites.Count, string.Join(", ", penalites.Select(p => $"{p.Key}-{p.Value}")));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "[Apprentissage] Penalites non rafraichies");
+        }
     }
 
     public void Stop()
     {
+        _apprentissageTimer?.Dispose();
+        _apprentissageTimer = null;
+
         foreach (var watcher in _watchers)
         {
             watcher.PatternDetected -= OnPatternDetected;
@@ -82,19 +131,37 @@ public class ProactiveOrchestrator
     {
         try
         {
+            // ── LA boucle de décision ────────────────────────────────────────────
+            // Avant, tout pattern détecté devenait une parole, immédiatement et sans
+            // condition. ORION n'avait aucun moyen de se taire.
+            var maintenant = DateTime.UtcNow;
+            var decision = _decider.Decider(e, maintenant);
+            _decider.Enregistrer(e, decision, maintenant);
+
             _logger.LogInformation(
-                "[ProactiveOrchestrator] Pattern detected: {Pattern} from {Watcher}",
-                e.Pattern, sender?.GetType().Name ?? "Unknown");
+                "[Proactif] {Pattern} ({Watcher}) — score {Score} → {Action} : {Raison}",
+                e.Pattern, sender?.GetType().Name ?? "?", decision.Score, decision.Action, decision.Raison);
 
-            // 1. Appeler le backend : LLM génère + broadcast SSE en une requête
-            // Si backend injoignable, GenerateProactiveMessage retourne un fallback local
-            var message = await GenerateProactiveMessage(e);
+            if (decision.Action != ProactiveAction.Parler)
+                return; // différé au briefing, ou tu — dans les deux cas on n'interrompt pas
 
-            if (!string.IsNullOrEmpty(message))
+            // Le backend rédige le message et le diffuse en SSE. S'il est injoignable,
+            // on retombe sur un message local.
+            var (message, clientsPrevenus) = await GenerateProactiveMessage(e);
+
+            if (string.IsNullOrEmpty(message)) return;
+
+            // DEUX VOIX : le front prononce déjà le message reçu en SSE. Parler AUSSI en local
+            // faisait entendre la même phrase deux fois — le commentaire disait « fallback si
+            // le navigateur est fermé », mais rien ne vérifiait qu'il l'était.
+            // Le backend renvoie déjà le nombre de clients SSE prévenus : il suffisait de le lire.
+            if (clientsPrevenus > 0)
             {
-                // 2. TTS local en parallèle (si frontend fermé, daemon parle quand même)
-                await NotifyAll(message, e.Pattern);
+                _logger.LogDebug("[Proactif] {N} client(s) SSE parlent deja — pas de TTS local", clientsPrevenus);
+                return;
             }
+
+            await NotifyAll(message, e.Pattern);
         }
         catch (Exception ex)
         {
@@ -102,18 +169,21 @@ public class ProactiveOrchestrator
         }
     }
 
-    private async Task<string> GenerateProactiveMessage(PatternDetectedEventArgs pattern)
+    /// <summary>
+    /// Renvoie le message ET le nombre de clients SSE déjà prévenus — c'est ce chiffre qui
+    /// décide si le daemon doit parler à son tour ou se taire.
+    /// </summary>
+    private async Task<(string Message, int ClientsPrevenus)> GenerateProactiveMessage(PatternDetectedEventArgs pattern)
     {
-        // Déléguer au backend → LLM génère un message personnalisé
-        var backendMessage = await TriggerLLMMessageAsync(pattern.Pattern, pattern.Context);
+        var (backendMessage, clients) = await TriggerLLMMessageAsync(pattern.Pattern, pattern.Context);
         if (!string.IsNullOrEmpty(backendMessage))
-            return backendMessage;
+            return (backendMessage, clients);
 
-        // Fallback local si backend injoignable
-        return GetFallbackMessage(pattern.Pattern, pattern.Context);
+        // Backend injoignable : personne n'a été prévenu, donc le daemon parle.
+        return (GetFallbackMessage(pattern.Pattern, pattern.Context), 0);
     }
 
-    private async Task<string> TriggerLLMMessageAsync(string pattern, string context)
+    private async Task<(string Message, int ClientsPrevenus)> TriggerLLMMessageAsync(string pattern, string context)
     {
         try
         {
@@ -126,25 +196,25 @@ public class ProactiveOrchestrator
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("[ProactiveOrchestrator] Trigger returned {Status}", response.StatusCode);
-                return string.Empty;
+                return (string.Empty, 0);
             }
 
             var body = await response.Content.ReadAsStringAsync();
             using var doc = System.Text.Json.JsonDocument.Parse(body);
-            var message = doc.RootElement
-                .GetProperty("data")
-                .GetProperty("message")
-                .GetString() ?? string.Empty;
+            var data = doc.RootElement.GetProperty("data");
 
-            _logger.LogInformation("[ProactiveOrchestrator] LLM message: {Preview}",
-                message.Length > 60 ? message[..60] + "..." : message);
+            var message = data.GetProperty("message").GetString() ?? string.Empty;
+            var clients = data.TryGetProperty("clientsNotified", out var c) ? c.GetInt32() : 0;
 
-            return message;
+            _logger.LogInformation("[ProactiveOrchestrator] LLM message ({Clients} client(s) SSE): {Preview}",
+                clients, message.Length > 60 ? message[..60] + "..." : message);
+
+            return (message, clients);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[ProactiveOrchestrator] Backend trigger failed");
-            return string.Empty;
+            return (string.Empty, 0);
         }
     }
 
@@ -159,6 +229,12 @@ public class ProactiveOrchestrator
         "high_ram"   => "RAM presque pleine. Redémarre ou ferme des apps.",
         _            => context
     };
+
+    /// <summary>
+    /// Vide la file des signaux différés. Destiné au briefing : ce qui n'était pas assez
+    /// urgent pour interrompre reste vrai, et se dit une fois, groupé.
+    /// </summary>
+    public IReadOnlyList<SignalDiffere> RecupererDifferes() => _decider.DrainerDifferes();
 
     private async Task NotifyAll(string message, string pattern = "proactive")
     {

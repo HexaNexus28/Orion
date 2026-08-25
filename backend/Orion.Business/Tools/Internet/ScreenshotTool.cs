@@ -22,9 +22,24 @@ public class ScreenshotTool : ITool
         ["properties"] = new JsonObject
         {
             ["url"] = new JsonObject { ["type"] = "string", ["description"] = "URL à capturer" },
-            ["full_page"] = new JsonObject { ["type"] = "boolean", ["default"] = false },
-            ["width"] = new JsonObject { ["type"] = "integer", ["default"] = 1280 },
-            ["height"] = new JsonObject { ["type"] = "integer", ["default"] = 800 }
+            ["full_page"] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Capturer la page entiere en defilant, au lieu de la seule zone visible",
+                ["default"] = false
+            },
+            ["width"] = new JsonObject
+            {
+                ["type"] = "integer",
+                ["description"] = "Largeur de la fenetre en pixels",
+                ["default"] = 1280
+            },
+            ["height"] = new JsonObject
+            {
+                ["type"] = "integer",
+                ["description"] = "Hauteur de la fenetre en pixels",
+                ["default"] = 800
+            }
         },
         ["required"] = new JsonArray { "url" }
     };

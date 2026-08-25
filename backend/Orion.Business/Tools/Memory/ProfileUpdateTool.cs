@@ -21,16 +21,21 @@ public class ProfileUpdateTool : ITool
 
     public JsonObject InputSchema => new()
     {
-        ["key"] = new JsonObject
+        ["type"] = "object",
+        ["properties"] = new JsonObject
         {
-            ["type"] = "string",
-            ["description"] = "Clé du profil à mettre à jour (ex: priority_now, language)"
+            ["key"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Clé du profil (ex: name, role, projects, priority_now, language)"
+            },
+            ["value"] = new JsonObject
+            {
+                ["type"] = "string",
+                ["description"] = "Nouvelle valeur, qui REMPLACE l'ancienne"
+            }
         },
-        ["value"] = new JsonObject
-        {
-            ["type"] = "string",
-            ["description"] = "Nouvelle valeur"
-        }
+        ["required"] = new JsonArray { "key", "value" }
     };
 
     public ProfileUpdateTool(IMemoryService memoryService, ILogger<ProfileUpdateTool> logger)

@@ -25,7 +25,9 @@ public class MemoryService : IMemoryService
     {
         _logger.LogInformation("Searching memories for: {Query}", query);
 
-        var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(query, ct);
+        // Query : on cherche. Vectoriser une recherche comme un passage degrade la pertinence
+        // sans lever d'erreur — le modele NVIDIA est asymetrique.
+        var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(query, EmbeddingInputType.Query, ct);
         if (!embeddingResponse.Success || embeddingResponse.Data == null)
         {
             _logger.LogWarning("Embedding generation failed for memory search");
@@ -50,7 +52,7 @@ public class MemoryService : IMemoryService
     {
         try
         {
-            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(content, ct);
+            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(content, EmbeddingInputType.Passage, ct);
             var embedding = embeddingResponse.Success && embeddingResponse.Data != null
                 ? embeddingResponse.Data
                 : Array.Empty<float>();
@@ -71,7 +73,20 @@ public class MemoryService : IMemoryService
             await _unitOfWork.Memory.AddAsync(memory, ct);
             await _unitOfWork.SaveChangesAsync(ct);
 
-            _logger.LogInformation("Memory saved: {Id}", memory.Id);
+            // La colonne pgvector est hors du modele EF : sans cette ecriture explicite, le
+            // souvenir est stocke SANS vecteur et reste invisible a la recherche semantique.
+            if (embedding.Length > 0)
+            {
+                await _unitOfWork.Memory.SaveEmbeddingAsync(memory.Id, embedding, _embeddingService.ModelName, ct);
+                _logger.LogInformation("[MemoryService] Souvenir {Id} enregistre ({Dims} dimensions)",
+                    memory.Id, embedding.Length);
+            }
+            else
+            {
+                _logger.LogWarning("[MemoryService] Souvenir {Id} enregistre SANS vecteur — il ne " +
+                    "remontera jamais dans une recherche", memory.Id);
+            }
+
             return ApiResponse<bool>.SuccessResponse(true);
         }
         catch (Exception ex)
@@ -152,43 +167,6 @@ public class MemoryService : IMemoryService
         {
             _logger.LogError(ex, "Failed to get all memories");
             return ApiResponse<List<MemoryVectorDto>>.ErrorResponse("Failed to get memories", 500);
-        }
-    }
-
-    public async Task<ApiResponse<string>> ReflectAsync(CancellationToken ct = default)
-    {
-        try
-        {
-            var memories = await _unitOfWork.Memory.GetAllAsync(ct);
-            var recentMemories = memories
-                .Where(m => m.CreatedAt > DateTime.UtcNow.AddDays(-7))
-                .OrderByDescending(m => m.Importance)
-                .Take(20)
-                .ToList();
-
-            if (!recentMemories.Any())
-            {
-                return ApiResponse<string>.SuccessResponse("Aucun souvenir récent à analyser.");
-            }
-
-            // Simple reflection summary (could be enhanced with LLM)
-            var patterns = recentMemories
-                .GroupBy(m => m.Source ?? "unknown")
-                .Select(g => $"- {g.Key}: {g.Count()} souvenirs")
-                .ToList();
-
-            var summary = $"Synthèse hebdomadaire:\n" +
-                $"Total souvenirs analysés: {recentMemories.Count}\n\n" +
-                $"Répartition par source:\n{string.Join("\n", patterns)}\n\n" +
-                $"Thèmes principaux: {string.Join(", ", recentMemories.Take(5).Select(m => m.Content.Substring(0, Math.Min(30, m.Content.Length)) + "..."))}";
-
-            _logger.LogInformation("Memory reflection completed, analyzed {Count} memories", recentMemories.Count);
-            return ApiResponse<string>.SuccessResponse(summary);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to generate memory reflection");
-            return ApiResponse<string>.ErrorResponse("Failed to generate reflection", 500);
         }
     }
 

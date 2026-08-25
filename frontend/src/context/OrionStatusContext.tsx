@@ -1,11 +1,15 @@
 import { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
-import { apiClient } from '../services/api';
-import { ENDPOINTS } from '../config/endpoints';
+import { healthService } from '../services/healthService';
+import { daemonService } from '../services/daemonService';
+import type { LLMProvider } from '../types/dto/chatDto';
 
 interface OrionStatus {
   llmOnline: boolean;
   daemonConnected: boolean;
-  activeProvider: 'ollama' | 'claude' | null;
+  /** Miroir de l'enum backend Orion.Core.Enums.LLMProvider. */
+  activeProvider: LLMProvider | null;
+  /** Modèle réellement actif, tel que rapporté par le backend. */
+  activeModel: string | null;
   lastPing: number;
 }
 
@@ -20,29 +24,30 @@ export const OrionStatusProvider: React.FC<{ children: ReactNode }> = ({ childre
     llmOnline: false,
     daemonConnected: false,
     activeProvider: null,
+    activeModel: null,
     lastPing: 0
   });
 
   const ping = useCallback(async () => {
     try {
-      const [healthResponse, daemonResponse] = await Promise.all([
-        apiClient.get(ENDPOINTS.health),
-        apiClient.get(ENDPOINTS.daemon.status),
+      // Passer par la couche service (typée) plutôt que par apiClient en direct :
+      // les appels bruts renvoyaient du `any` implicite et dupliquaient healthService
+      // et daemonService, qui existaient déjà mais n'étaient référencés nulle part.
+      const [health, daemon] = await Promise.all([
+        healthService.getHealth(),
+        daemonService.getStatus(),
       ]);
 
-      const health = healthResponse.data?.data;
-      const daemon = daemonResponse.data?.data;
-      const rawProvider = health?.llmProvider?.toLowerCase?.() ?? 'none';
-      const activeProvider = rawProvider === 'ollama'
-        ? 'ollama'
-        : rawProvider === 'anthropic'
-          ? 'claude'
-          : null;
+      // Le backend renvoie le nom de l'enum tel quel ("Nim", "Ollama", "None").
+      const rawProvider = health.data?.llmProvider ?? 'None';
+      const activeProvider: LLMProvider | null =
+        rawProvider === 'Nim' || rawProvider === 'Ollama' ? rawProvider : null;
 
       setStatus({
-        llmOnline: rawProvider !== 'none',
-        daemonConnected: daemon?.connected === true,
+        llmOnline: activeProvider !== null,
+        daemonConnected: daemon.data?.connected === true,
         activeProvider,
+        activeModel: health.data?.llmModel ?? null,
         lastPing: Date.now()
       });
     } catch {
@@ -50,6 +55,7 @@ export const OrionStatusProvider: React.FC<{ children: ReactNode }> = ({ childre
         ...prev,
         llmOnline: false,
         daemonConnected: false,
+        activeModel: null,
         lastPing: Date.now()
       }));
     }

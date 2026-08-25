@@ -1,95 +1,272 @@
-using System.Text;
-using Orion.Core.DTOs.Responses;
-using Orion.Core.Enums;
+﻿using System.Text;
 using Orion.Core.Entities;
+using Orion.Core.Enums;
+using Orion.Core.Interfaces.Tools;
 
 namespace Orion.Business.LLM;
 
+/// <summary>
+/// Construit le prompt système d'ORION.
+///
+/// Ce prompt a un travail précis : faire d'un modèle bavard un agent qui décide.
+/// Les trois défauts observés qu'il corrige (docs/jarvis-gap-analysis.md §1.7) :
+///   1. la liste d'outils n'était jamais injectée — on ordonnait au modèle d'utiliser une liste vide ;
+///   2. rien ne lui disait QUAND s'abstenir — `llama3.2:3b` appelait `open_app` pour « dis bonjour » ;
+///   3. rien ne distinguait un outil qui lit d'un outil qui écrit.
+///
+/// ORDRE DES SECTIONS — CONTRAINTE DE PERFORMANCE, PAS DE STYLE.
+/// Les moteurs d'inférence mettent en cache le PRÉFIXE du prompt. Tout ce qui précède le
+/// premier octet modifié doit être réévalué. Mesuré le 2026-08-20 sur `llama3.2:3b` en CPU :
+/// 2777 tokens de prompt = 242,8 s à froid, 0,4 s si le préfixe est déjà connu (600×).
+/// D'où la règle : STABLE d'abord (identité, profil, outils, ton), VOLATIL en dernier
+/// (souvenirs RAG, date, état du daemon). Déplacer une section volatile vers le haut
+/// ferait repayer l'évaluation complète à CHAQUE requête.
+/// </summary>
 public class PromptBuilder
 {
     public string BuildSystemPrompt(
-        Dictionary<string, string> userProfile,
-        List<MemoryVector> relevantMemories,
-        List<ToolCallDto> availableTools,
+        IReadOnlyDictionary<string, string> userProfile,
+        IReadOnlyList<MemoryVector> relevantMemories,
+        IReadOnlyList<ITool> availableTools,
         bool daemonConnected,
         LLMProvider activeProvider,
         bool voiceMode = false)
     {
         var sb = new StringBuilder();
-        
-        sb.AppendLine("Tu es ORION, l'assistant IA personnel de l'utilisateur.");
+
+        // ── Préfixe STABLE (identique d'une requête à l'autre → mis en cache) ──
+        AppendIdentity(sb, userProfile);
+        AppendTools(sb, availableTools, daemonConnected);
+        AppendBehaviour(sb, voiceMode);
+
+        // ── Queue VOLATILE (change à chaque requête → seule partie réévaluée) ──
+        AppendMemories(sb, relevantMemories);
+        AppendContext(sb, activeProvider, daemonConnected);
+
+        return sb.ToString();
+    }
+
+    private static void AppendIdentity(StringBuilder sb, IReadOnlyDictionary<string, string> profile)
+    {
+        var name = profile.TryGetValue("name", out var n) && !string.IsNullOrWhiteSpace(n)
+            ? n
+            : "l'utilisateur";
+
+        sb.AppendLine($"Tu es ORION, l'assistant IA personnel de {name}.");
         sb.AppendLine("Tu fais partie de l'écosystème HexaNexus.");
         sb.AppendLine();
-        
-        // User profile context
-        sb.AppendLine("CONTEXTE UTILISATEUR :");
-        foreach (var (key, value) in userProfile)
+
+        if (profile.Count == 0) return;
+
+        sb.AppendLine("# CE QUE TU SAIS DE LUI");
+        foreach (var (key, value) in profile)
         {
-            sb.AppendLine($"- {key}: {value}");
+            sb.AppendLine($"- {key} : {value}");
         }
         sb.AppendLine();
-        
-        // Relevant memories (RAG)
-        if (relevantMemories.Any())
+    }
+
+    private static void AppendMemories(StringBuilder sb, IReadOnlyList<MemoryVector> memories)
+    {
+        if (memories.Count == 0) return;
+
+        sb.AppendLine("# CE DONT TU TE SOUVIENS (propre à cette demande)");
+        sb.AppendLine("Souvenirs remontés pour cette demande. Utilise-les s'ils sont pertinents, ignore-les sinon.");
+        foreach (var memory in memories.Take(5))
         {
-            sb.AppendLine("SOUVENIRS PERTINENTS :");
-            foreach (var memory in relevantMemories.Take(5))
-            {
-                sb.AppendLine($"- {memory.Content}");
-            }
+            sb.AppendLine($"- {memory.Content}");
+        }
+        sb.AppendLine();
+    }
+
+    private static void AppendTools(StringBuilder sb, IReadOnlyList<ITool> tools, bool daemonConnected)
+    {
+        if (tools.Count == 0)
+        {
+            sb.AppendLine("# OUTILS");
+            sb.AppendLine("Aucun outil n'est disponible pour l'instant. Réponds avec ce que tu sais,");
+            sb.AppendLine("et dis clairement à l'utilisateur ce que tu ne peux pas vérifier.");
+            sb.AppendLine();
+            return;
+        }
+
+        sb.AppendLine($"# TES OUTILS ({tools.Count})");
+        sb.AppendLine("Tu n'es pas un assistant qui décrit ce qu'il ferait : tu peux AGIR.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Quand utiliser un outil");
+        sb.AppendLine("- La demande exige une donnée que tu ne peux pas connaître : état du système,");
+        sb.AppendLine("  contenu d'un fichier, information récente ou datée du web.");
+        sb.AppendLine("- La demande exige une action sur la machine de l'utilisateur.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Quand NE PAS utiliser d'outil");
+        sb.AppendLine("Réponds directement, SANS aucun outil, quand la demande est :");
+        sb.AppendLine("- une salutation ou une politesse — « bonjour », « merci », « ok », « ça va ? »");
+        sb.AppendLine("- une question de connaissance générale dont tu connais déjà la réponse");
+        sb.AppendLine("- une demande d'explication, d'avis, de reformulation ou de code");
+        sb.AppendLine("- **une question dont la réponse figure déjà dans ce prompt** — profil de");
+        sb.AppendLine("  l'utilisateur, souvenirs remontés, contexte courant. Ces informations sont");
+        sb.AppendLine("  sous tes yeux : n'ouvre RIEN pour aller les rechercher ailleurs.");
+        sb.AppendLine("En cas de doute : réponds d'abord et propose l'outil ensuite.");
+        sb.AppendLine("Un outil déclenché à tort dérange plus qu'une question posée.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Enchaîner plusieurs outils");
+        sb.AppendLine("Tu peux appeler plusieurs outils de suite — le résultat de l'un nourrit le suivant.");
+        sb.AppendLine("Après chaque résultat, demande-toi : « est-ce que ça répond à la demande ? »");
+        sb.AppendLine("Si oui, réponds. N'appelle jamais un outil de plus par réflexe.");
+        sb.AppendLine();
+
+        sb.AppendLine("## Règles d'usage");
+        sb.AppendLine("- N'INVENTE JAMAIS un argument. Chemin, nom d'application, requête : si l'information");
+        sb.AppendLine("  manque, demande-la au lieu de deviner.");
+        sb.AppendLine("- Un outil qui échoue n'est pas un échec de la conversation : dis ce qui a échoué,");
+        sb.AppendLine("  pourquoi, et ce que l'utilisateur peut faire.");
+        sb.AppendLine("- Ne prétends JAMAIS avoir fait quelque chose que tu n'as pas fait.");
+        sb.AppendLine();
+
+        AppendMemoryDoctrine(sb, tools);
+
+        var destructive = tools.Where(t => t.IsDestructive).ToList();
+        if (destructive.Count > 0)
+        {
+            sb.AppendLine("## Outils qui modifient l'état — prudence");
+            sb.AppendLine($"Ceux-ci écrivent, suppriment ou exécutent : {string.Join(", ", destructive.Select(t => t.Name))}.");
+            sb.AppendLine("Ne les déclenche que sur une demande EXPLICITE et sans ambiguïté.");
+            sb.AppendLine("Si la demande est vague (« nettoie ça », « range mes fichiers »), demande");
+            sb.AppendLine("confirmation en énonçant exactement ce que tu t'apprêtes à faire.");
             sb.AppendLine();
         }
-        
-        // Behavior rules
-        sb.AppendLine("RÈGLES DE COMPORTEMENT :");
-        sb.AppendLine("- Réponds toujours en français sauf si explicitement demandé autrement");
-        sb.AppendLine("- Sois direct, factuel, technique — l'utilisateur est développeur avancé");
-        sb.AppendLine("- Pas de formules de politesse inutiles, pas de \"bien sûr !\", pas de \"certainement !\"");
-        sb.AppendLine("- Si tu as un doute sur une information → dis-le clairement");
-        sb.AppendLine("- Utilise les tools disponibles avant de répondre si la question nécessite des données fraîches");
+
+        if (!daemonConnected)
+        {
+            // « Indisponible » ne veut plus dire « impossible ». Sans ce paragraphe, le modèle
+            // voit un outil au catalogue, l'appelle, reçoit « mis en file » et l'annonce comme
+            // un échec — la file existerait sans que l'utilisateur en profite jamais.
+            var differables = tools.Where(t => t.RequiresDaemon && t.IsDeferrable).Select(t => t.Name).ToList();
+
+            sb.AppendLine("## ⚠ LE PC DE L'UTILISATEUR EST ÉTEINT");
+            sb.AppendLine("Tu fonctionnes normalement : seules ses MAINS sont absentes.");
+            sb.AppendLine("Les outils qui LISENT sa machine (fichiers, dossiers, état système,");
+            sb.AppendLine("capture d'écran) sont retirés de ton catalogue — une réponse demain");
+            sb.AppendLine("décrirait l'état d'hier, elle ne vaudrait rien.");
+            // Mesuré le 2026-08-21 : sans cette ligne, le modèle refuse correctement PUIS propose
+            // « je note ça pour le démarrage ? ». Il promet une file où la demande n'ira jamais.
+            sb.AppendLine("Ne propose donc PAS de les mettre en attente : elles n'y vont pas.");
+
+            if (differables.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"En revanche, ceux-ci restent utilisables : {string.Join(", ", differables)}.");
+                sb.AppendLine("Ils ne s'exécutent pas tout de suite : ils sont MIS EN FILE et partiront");
+                sb.AppendLine("dès que son PC se rallume. Ce n'est PAS un échec — appelle-les");
+                sb.AppendLine("normalement, puis annonce ce qui va se passer, sans rien promettre de plus");
+                sb.AppendLine("que ce que l'outil te répond.");
+                sb.AppendLine("Une action qui modifie l'état lui sera redemandée à son réveil avant de");
+                sb.AppendLine("partir : dis-le, c'est une garantie, pas une réserve.");
+            }
+
+            sb.AppendLine();
+            sb.AppendLine("Ne prétends jamais que c'est déjà fait.");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("## Catalogue");
+        foreach (var tool in tools.OrderBy(t => t.Name, StringComparer.Ordinal))
+        {
+            var flags = new List<string>();
+            if (tool.RequiresDaemon) flags.Add(daemonConnected ? "PC requis" : "PC éteint — sera différé");
+            if (tool.IsDestructive) flags.Add("modifie l'état");
+
+            var suffix = flags.Count > 0 ? $"  [{string.Join(", ", flags)}]" : string.Empty;
+            sb.AppendLine($"- {tool.Name} : {tool.Description}{suffix}");
+        }
+        sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Enseigne QUAND se souvenir. Sans cette doctrine, deux echecs symetriques : ou bien le
+    /// modele n'appelle jamais les outils memoire — et ORION reste amnesique d'une session a
+    /// l'autre — ou bien il archive chaque banalite, et la memoire devient du bruit qu'on ne
+    /// consulte plus. Le tri appartient au modele ; la regle de tri appartient au prompt.
+    /// </summary>
+    private static void AppendMemoryDoctrine(StringBuilder sb, IReadOnlyList<ITool> tools)
+    {
+        var names = tools.Select(t => t.Name).ToHashSet(StringComparer.Ordinal);
+        var canRemember = names.Contains("memory_save");
+        var canProfile = names.Contains("profile_update");
+
+        if (!canRemember && !canProfile) return;
+
+        sb.AppendLine("## Se souvenir");
+        sb.AppendLine("Tu gardes une mémoire entre les sessions. Elle n'a de valeur que si elle reste courte.");
+        sb.AppendLine();
+
+        if (canRemember)
+        {
+            sb.AppendLine("Appelle `memory_save` quand l'utilisateur te livre un fait DURABLE :");
+            sb.AppendLine("- une décision, un choix d'architecture, une contrainte de son projet");
+            sb.AppendLine("- une préférence de travail ou une correction qu'il t'apporte");
+            sb.AppendLine("- une échéance, un objectif, un élément de contexte qui vaudra encore dans six mois");
+            sb.AppendLine();
+            sb.AppendLine("N'enregistre RIEN quand il s'agit :");
+            sb.AppendLine("- d'une question ponctuelle et de sa réponse");
+            sb.AppendLine("- d'une information que tu sais déjà, ou qui figure déjà dans son profil");
+            sb.AppendLine("- de bavardage, de politesse, ou d'un état passager (« j'ai faim », « il pleut »)");
+            sb.AppendLine();
+            sb.AppendLine("Formule chaque souvenir de façon AUTONOME : il sera relu hors de cette conversation.");
+            sb.AppendLine("Écris « Yawo héberge son infrastructure sur un VPS IONOS », pas « il l'héberge là-bas ».");
+            sb.AppendLine("Un souvenir par fait — n'empile pas trois idées dans une phrase.");
+            sb.AppendLine();
+        }
+
+        if (canProfile)
+        {
+            sb.AppendLine("`profile_update` sert à ce qui définit l'utilisateur de façon stable :");
+            sb.AppendLine("nom, rôle, projets, langue, priorité du moment. Une clé = une valeur, qui REMPLACE");
+            sb.AppendLine("l'ancienne. Le profil reste petit ; tout le reste va dans `memory_save`.");
+            sb.AppendLine();
+        }
+
+        sb.AppendLine("Enfin : ne dis pas que tu retiens quelque chose sans l'avoir réellement enregistré.");
+        sb.AppendLine();
+    }
+
+    private static void AppendBehaviour(StringBuilder sb, bool voiceMode)
+    {
+        sb.AppendLine("# TON");
+        sb.AppendLine("- Réponds en français, sauf demande explicite du contraire.");
+        sb.AppendLine("- Direct, factuel, technique : l'utilisateur est développeur avancé.");
+        sb.AppendLine("- Pas de formule de politesse d'ouverture, pas de « bien sûr ! », pas de « certainement ! ».");
+        sb.AppendLine("- Si tu n'es pas sûr d'une information, dis-le au lieu de l'affirmer.");
 
         if (voiceMode)
         {
             sb.AppendLine();
-            sb.AppendLine("MODE VOIX ACTIF — règles spéciales :");
-            sb.AppendLine("- Réponds comme dans une CONVERSATION ORALE naturelle");
-            sb.AppendLine("- Phrases COURTES (max 2-3 phrases par idée), rythme conversationnel");
-            sb.AppendLine("- AUCUN markdown : pas de **, pas de ```, pas de listes à puces, pas de #");
-            sb.AppendLine("- AUCUN formatage visuel — tout sera lu à voix haute");
-            sb.AppendLine("- Utilise des connecteurs oraux : 'alors', 'du coup', 'en gros', 'par contre'");
-            sb.AppendLine("- Pour les chiffres : dis 'environ 1500' pas '~1,500'");
-            sb.AppendLine("- Si la réponse est longue, résume en 3-4 phrases et propose d'approfondir");
-            sb.AppendLine("- Ton naturel, comme un collègue dev qui explique — pas un robot qui lit de la doc");
+            sb.AppendLine("# MODE VOIX ACTIF");
+            sb.AppendLine("Tout ce que tu écris sera lu à voix haute. Donc :");
+            sb.AppendLine("- Phrases COURTES, rythme d'une vraie conversation orale.");
+            sb.AppendLine("- AUCUN markdown : ni **, ni ```, ni listes à puces, ni titres.");
+            sb.AppendLine("- Les chiffres s'écrivent comme ils se disent : « environ 1500 », pas « ~1,500 ».");
+            sb.AppendLine("- Connecteurs oraux bienvenus : « alors », « du coup », « en gros », « par contre ».");
+            sb.AppendLine("- Réponse longue : résume en 3-4 phrases et propose d'approfondir.");
+            sb.AppendLine("- Quand tu lances un outil, dis-le en une courte phrase — l'utilisateur ne voit pas");
+            sb.AppendLine("  son écran, un silence lui fait croire que tu as planté.");
         }
         else
         {
-            sb.AppendLine("- Pour afficher des stats/chiffres clairement : utilise le format **Label**: Valeur");
+            sb.AppendLine("- Pour présenter des chiffres clairement : format **Label** : valeur.");
         }
-        
-        if (daemonConnected)
-        {
-            sb.AppendLine("- Pour les actions système (ouvrir une app, lancer un script) → utilise le daemon");
-        }
-        
-        sb.AppendLine("- Tu connais les projets de l'utilisateur");
+
         sb.AppendLine();
-        
-        // Available tools
-        if (availableTools.Any())
-        {
-            sb.AppendLine("TOOLS DISPONIBLES :");
-            foreach (var tool in availableTools)
-            {
-                sb.AppendLine($"- {tool.ToolName}");
-            }
-            sb.AppendLine();
-        }
-        
-        // Current context
-        sb.AppendLine($"DATE ET HEURE ACTUELLES : {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
-        sb.AppendLine($"MODE LLM ACTIF : {activeProvider}");
-        sb.AppendLine($"DAEMON CONNECTÉ : {(daemonConnected ? "oui" : "non")}");
-        
-        return sb.ToString();
+    }
+
+    private static void AppendContext(StringBuilder sb, LLMProvider activeProvider, bool daemonConnected)
+    {
+        sb.AppendLine("# CONTEXTE COURANT");
+        sb.AppendLine($"- Date et heure : {DateTime.Now:yyyy-MM-dd HH:mm}");
+        sb.AppendLine($"- Fournisseur LLM actif : {activeProvider}");
+        sb.AppendLine($"- PC de l'utilisateur joignable : {(daemonConnected ? "oui" : "NON")}");
     }
 }

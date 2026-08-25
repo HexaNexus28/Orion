@@ -20,10 +20,6 @@ public class ChatServiceTests
     private readonly Mock<IConversationAgent> _mockAgent;
     private readonly Mock<IUnitOfWork> _mockUnitOfWork;
     private readonly Mock<IAuditService> _mockAuditService;
-    private readonly Mock<ILLMRouter> _mockLlmRouter;
-    private readonly Mock<IDaemonClient> _mockDaemonClient;
-    private readonly PromptBuilder _promptBuilder;
-    private readonly Mock<IVoiceNotificationService> _mockVoiceNotification;
     private readonly Mock<ILogger<ChatService>> _mockLogger;
     private readonly ChatService _service;
 
@@ -32,12 +28,12 @@ public class ChatServiceTests
         _mockAgent = new Mock<IConversationAgent>();
         _mockUnitOfWork = new Mock<IUnitOfWork>();
         _mockAuditService = new Mock<IAuditService>();
-        _mockLlmRouter = new Mock<ILLMRouter>();
-        _mockDaemonClient = new Mock<IDaemonClient>();
-        _promptBuilder = new PromptBuilder();
-        _mockVoiceNotification = new Mock<IVoiceNotificationService>();
         _mockLogger = new Mock<ILogger<ChatService>>();
-        _service = new ChatService(_mockAgent.Object, _mockUnitOfWork.Object, _mockAuditService.Object, _mockLlmRouter.Object, _promptBuilder, _mockDaemonClient.Object, _mockVoiceNotification.Object, _mockLogger.Object);
+        _service = new ChatService(
+            _mockAgent.Object,
+            _mockUnitOfWork.Object,
+            _mockAuditService.Object,
+            _mockLogger.Object);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using Orion.Daemon.Core.Configuration;
 using Orion.Daemon.Core.Interfaces;
+using Orion.Daemon.Core.Proactive;
 using Orion.Daemon.Notifiers;
 using Orion.Daemon.WebSocket;
 using Orion.Daemon.Watchers;
@@ -11,7 +12,10 @@ public class DaemonWorker : BackgroundService
     private readonly ILogger<DaemonWorker> _logger;
     private readonly DaemonOptions _options;
     private readonly ProactiveOptions _proactiveOptions;
+    private readonly WorkOptions _workOptions;
     private readonly IActionRegistry _actionRegistry;
+    private readonly IProactiveDecider _decider;
+    private readonly IActivityContext _activite;
     private DaemonWebSocketManager? _wsManager;
     private ProactiveOrchestrator? _proactiveOrchestrator;
 
@@ -19,12 +23,18 @@ public class DaemonWorker : BackgroundService
         ILogger<DaemonWorker> logger,
         DaemonOptions options,
         ProactiveOptions proactiveOptions,
-        IActionRegistry actionRegistry)
+        WorkOptions workOptions,
+        IActionRegistry actionRegistry,
+        IProactiveDecider decider,
+        IActivityContext activite)
     {
         _logger = logger;
         _options = options;
         _proactiveOptions = proactiveOptions;
+        _workOptions = workOptions;
         _actionRegistry = actionRegistry;
+        _decider = decider;
+        _activite = activite;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -67,9 +77,10 @@ public class DaemonWorker : BackgroundService
             {
                 new ActivityWatcher(_proactiveOptions, _logger),
                 new TimeWatcher(_proactiveOptions, _logger),
-                new ProcessWatcher(_logger),
+                new ProcessWatcher(_activite, _logger),
                 new SystemWatcher(_logger),
-                new AdaptiveWatcher(_logger)  // Auto-learning / self-improving
+                new AdaptiveWatcher(_logger),  // Auto-learning / self-improving
+                new WorkWatcher(_workOptions, _logger)  // Services, depots : ce qui casse une journee
             };
 
             // Create notifiers - Toast moderne, TTS PowerShell, Kokoro ONNX
@@ -88,6 +99,7 @@ public class DaemonWorker : BackgroundService
                 _wsManager,
                 _proactiveOptions,
                 _options,
+                _decider,
                 _logger);
 
             _proactiveOrchestrator.Start();

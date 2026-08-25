@@ -5,22 +5,28 @@ import { HoloCards, parseHoloCards } from './components/ui/HoloCards';
 import { MemoryOverlay } from './components/overlay/MemoryOverlay';
 import { BriefingOverlay } from './components/overlay/BriefingOverlay';
 import { SettingsOverlay } from './components/overlay/SettingsOverlay';
+import { DeferredQueueOverlay } from './components/overlay/DeferredQueueOverlay';
+import { DeferredQueueBadge } from './components/overlay/DeferredQueueBadge';
 import { useEntity } from './context/EntityContext';
 import { useOrionStatus } from './context/OrionStatusContext';
 import { useGestureControl } from './hooks/useGestureControl';
 import { useVAD } from './hooks/useVAD';
 import { useVoiceWS } from './hooks/useVoiceWS';
 import { useStream } from './hooks/useStream';
+import { ToolActivityStrip } from './components/overlay/ToolActivityStrip';
+import { VoiceStatusHint } from './components/overlay/VoiceStatusHint';
 import { useOrionNotifications } from './hooks/useOrionNotifications';
+import { useDeferredQueue } from './services/deferredService';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
 const SWIPE_THRESHOLD = 80;
 
 const App: React.FC = () => {
   const { state: entityState, setState, setAmplitude, updateAmplitude, amplitudeRef } = useEntity();
-  const { text: responseText, isStreaming, streamMessage, reset, appendChunk, setStreaming } = useStream();
+  const { text: responseText, isStreaming, tools: toolActivity, streamMessage, reset, appendChunk, pushTool, setStreaming } = useStream();
   const { daemonConnected } = useOrionStatus();
   const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
+  const deferredQueue = useDeferredQueue();
   const spokenUpToRef = useRef(0);
   const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
 
@@ -28,6 +34,7 @@ const App: React.FC = () => {
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
   const [isBriefingOpen, setIsBriefingOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isDeferredOpen, setIsDeferredOpen] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const isPassiveListeningRef = useRef(false);
@@ -49,7 +56,7 @@ const App: React.FC = () => {
     touchStartYRef.current = null;
 
     // Only trigger swipe when no overlay/input is open
-    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen) return;
+    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen || isDeferredOpen) return;
 
     if (deltaY > SWIPE_THRESHOLD) {
       setIsMemoryOpen(true);       // swipe up → mémoire
@@ -243,6 +250,19 @@ const App: React.FC = () => {
     onLLMChunk: (chunk) => {
       appendChunk(chunk);
     },
+    onNoSpeech: () => {
+      // Bruit ambiant capte par le VAD : on revient au repos, sans afficher d'erreur.
+      setStreaming(false);
+      setState('idle');
+    },
+    onToolStart: (tool, args) => {
+      console.log('[App] ORION execute:', tool);
+      pushTool({ tool, args, status: 'running', iteration: 0 });
+    },
+    onToolResult: (tool, ok, summary) => {
+      console.log('[App] Outil termine:', tool, ok);
+      pushTool({ tool, status: ok ? 'ok' : 'failed', summary, iteration: 0 });
+    },
     onLLMDone: (fullText) => {
       console.log('[App] LLM done:', fullText.substring(0, 60) + '...');
       // Keep isStreaming=true until TTS finishes — text stays "live" while ORION speaks
@@ -296,6 +316,13 @@ const App: React.FC = () => {
     isProcessingVoiceRef.current = true;
     setState('thinking');
 
+    // Consommer la prise : sans ça, `audioBlobRef` reste non-nul après le tour et la condition
+    // ligne ~375 redevient vraie dès que `isTurnActive` retombe (fin de réponse d'ORION).
+    // Un tour fantôme repartait alors sur le bruit ambiant accumulé côté serveur — ORION
+    // répondait à côté, comme s'il n'avait pas écouté. Le déclencheur doit être un FRONT
+    // (une prise = un tour), pas un état permanent.
+    audioBlobRef.current = null;
+
     // Tell WebSocket server that speech ended → triggers STT + LLM + TTS
     endAudio();
 
@@ -305,6 +332,7 @@ const App: React.FC = () => {
       isProcessingVoiceRef.current = false;
     }, 500);
   }, [isInputVisible, setState, endAudio]);
+
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
@@ -375,14 +403,24 @@ const App: React.FC = () => {
 
   // ── Daemon status flash ──────────────────────────────────────────────────────
   const prevDaemonRef = useRef(daemonConnected);
+  const refreshDeferred = deferredQueue.refresh;
   useEffect(() => {
     if (!prevDaemonRef.current && daemonConnected) {
       // Daemon just connected — brief visual feedback via entity state
       setState('responding');
       setTimeout(() => setState('idle'), 600);
+      // Le backend draine au même moment : la file affichée doit suivre, pas rester d'hier.
+      void refreshDeferred();
     }
     prevDaemonRef.current = daemonConnected;
-  }, [daemonConnected, setState]);
+  }, [daemonConnected, setState, refreshDeferred]);
+
+  // Le drain a fini et l'a annoncé : c'est le signal qui fait autorité sur l'état réel de la file.
+  useEffect(() => {
+    if (lastNotification?.type === 'deferred') {
+      void refreshDeferred();
+    }
+  }, [lastNotification, refreshDeferred]);
 
   return (
     <div
@@ -398,6 +436,32 @@ const App: React.FC = () => {
         onLongPress={processVoiceTurn}
         onDoubleTap={handleOpenSettings}
       />
+
+      {/* Ce qu'ORION fait, et ce que l'utilisateur peut faire maintenant */}
+      {!isInputVisible && (
+        <VoiceStatusHint
+          state={entityState}
+          isListening={isListening}
+          isSpeaking={isSpeaking}
+          micDenied={Boolean(voiceError) && !isListening}
+          onRetryMic={() => {
+            setVoiceError(null);
+            void startPassiveListeningRef.current?.();
+          }}
+        />
+      )}
+
+      {/* Ce qui attend le reveil du PC — n'apparait que s'il y a quelque chose */}
+      {!isInputVisible && (
+        <DeferredQueueBadge
+          enAttente={deferredQueue.enAttente.length}
+          aConfirmer={deferredQueue.aConfirmer.length}
+          onOpen={() => setIsDeferredOpen(true)}
+        />
+      )}
+
+      {/* Trace des actions — ce qu'ORION FAIT, pas seulement ce qu'il dit */}
+      <ToolActivityStrip tools={toolActivity} />
 
       {/* HoloCards draggables — données structurées extraites de la réponse */}
       {!isStreaming && responseText && (
@@ -418,6 +482,11 @@ const App: React.FC = () => {
       <MemoryOverlay isOpen={isMemoryOpen} onClose={() => setIsMemoryOpen(false)} />
       <BriefingOverlay isOpen={isBriefingOpen} onClose={() => setIsBriefingOpen(false)} />
       <SettingsOverlay isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      <DeferredQueueOverlay
+        isOpen={isDeferredOpen}
+        onClose={() => setIsDeferredOpen(false)}
+        queue={deferredQueue}
+      />
 
       {/* Hand tracking video (caché) */}
       {isHandTrackingEnabled && (

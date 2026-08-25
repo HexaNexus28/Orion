@@ -14,11 +14,13 @@ namespace Orion.Api.Controllers;
 public class MemoryController : ControllerBase
 {
     private readonly IMemoryService _memoryService;
+    private readonly IMemoryRevectorizer _revectorizer;
     private readonly ILogger<MemoryController> _logger;
 
-    public MemoryController(IMemoryService memoryService, ILogger<MemoryController> logger)
+    public MemoryController(IMemoryService memoryService, IMemoryRevectorizer revectorizer, ILogger<MemoryController> logger)
     {
         _memoryService = memoryService;
+        _revectorizer = revectorizer;
         _logger = logger;
     }
 
@@ -52,6 +54,25 @@ public class MemoryController : ControllerBase
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         var response = await _memoryService.DeleteMemoryAsync(id.ToString(), ct);
+        return StatusCode(response.StatusCode, response);
+    }
+
+    /// <summary>
+    /// Recalcule les vecteurs avec le modele d'embedding COURANT.
+    ///
+    /// A lancer apres tout changement de fournisseur : deux modeles = deux espaces vectoriels
+    /// incomparables, et les melanger renvoie des resultats absurdes sans lever d'erreur.
+    /// Le rapport indique combien de souvenirs etaient concernes — la reponse a « combien y
+    /// en avait-il ? », qu'on ne peut pas connaitre autrement.
+    ///
+    /// `maxRows` permet un premier essai borne avant de lancer la totalite.
+    /// </summary>
+    [HttpPost("revectorize")]
+    [ProducesResponseType(typeof(ApiResponse<RevectorizeReport>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Revectorize([FromQuery] int? maxRows, CancellationToken ct)
+    {
+        _logger.LogInformation("[Memory] Revectorisation demandee (maxRows={Max})", maxRows);
+        var response = await _revectorizer.RunAsync(maxRows, ct);
         return StatusCode(response.StatusCode, response);
     }
 }

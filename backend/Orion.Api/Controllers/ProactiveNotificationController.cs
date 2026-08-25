@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Agents;
+using Orion.Core.Interfaces.Services;
 using Orion.Core.Interfaces.Daemon;
 
 namespace Orion.Api.Controllers;
@@ -18,15 +19,18 @@ public class ProactiveNotificationController : ControllerBase
     private static readonly ConcurrentDictionary<string, HttpResponse> _clients = new();
     private readonly IDaemonClient _daemonClient;
     private readonly IBriefingAgent _briefingAgent;
+    private readonly IProactiveLearningService _apprentissage;
     private readonly ILogger<ProactiveNotificationController> _logger;
 
     public ProactiveNotificationController(
         IDaemonClient daemonClient,
         IBriefingAgent briefingAgent,
+        IProactiveLearningService apprentissage,
         ILogger<ProactiveNotificationController> logger)
     {
         _daemonClient = daemonClient;
         _briefingAgent = briefingAgent;
+        _apprentissage = apprentissage;
         _logger = logger;
     }
 
@@ -145,7 +149,22 @@ public class ProactiveNotificationController : ControllerBase
 
         await BroadcastAsync("proactive", message, request.Priority ?? "normal", speak: true, _logger);
 
+        // La trace de ce qui a ETE DIT : c'est elle qui alimente l'apprentissage. La table
+        // `behavior_patterns` existait depuis le premier jour sans que rien n'y ecrive.
+        await _apprentissage.EnregistrerSignalementAsync(request.Pattern, request.Context, message, ct);
+
         return Ok(ApiResponse<object>.SuccessResponse(new { message, clientsNotified = _clients.Count }));
+    }
+
+    /// <summary>
+    /// Pénalités apprises par pattern. Le daemon les récupère périodiquement et les soustrait
+    /// au score : un signal rejeté plusieurs fois finit sous le seuil, puis se tait.
+    /// </summary>
+    [HttpGet("weights")]
+    public async Task<IActionResult> GetWeights(CancellationToken ct)
+    {
+        var penalites = await _apprentissage.ObtenirPenalitesAsync(ct);
+        return StatusCode(penalites.StatusCode, penalites);
     }
 
     /// <summary>

@@ -1,121 +1,106 @@
-using Microsoft.Extensions.Logging;
 using Moq;
 using Orion.Business.Services;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Enums;
 using Orion.Core.Interfaces.LLM;
-using Orion.Core.Interfaces.Services;
 
 namespace Orion.Tests.Services;
 
+/// <summary>
+/// `ILLMService` est la frontière métier au-dessus du transport LLM : le métier interroge
+/// CE service, jamais un client LLM directement. Ces tests verrouillent son contrat.
+/// </summary>
 public class LLMServiceTests
 {
-    private readonly Mock<ILLMRouter> _mockRouter;
-    private readonly Mock<ILogger<LLMService>> _mockLogger;
-    private readonly LLMService _service;
-
-    public LLMServiceTests()
+    private static Mock<ILLMAgentClient> Client(LLMProvider provider, string model)
     {
-        _mockRouter = new Mock<ILLMRouter>();
-        _mockLogger = new Mock<ILogger<LLMService>>();
-        _service = new LLMService(_mockRouter.Object, _mockLogger.Object);
+        var mock = new Mock<ILLMAgentClient>();
+        mock.SetupGet(c => c.Provider).Returns(provider);
+        mock.SetupGet(c => c.ModelId).Returns(model);
+        return mock;
     }
 
     [Fact]
-    public async Task CompleteAsync_Should_Call_Router()
+    public void GetStatus_expose_le_fournisseur_ET_le_modele_actif()
     {
-        // Arrange
-        var request = new LLMRequest
+        // Le modèle fait partie du contrat : c'est l'information qui manquait quand ORION
+        // tournait sur un repli dégradé sans que rien ne le signale.
+        var service = new LLMService(Client(LLMProvider.Nim, "nvidia/nemotron-3-super-120b-a12b").Object);
+
+        var result = service.GetStatus();
+
+        Assert.True(result.Success);
+        Assert.Equal(LLMProvider.Nim, result.Data!.Provider);
+        Assert.Equal("nvidia/nemotron-3-super-120b-a12b", result.Data.Model);
+        Assert.True(result.Data.IsOnline);
+    }
+
+    [Fact]
+    public void GetStatus_signale_hors_ligne_quand_aucun_fournisseur_n_est_elu()
+    {
+        var service = new LLMService(Client(LLMProvider.None, "aucun").Object);
+
+        var result = service.GetStatus();
+
+        Assert.True(result.Success);
+        Assert.False(result.Data!.IsOnline);
+        Assert.Equal(LLMProvider.None, result.Data.Provider);
+    }
+
+    [Fact]
+    public void HealthService_reporte_le_modele_dans_le_health_check()
+    {
+        var llm = new Mock<Orion.Core.Interfaces.Services.ILLMService>();
+        llm.Setup(s => s.GetStatus()).Returns(ApiResponse<LLMStatusDto>.SuccessResponse(new LLMStatusDto
         {
-            Messages = new List<LLMMessage> { new() { Role = "user", Content = "Hello" } }
-        };
+            Provider = LLMProvider.Nim,
+            Model = "nvidia/nemotron-3-super-120b-a12b",
+            IsOnline = true
+        }));
 
-        var expectedResponse = ApiResponse<LLMResponse>.SuccessResponse(new LLMResponse
+        var result = new HealthService(llm.Object).GetHealthStatus();
+
+        Assert.True(result.Success);
+        Assert.Equal("Nim", result.Data!.LlmProvider);
+        Assert.Equal("nvidia/nemotron-3-super-120b-a12b", result.Data.LlmModel);
+    }
+
+    [Fact]
+    public void HealthService_dit_None_quand_le_LLM_est_absent()
+    {
+        var llm = new Mock<Orion.Core.Interfaces.Services.ILLMService>();
+        llm.Setup(s => s.GetStatus()).Returns(ApiResponse<LLMStatusDto>.SuccessResponse(new LLMStatusDto
         {
-            Content = "Response",
-            Provider = LLMProvider.Ollama,
-            Model = "kimi-k2"
-        });
+            Provider = LLMProvider.None,
+            Model = "aucun",
+            IsOnline = false
+        }));
 
-        _mockRouter.Setup(x => x.CompleteAsync(request, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedResponse);
+        var result = new HealthService(llm.Object).GetHealthStatus();
 
-        // Act
-        var result = await _service.CompleteAsync(request);
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.Equal("Response", result.Data?.Content);
-        _mockRouter.Verify(x => x.CompleteAsync(request, It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal("None", result.Data!.LlmProvider);
     }
 
     [Fact]
-    public async Task CompleteWithPromptAsync_Should_Create_Request_And_Call_Router()
+    public void Le_metier_ne_depend_jamais_du_transport_directement()
     {
-        // Arrange
-        var systemPrompt = "You are helpful";
-        var userMessage = "Hello";
+        // Garde-fou d'architecture : HealthService doit se construire avec un ILLMService,
+        // pas avec un client LLM. Si quelqu'un recâble le raccourci, ceci ne compile plus.
+        var constructors = typeof(HealthService).GetConstructors();
+        var parameters = Assert.Single(constructors).GetParameters();
 
-        var expectedResponse = ApiResponse<LLMResponse>.SuccessResponse(new LLMResponse
-        {
-            Content = "Hi!",
-            Provider = LLMProvider.Ollama,
-            Model = "kimi-k2"
-        });
-
-        _mockRouter.Setup(x => x.CompleteAsync(It.Is<LLMRequest>(r =>
-            r.SystemPrompt == systemPrompt &&
-            r.Messages.Count == 1 &&
-            r.Messages[0].Content == userMessage), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(expectedResponse);
-
-        // Act
-        var result = await _service.CompleteWithPromptAsync(systemPrompt, userMessage);
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.Equal("Hi!", result.Data?.Content);
+        Assert.Single(parameters);
+        Assert.Equal(typeof(Orion.Core.Interfaces.Services.ILLMService), parameters[0].ParameterType);
     }
 
     [Fact]
-    public void GetActiveProvider_Should_Return_Router_ActiveProvider()
+    public void Le_contrat_du_service_reste_minimal()
     {
-        // Arrange
-        _mockRouter.Setup(x => x.ActiveProvider).Returns(LLMProvider.Ollama);
+        // Zéro code mort : le service n'expose que ce qui a un appelant réel.
+        var methods = typeof(Orion.Core.Interfaces.Services.ILLMService).GetMethods();
 
-        // Act
-        var result = _service.GetActiveProvider();
-
-        // Assert
-        Assert.Equal(LLMProvider.Ollama, result);
-    }
-
-    [Fact]
-    public async Task IsAvailableAsync_When_Router_Has_ActiveProvider_Returns_True()
-    {
-        // Arrange
-        _mockRouter.Setup(x => x.ActiveProvider).Returns(LLMProvider.Ollama);
-
-        // Act
-        var result = await _service.IsAvailableAsync();
-
-        // Assert
-        Assert.True(result.Success);
-        Assert.True(result.Data);
-    }
-
-    [Fact]
-    public async Task IsAvailableAsync_When_Router_Has_No_Provider_Returns_False()
-    {
-        // Arrange - When router has no active provider
-        _mockRouter.Setup(x => x.ActiveProvider).Returns(LLMProvider.None);
-
-        // Act
-        var result = await _service.IsAvailableAsync();
-
-        // Assert - None provider should return false
-        Assert.True(result.Success);
-        Assert.False(result.Data);
+        Assert.Single(methods);
+        Assert.Equal(nameof(Orion.Core.Interfaces.Services.ILLMService.GetStatus), methods[0].Name);
     }
 }

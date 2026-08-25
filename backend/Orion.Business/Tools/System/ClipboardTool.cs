@@ -1,6 +1,5 @@
-using System.Text.Json;
+﻿using System.Text.Json;
 using System.Text.Json.Nodes;
-using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Daemon;
@@ -11,16 +10,17 @@ namespace Orion.Business.Tools.System;
 public class ClipboardTool : ITool
 {
     private readonly IDaemonClient _daemon;
-    private readonly ILogger<ClipboardTool> _logger;
 
-    public ClipboardTool(IDaemonClient daemon, ILogger<ClipboardTool> logger)
+    public ClipboardTool(IDaemonClient daemon)
     {
         _daemon = daemon;
-        _logger = logger;
     }
 
     public string Name => "clipboard";
     public string Description => "Lit ou écrit le presse-papiers Windows. Action 'get' retourne le contenu, 'set' l'écrase";
+
+    public bool RequiresDaemon => true;
+    public bool IsDestructive => true;
 
     public JsonObject InputSchema => new()
     {
@@ -40,8 +40,6 @@ public class ClipboardTool : ITool
 
     public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        if (!_daemon.IsConnected)
-            return ApiResponse<ToolResult>.ErrorResponse("Daemon non connecté", 503);
 
         var action = input["action"]?.GetValue<string>();
         if (action != "get" && action != "set")

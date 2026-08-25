@@ -1,5 +1,8 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using Orion.Core.DTOs.Requests;
+using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Services;
 
 namespace Orion.Api.Controllers;
@@ -22,6 +25,11 @@ public class ChatController : ControllerBase
         return StatusCode(response.StatusCode, response);
     }
 
+    /// <summary>
+    /// Flux SSE d'événements agent typés : token, tool_start, tool_result, done, error.
+    /// Chaque événement est un objet JSON sur une seule ligne — l'ancien format « texte brut »
+    /// cassait le cadrage SSE dès qu'un token contenait un retour à la ligne.
+    /// </summary>
     [HttpPost("stream")]
     public async Task StreamChat([FromBody] ChatRequest request, CancellationToken ct)
     {
@@ -29,14 +37,41 @@ public class ChatController : ControllerBase
         Response.Headers["Cache-Control"] = "no-cache";
         Response.Headers["X-Accel-Buffering"] = "no";
 
-        await foreach (var chunk in _chatService.StreamMessageAsync(request, ct))
+        await foreach (var evt in _chatService.StreamMessageAsync(request, ct))
         {
-            await Response.WriteAsync($"data: {chunk}\n\n", ct);
+            var payload = JsonSerializer.Serialize(new
+            {
+                type = WireName(evt.Type),
+                text = evt.Text,
+                tool = evt.ToolName,
+                args = evt.ToolArgs,
+                ok = evt.ToolOk,
+                summary = evt.ToolSummary,
+                iteration = evt.Iteration
+            }, SseJson);
+
+            await Response.WriteAsync($"data: {payload}\n\n", ct);
             await Response.Body.FlushAsync(ct);
         }
+
         await Response.WriteAsync("data: [DONE]\n\n", ct);
         await Response.Body.FlushAsync(ct);
     }
+
+    private static readonly JsonSerializerOptions SseJson = new()
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+    };
+
+    private static string WireName(AgentEventType type) => type switch
+    {
+        AgentEventType.Token => "token",
+        AgentEventType.ToolStart => "tool_start",
+        AgentEventType.ToolResult => "tool_result",
+        AgentEventType.Done => "done",
+        AgentEventType.Error => "error",
+        _ => "unknown"
+    };
 
     [HttpGet("{sessionId}")]
     public async Task<IActionResult> GetConversation(Guid sessionId, CancellationToken ct)

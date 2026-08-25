@@ -25,6 +25,18 @@ import { API_BASE, ENDPOINTS } from '../config/endpoints';
 
 const WS_URL = API_BASE.replace(/^http/, 'ws') + ENDPOINTS.voiceWS;
 
+/** Message JSON reçu du backend sur /ws/voice. */
+interface VoiceWSMessage {
+  type: string;
+  text?: string;
+  id?: string;
+  message?: string;
+  tool?: string;
+  args?: string;
+  ok?: boolean;
+  summary?: string;
+}
+
 export interface VoiceWSCallbacks {
   onReady?: () => void;
   onTranscript?: (text: string) => void;
@@ -37,6 +49,12 @@ export interface VoiceWSCallbacks {
   onInterrupted?: () => void;
   onError?: (message: string) => void;
   onDisconnect?: () => void;
+  /** Aucune parole reconnue dans la prise (bruit ambiant) — ce n'est PAS une erreur. */
+  onNoSpeech?: () => void;
+  /** ORION commence a executer un outil pendant le tour vocal. */
+  onToolStart?: (tool: string, args?: string) => void;
+  /** Resultat de cet outil. */
+  onToolResult?: (tool: string, ok: boolean, summary?: string) => void;
 }
 
 export class VoiceWebSocket {
@@ -157,7 +175,7 @@ export class VoiceWebSocket {
 
   private handleJsonMessage(raw: string): void {
     try {
-      const msg = JSON.parse(raw) as Record<string, string>;
+      const msg = JSON.parse(raw) as VoiceWSMessage;
 
       switch (msg.type) {
         case 'ready':
@@ -167,7 +185,7 @@ export class VoiceWebSocket {
 
         case 'transcript':
           console.log('[VoiceWS] Transcript:', msg.text);
-          this.callbacks.onTranscript?.(msg.text);
+          this.callbacks.onTranscript?.(msg.text ?? '');
           break;
 
         case 'llm_start':
@@ -175,11 +193,26 @@ export class VoiceWebSocket {
           break;
 
         case 'llm_chunk':
-          this.callbacks.onLLMChunk?.(msg.text);
+          this.callbacks.onLLMChunk?.(msg.text ?? '');
           break;
 
         case 'llm_done':
-          this.callbacks.onLLMDone?.(msg.text);
+          this.callbacks.onLLMDone?.(msg.text ?? '');
+          break;
+
+        case 'no_speech':
+          console.log('[VoiceWS] Aucune parole reconnue — prise ignoree');
+          this.callbacks.onNoSpeech?.();
+          break;
+
+        case 'tool_start':
+          console.log('[VoiceWS] Outil demarre:', msg.tool);
+          this.callbacks.onToolStart?.(msg.tool ?? '?', msg.args);
+          break;
+
+        case 'tool_result':
+          console.log('[VoiceWS] Outil termine:', msg.tool, msg.ok);
+          this.callbacks.onToolResult?.(msg.tool ?? '?', msg.ok === true, msg.summary);
           break;
 
         case 'tts_done':
@@ -188,8 +221,8 @@ export class VoiceWebSocket {
 
         case 'session':
           console.log('[VoiceWS] Session:', msg.id);
-          this.sessionId = msg.id;
-          this.callbacks.onSession?.(msg.id);
+          this.sessionId = msg.id ?? null;
+          this.callbacks.onSession?.(msg.id ?? '');
           break;
 
         case 'interrupted':
@@ -199,7 +232,7 @@ export class VoiceWebSocket {
 
         case 'error':
           console.error('[VoiceWS] Server error:', msg.message);
-          this.callbacks.onError?.(msg.message);
+          this.callbacks.onError?.(msg.message ?? 'Erreur serveur');
           break;
 
         default:

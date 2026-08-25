@@ -4,15 +4,19 @@ using System.Text.Json.Serialization;
 namespace Orion.Core.DTOs.Internal.LLM;
 
 /// <summary>
-/// DTO pour les réponses de l'API Ollama
+/// Chunk NDJSON de l'endpoint natif Ollama `/api/chat` en mode stream.
+/// Seul le streaming subsiste : le chemin non-streamé a disparu avec l'ancien `OllamaClient`.
 /// </summary>
-public class OllamaResponse
+public class OllamaStreamChunk
 {
     [JsonPropertyName("message")]
     public OllamaMessage? Message { get; set; }
 
+    [JsonPropertyName("done")]
+    public bool Done { get; set; }
+
     [JsonPropertyName("eval_count")]
-    public int EvalCount { get; set; }
+    public int? EvalCount { get; set; }
 
     [JsonPropertyName("done_reason")]
     public string? DoneReason { get; set; }
@@ -32,6 +36,9 @@ public class OllamaMessage
 
 public class OllamaToolCall
 {
+    [JsonPropertyName("id")]
+    public string? Id { get; set; }
+
     [JsonPropertyName("function")]
     public OllamaToolCallFunction? Function { get; set; }
 }
@@ -41,15 +48,7 @@ public class OllamaToolCallFunction
     [JsonPropertyName("name")]
     public string? Name { get; set; }
 
+    /// <summary>Ollama natif renvoie un OBJET JSON ici (l'API OpenAI renvoie une chaîne).</summary>
     [JsonPropertyName("arguments")]
     public JsonElement Arguments { get; set; }
-}
-
-public class OllamaStreamChunk
-{
-    [JsonPropertyName("message")]
-    public OllamaMessage? Message { get; set; }
-
-    [JsonPropertyName("done")]
-    public bool Done { get; set; }
 }

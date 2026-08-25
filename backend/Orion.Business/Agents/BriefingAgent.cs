@@ -4,21 +4,30 @@ using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Agents;
+using Orion.Core.Interfaces.Daemon;
 using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
+
+using Orion.Business.LLM;
 
 namespace Orion.Business.Agents;
 
 public class BriefingAgent : IBriefingAgent
 {
-    private readonly ILLMRouter _llmRouter;
+    private readonly ILLMAgentClient _llmClient;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly IDaemonClient _daemonClient;
     private readonly ILogger<BriefingAgent> _logger;
 
-    public BriefingAgent(ILLMRouter llmRouter, IUnitOfWork unitOfWork, ILogger<BriefingAgent> logger)
+    public BriefingAgent(
+        ILLMAgentClient llmClient,
+        IUnitOfWork unitOfWork,
+        IDaemonClient daemonClient,
+        ILogger<BriefingAgent> logger)
     {
-        _llmRouter = llmRouter;
+        _llmClient = llmClient;
         _unitOfWork = unitOfWork;
+        _daemonClient = daemonClient;
         _logger = logger;
     }
 
@@ -37,7 +46,11 @@ public class BriefingAgent : IBriefingAgent
             .ToList();
 
         var now = DateTime.Now;
-        var prompt = BuildBriefingPrompt(profileDict, recentMemories.Select(m => m.Content).ToList(), now);
+        // Ce que la proactivité a mis de côté : vrai, mais pas assez urgent pour interrompre.
+        // Le briefing est exactement le bon moment pour le dire — une fois, groupé.
+        var differes = await RecupererSignauxDifferesAsync(ct);
+
+        var prompt = BuildBriefingPrompt(profileDict, recentMemories.Select(m => m.Content).ToList(), differes, now);
 
         var request = new LLMRequest
         {
@@ -47,23 +60,27 @@ public class BriefingAgent : IBriefingAgent
             MaxTokens = 300
         };
 
-        var llmResponse = await _llmRouter.CompleteAsync(request, ct);
-        if (!llmResponse.Success || llmResponse.Data == null)
+        string briefingText;
+        try
         {
-            _logger.LogWarning("[BriefingAgent] LLM unavailable: {Msg}", llmResponse.Message);
+            briefingText = await _llmClient.CompleteTextAsync(request, ct);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[BriefingAgent] LLM indisponible");
             return ApiResponse<BriefingDto>.ErrorResponse("LLM non disponible pour le briefing", 503);
         }
 
         var briefing = new BriefingDto
         {
             Id = Guid.NewGuid(),
-            Content = llmResponse.Data.Content.Trim(),
+            Content = briefingText.Trim(),
             CreatedAt = now,
             Stats = new Dictionary<string, object>
             {
                 ["memoriesUsed"] = recentMemories.Count,
                 ["profileKeys"] = profileDict.Count,
-                ["model"] = llmResponse.Data.Model ?? "unknown"
+                ["model"] = _llmClient.ModelId
             }
         };
 
@@ -85,26 +102,87 @@ public class BriefingAgent : IBriefingAgent
 
         var request = new LLMRequest
         {
-            SystemPrompt = "Tu es ORION. Réponds uniquement avec le message à dire à voix haute, sans guillemets ni ponctuation excessive. 1-2 phrases maximum.",
+            // « Ne promets rien » n'est pas une coquetterie : sans cette consigne, le modele
+            // annoncait « je vais optimiser les processus » alors qu'aucun outil n'est branche
+            // sur ce chemin. Un assistant qui promet et ne fait pas perd toute credibilite —
+            // c'est le meme defaut que le fallback silencieux, vu depuis l'utilisateur.
+            SystemPrompt =
+                "Tu es ORION. Réponds uniquement avec le message à dire à voix haute, sans "
+                + "guillemets ni ponctuation excessive. 1-2 phrases maximum. "
+                + "Tu SIGNALES, tu n'agis pas : ce message ne déclenche aucune action. "
+                + "N'annonce donc jamais que tu vas faire quelque chose — ni « je vais fermer », "
+                + "ni « je m'en occupe », ni « j'optimise ». Décris le fait, et propose seulement "
+                + "si c'est utile.",
             Messages = [new LLMMessage { Role = "user", Content = prompt }],
             Temperature = 0.8f,
             MaxTokens = 80
         };
 
-        var llmResponse = await _llmRouter.CompleteAsync(request, ct);
-        if (!llmResponse.Success || llmResponse.Data == null)
+        try
         {
-            // Fallback to contextual message if LLM unavailable
-            var fallback = GetFallbackMessage(pattern, context);
-            return ApiResponse<string>.SuccessResponse(fallback);
+            var message = await _llmClient.CompleteTextAsync(request, ct);
+            if (!string.IsNullOrWhiteSpace(message))
+                return ApiResponse<string>.SuccessResponse(message.Trim());
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[BriefingAgent] LLM indisponible, repli sur un message contextuel");
         }
 
-        return ApiResponse<string>.SuccessResponse(llmResponse.Data.Content.Trim());
+        // Repli contextuel : un message proactif muet vaut moins qu'un message generique.
+        return ApiResponse<string>.SuccessResponse(GetFallbackMessage(pattern, context));
+    }
+
+    /// <summary>
+    /// Vide la file des signaux différés du daemon. Sans cet appel, la boucle de décision
+    /// construisait une file d'attente SANS SORTIE : ce qui n'interrompait pas n'était
+    /// jamais dit.
+    /// </summary>
+    private async Task<List<string>> RecupererSignauxDifferesAsync(CancellationToken ct)
+    {
+        if (!_daemonClient.IsConnected) return new List<string>();
+
+        try
+        {
+            var reponse = await _daemonClient.SendActionAsync(new DaemonActionRequest
+            {
+                RequestId = Guid.NewGuid().ToString("N"),
+                Action = "proactive_deferred",
+                Payload = new { }
+            }, ct);
+
+            if (!reponse.Success || reponse.Data?.Data is null) return new List<string>();
+
+            var json = System.Text.Json.JsonSerializer.Serialize(reponse.Data.Data);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            if (!doc.RootElement.TryGetProperty("signals", out var signaux))
+                return new List<string>();
+
+            var resultat = signaux.EnumerateArray()
+                .Select(s => s.TryGetProperty("context", out var c) ? c.GetString() : null)
+                .Where(c => !string.IsNullOrWhiteSpace(c))
+                .Select(c => c!)
+                .ToList();
+
+            if (resultat.Count > 0)
+                _logger.LogInformation("[BriefingAgent] {Count} signal(aux) differe(s) repris au briefing", resultat.Count);
+
+            return resultat;
+        }
+        catch (Exception ex)
+        {
+            // Le daemon peut être absent ou lent : un briefing sans les différés vaut mieux
+            // que pas de briefing du tout.
+            _logger.LogWarning(ex, "[BriefingAgent] Signaux differes indisponibles");
+            return new List<string>();
+        }
     }
 
     private static string BuildBriefingPrompt(
         Dictionary<string, string> profile,
         List<string> recentMemoryContents,
+        List<string> signauxDifferes,
         DateTime now)
     {
         var sb = new StringBuilder();
@@ -128,9 +206,18 @@ public class BriefingAgent : IBriefingAgent
             sb.AppendLine();
         }
 
+        if (signauxDifferes.Count > 0)
+        {
+            sb.AppendLine("Signalé pendant que je travaillais, sans t'interrompre :");
+            foreach (var signal in signauxDifferes)
+                sb.AppendLine($"- {signal}");
+            sb.AppendLine();
+        }
+
         sb.AppendLine("Génère mon briefing matinal en 3 à 5 phrases naturelles et directes.");
         sb.AppendLine("Parle à la deuxième personne, comme si tu me parlais maintenant.");
         sb.AppendLine("Rappelle les priorités ou projets en cours si tu les connais.");
+        sb.AppendLine("Mentionne ce qui a été signalé sans interrompre — c'est précisément le moment.");
         sb.AppendLine("Termine par une note motivante si pertinent.");
         sb.AppendLine("Pas de markdown, pas de titres, pas de listes — texte continu pour être lu à voix haute.");
 

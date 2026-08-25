@@ -1,6 +1,6 @@
 import { apiClient } from './api';
 import { ENDPOINTS } from '../config/endpoints';
-import type { ApiResponse, HealthCheckDto } from '../types/dto';
+import type { ApiResponse, HealthCheckDto } from '../types';
 
 /**
  * Health Service - Matches HealthController

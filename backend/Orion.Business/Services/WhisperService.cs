@@ -22,6 +22,15 @@ public class WhisperService : IWhisperService, IDisposable
     private bool _isInitialized = false;
     private readonly SemaphoreSlim _initLock = new(1, 1);
 
+    /// <summary>
+    /// Whisper.net s'appuie sur une bibliotheque NATIVE qui n'est pas thread-safe :
+    /// deux transcriptions simultanees font tomber le processus en segmentation fault.
+    /// Observe le 2026-08-20 des que les tours vocaux sont devenus non bloquants et que
+    /// plusieurs prises se sont enchainees. La transcription est de toute facon liee au CPU :
+    /// la paralleliser n'apporte rien et coute le processus.
+    /// </summary>
+    private readonly SemaphoreSlim _transcribeLock = new(1, 1);
+
     // Langues supportées par Whisper
     public IReadOnlyList<string> SupportedLanguages { get; } = new List<string>
     {
@@ -113,6 +122,27 @@ public class WhisperService : IWhisperService, IDisposable
                 }
             }
 
+            await _transcribeLock.WaitAsync();
+            try
+            {
+                return await TranscribeCoreAsync(audioStream, language);
+            }
+            finally
+            {
+                _transcribeLock.Release();
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Whisper] Erreur de transcription");
+            return ApiResponse<string>.ErrorResponse($"Erreur STT: {ex.Message}", 500);
+        }
+    }
+
+    /// <summary>Transcription proprement dite — toujours appelee sous verrou.</summary>
+    private async Task<ApiResponse<string>> TranscribeCoreAsync(Stream audioStream, string? language)
+    {
+        {
             using var processor = _whisperFactory!.CreateBuilder()
                 .WithLanguage(language ?? "auto")
                 .Build();
@@ -130,13 +160,8 @@ public class WhisperService : IWhisperService, IDisposable
 
             var transcript = text.ToString().Trim();
             _logger.LogDebug("[Whisper] Transcrit: {Length} caractères", transcript.Length);
-            
+
             return ApiResponse<string>.SuccessResponse(transcript);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[Whisper] Erreur de transcription");
-            return ApiResponse<string>.ErrorResponse($"Erreur STT: {ex.Message}", 500);
         }
     }
 
@@ -153,5 +178,6 @@ public class WhisperService : IWhisperService, IDisposable
     {
         _whisperFactory?.Dispose();
         _initLock.Dispose();
+        _transcribeLock.Dispose();
     }
 }

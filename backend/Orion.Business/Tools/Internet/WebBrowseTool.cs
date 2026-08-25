@@ -28,7 +28,12 @@ public class WebBrowseTool : ITool
                 ["description"] = "Actions à exécuter : { type: 'goto'|'click'|'fill'|'scroll'|'wait', selector?: string, value?: string }",
                 ["items"] = new JsonObject { ["type"] = "object" }
             },
-            ["return_html"] = new JsonObject { ["type"] = "boolean", ["default"] = false }
+            ["return_html"] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Renvoyer le HTML brut de la page en plus du texte extrait",
+                ["default"] = false
+            }
         },
         ["required"] = new JsonArray { "url" }
     };

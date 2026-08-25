@@ -28,6 +28,48 @@ public class ProactiveOptions
     public bool EnableNightReminders { get; set; } = true;
     public TimeSpan NightTime { get; set; } = new TimeSpan(23, 0, 0);
     
+    // ── Boucle de décision ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Nombre maximum d'interruptions par heure. C'est le budget d'attention : ce qui sépare
+    /// un collègue d'un spammeur de notifications. Au-delà, les signaux non critiques sont
+    /// différés au briefing plutôt que perdus.
+    /// </summary>
+    public int InterruptionsParHeure { get; set; } = 3;
+
+    /// <summary>Sous ce score, un signal est vrai mais n'interrompt pas : il attend le briefing.</summary>
+    public int SeuilInterruption { get; set; } = 55;
+
+    /// <summary>
+    /// Au-dessus, l'incident passe TOUJOURS — budget ou non. Perdre une alerte de service mort
+    /// pour cause de quota serait absurde.
+    /// </summary>
+    public int SeuilCritique { get; set; } = 75;
+
+    /// <summary>
+    /// Repos minimal entre deux annonces du MÊME pattern. Centralisé ici : cette protection ne
+    /// vivait que dans SystemWatcher, les quatre autres watchers n'en avaient aucune.
+    /// </summary>
+    public int CooldownMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Durée sur une application de travail au-delà de laquelle on considère l'utilisateur
+    /// concentré. Interrompre coûte alors bien plus cher qu'à un autre moment.
+    /// </summary>
+    public int ConcentrationApresMinutes { get; set; } = 15;
+
+    /// <summary>
+    /// Au-delà, le dernier signal d'activité est jugé périmé et on cesse de s'y fier.
+    /// Suspendre les alertes sur une donnée morte serait pire que d'interrompre à tort.
+    /// </summary>
+    public int FraicheurActiviteMinutes { get; set; } = 3;
+
+    /// <summary>
+    /// Ce qu'on ajoute au seuil d'interruption pendant une session concentrée : seul ce qui
+    /// est nettement plus urgent passe. Les incidents critiques restent hors de ce filtre.
+    /// </summary>
+    public int MalusConcentration { get; set; } = 25;
+
     /// <summary>
     /// Patterns utilisateur à surveiller
     /// </summary>

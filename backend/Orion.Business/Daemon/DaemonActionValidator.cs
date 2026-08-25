@@ -23,6 +23,7 @@ public class DaemonActionValidator
         "set_clipboard",
         "type_text",
         "capture_screen",
+        "proactive_deferred",
     };
 
     public bool IsAllowed(string action)

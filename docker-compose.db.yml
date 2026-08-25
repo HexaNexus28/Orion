@@ -1,0 +1,37 @@
+# ORION — base de données de développement local.
+#
+# Pourquoi local et pas Supabase Cloud : le projet gratuit `niwciampfbwppjpufbnz` a été supprimé
+# après inactivité (NXDOMAIN le 2026-08-20) — un palier gratuit recommencera. Et ORION est un
+# assistant PERSONNEL qui pilote ce PC : sa mémoire n'a pas de raison d'être distante.
+#
+# Port 5433 : 5432 est déjà pris par le Postgres local de la machine.
+#
+#   docker compose -f docker-compose.db.yml up -d
+#   docker compose -f docker-compose.db.yml down          # garde les données
+#   docker compose -f docker-compose.db.yml down -v       # remise à zéro complète
+
+services:
+  orion-db:
+    image: pgvector/pgvector:pg16
+    container_name: orion-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_USER: orion
+      POSTGRES_PASSWORD: orion_dev
+      POSTGRES_DB: orion
+    volumes:
+      - orion_db_data:/var/lib/postgresql/data
+      # Rejoués UNE seule fois, au premier démarrage sur un volume vide.
+      - ./memory/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./memory/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orion -d orion"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  orion_db_data:
+    driver: local

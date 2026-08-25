@@ -14,12 +14,16 @@ builder.Services.Configure<DaemonOptions>(
     builder.Configuration.GetSection("Daemon"));
 builder.Services.Configure<ProactiveOptions>(
     builder.Configuration.GetSection("Proactive"));
+builder.Services.Configure<WorkOptions>(
+    builder.Configuration.GetSection("Work"));
 
 // Register as singleton for injection
 builder.Services.AddSingleton(sp => 
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<ProactiveOptions>>().Value);
 builder.Services.AddSingleton(sp => 
     sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<DaemonOptions>>().Value);
+builder.Services.AddSingleton(sp =>
+    sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<WorkOptions>>().Value);
 
 builder.Services.AddDaemonActions(builder.Configuration);
 builder.Services.AddHostedService<DaemonWorker>();
