@@ -1,3 +1,4 @@
+import { authService } from '../services/authService';
 import { useEffect, useCallback, useState } from 'react';
 import { apiClient } from '../services/api';
 import { ENDPOINTS, API_BASE } from '../config/endpoints';
@@ -84,7 +85,13 @@ export const useOrionNotifications = () => {
   }, [sendAction]);
 
   useEffect(() => {
-    const eventSource = new EventSource(`${API_BASE}/api/proactivenotification/stream`);
+    // EventSource ne permet AUCUN en-tete personnalise — limite du navigateur, pas un choix.
+    // Le jeton passe donc en parametre d URL, et le backend l accepte sur ce chemin precis.
+    // C est moins elegant qu un en-tete, mais l alternative serait un flux non authentifie.
+    const token = authService.getToken();
+    const eventSource = new EventSource(
+      `${API_BASE}/api/proactivenotification/stream${token ? `?access_token=${encodeURIComponent(token)}` : ''}`
+    );
 
     eventSource.addEventListener('connected', (event) => {
       const data: ConnectionStatus = JSON.parse(event.data);

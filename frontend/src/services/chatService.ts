@@ -1,4 +1,5 @@
 import { apiClient } from './api';
+import { authService } from './authService';
 import { API_BASE, ENDPOINTS } from '../config/endpoints';
 import type { ApiResponse } from '../types/api/apiResponse';
 import type { ChatRequest, ChatResponse } from '../types/dto/chatDto';
@@ -42,13 +43,16 @@ export const chatService = {
    * le cadrage SSE dès qu'un token contenait un retour à la ligne.
    */
   async *streamMessage(request: ChatRequest): AsyncGenerator<AgentEvent> {
-    // fetch() is required for SSE streaming (axios does not support ReadableStream).
-    // Propagate auth headers from apiClient to maintain consistent auth behavior.
+    // fetch() est OBLIGATOIRE ici : axios ne sait pas lire un ReadableStream, donc pas de SSE.
+    // Le jeton est donc lu a la SOURCE (authService) et non dans apiClient : l intercepteur
+    // d apiClient ne s applique qu a ses propres requetes, et `defaults.headers.common` est
+    // VIDE puisque le jeton n y est jamais ecrit. C est ce qui faisait partir ce flux sans
+    // Authorization — 401 cote serveur, et cote interface un chat muet, sans message d erreur.
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    const authHeader = apiClient.defaults.headers.common['Authorization'];
-    if (authHeader) headers['Authorization'] = String(authHeader);
+    const token = authService.getToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     const response = await fetch(`${API_BASE}${ENDPOINTS.chat.stream}`, {
       method: 'POST',

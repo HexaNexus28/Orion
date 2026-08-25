@@ -91,6 +91,27 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(authOptions.IsConfigured ? authOptions.JwtSecret : Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N")))
         };
+
+        // EventSource et WebSocket ne peuvent porter AUCUN en-tete personnalise — c'est une
+        // limite des navigateurs, pas un choix d'implementation. Le seul moyen d'authentifier
+        // un flux SSE est donc le parametre d'URL.
+        //
+        // Restreint a CE chemin exclusivement : une URL se retrouve dans les journaux d'acces,
+        // dans l'historique et dans l'en-tete Referer. On ne l'accepte que la ou il n'existe
+        // aucune alternative, jamais sur les routes qui peuvent porter un en-tete.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/api/proactivenotification/stream"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
+        };
     });
 
 // Politique par DEFAUT : tout controleur exige une session, sauf [AllowAnonymous] explicite.
