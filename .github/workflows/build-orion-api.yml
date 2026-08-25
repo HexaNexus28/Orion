@@ -55,7 +55,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: backend
+          context: .
           file: backend/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}

@@ -2,6 +2,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { EntityProvider } from './context/EntityContext'
 import { OrionStatusProvider } from './context/OrionStatusContext'
+import { AuthGate } from './components/auth/AuthGate'
 import './index.css'
 
 // Register Service Worker for PWA
@@ -16,9 +17,11 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
-  <EntityProvider>
-    <OrionStatusProvider>
-      <App />
-    </OrionStatusProvider>
-  </EntityProvider>,
+  <AuthGate>
+    <EntityProvider>
+      <OrionStatusProvider>
+        <App />
+      </OrionStatusProvider>
+    </EntityProvider>
+  </AuthGate>,
 )

@@ -327,6 +327,15 @@ var app = builder.Build();
 // Error handling
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
+
+// ========== PWA SERVIE PAR LE BACKEND ==========
+// Le bundle construit vit dans wwwroot (cf. Dockerfile). Le servir ICI, avant
+// l'authentification, est VOLONTAIRE : la coquille de l'application n'est pas un secret, et
+// si elle exigeait une session l'utilisateur n'aurait jamais l'ecran pour en ouvrir une.
+// C'est l'API qui est protegee, pas le HTML qui permet de s'y connecter.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // WebSocket support for daemon + voice
 app.UseWebSockets(new WebSocketOptions
 {
@@ -365,6 +374,11 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Routage cote client : une URL profonde ouverte directement (ou un rechargement) doit rendre
+// index.html, pas un 404. AllowAnonymous est OBLIGATOIRE — la politique par defaut exige une
+// session, et sans cette exception l'ecran de connexion lui-meme partirait en 401.
+app.MapFallbackToFile("index.html").AllowAnonymous();
 // /health reste ouvert : sonde du conteneur Docker et de la facade Nginx. Il n expose
 // aucune donnee, seulement l etat du service.
 app.MapHealthChecks("/health").AllowAnonymous();

@@ -1,7 +1,10 @@
 // ORION API Endpoints Configuration
 // Matches backend Orion.Api.Controllers
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5107';
+// En production, le front est servi PAR le backend : chemins relatifs, donc meme origine,
+// donc aucun CORS et aucune URL a reconfigurer au deploiement. VITE_API_URL reste disponible
+// si le front repart un jour sur un hebergement separe (Vercel) — rien n'enferme ce choix.
+const API_BASE_URL = import.meta.env.VITE_API_URL ?? (import.meta.env.PROD ? '' : 'http://localhost:5107');
 
 export const API_BASE = API_BASE_URL;
 
