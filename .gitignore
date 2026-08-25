@@ -113,7 +113,10 @@ desktop.ini
 # ORION SPECIFIC
 # -----------------------------------------------------------------------------
 daemon/daemon.config.json
-models/
+# `models/` tout court excluait aussi frontend/src/types/models/ — des fichiers TypeScript
+# SOURCES (CI en echec le 2026-08-25 : le front etait inconstructible depuis un clone propre).
+# On restreint aux emplacements ou vivent reellement des poids de modeles.
+memory/models/
 *.bin
 *.onnx
 recordings/

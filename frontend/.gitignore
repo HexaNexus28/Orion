@@ -74,7 +74,12 @@ Thumbs.db
 # -----------------------------------------------------------------------------
 *.onnx
 *.bin
-models/
+# `models/` tout court excluait AUSSI src/types/models/ — trois fichiers TypeScript SOURCES.
+# Le front etait donc inconstructible depuis un clone propre, et personne ne l a vu parce qu on
+# compile toujours depuis un arbre de travail qui les possede deja (CI en echec le 2026-08-25).
+# Les poids de modeles sont deja couverts par *.onnx et *.bin ci-dessus ; on restreint au seul
+# emplacement ou de tels fichiers vivraient.
+public/models/
 
 # -----------------------------------------------------------------------------
 # KEEP THESE
