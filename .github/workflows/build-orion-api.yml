@@ -4,13 +4,16 @@
 # une image qui n'a JAMAIS ete construite (404 verifie le 2026-08-25). C'est le chainon
 # manquant du deploiement — sans lui, le role echoue et /opt/orion reste vide.
 #
+# Declencheur sur main UNIQUEMENT : le travail se fait en branche, mais seule une image
+# issue de main a vocation a etre deployee. Une branche produisait un second build inutile.
+#
 # Le build se fait ICI, pas sur le VPS : compiler du .NET sur une machine qui heberge un
 # site en production, c'est lui prendre du CPU pour rien. Le VPS ne fait que tirer l'image.
 name: Build & push orion-api
 
 on:
   push:
-    branches: [main, feat/jarvis-agent-loop]
+    branches: [main]
     paths:
       - 'backend/**'
       - '.github/workflows/build-orion-api.yml'

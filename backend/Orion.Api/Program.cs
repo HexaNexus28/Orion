@@ -1,3 +1,7 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.IdentityModel.Tokens;
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using Orion.Api.Middleware;
@@ -61,6 +65,42 @@ builder.Services.Configure<NimOptions>(
 // n existe pas sur le VPS, la memoire y serait morte en silence.
 builder.Services.Configure<EmbeddingOptions>(
     builder.Configuration.GetSection(EmbeddingOptions.SectionName));
+
+// ========== AUTHENTIFICATION ==========
+// L'API etait TOTALEMENT ouverte : UseAuthorization commentee, aucun [Authorize]. Expose
+// publiquement, n'importe qui pouvait lire la memoire et surtout METTRE DES ACTIONS EN FILE,
+// executees ensuite sur la machine de l'utilisateur. Voir AuthOptions pour le raisonnement.
+builder.Services.Configure<AuthOptions>(
+    builder.Configuration.GetSection(AuthOptions.SectionName));
+
+var authOptions = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = true,
+            ValidateAudience = true,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            ValidIssuer = "orion",
+            ValidAudience = "orion",
+            // Cle vide si non configuree : aucune signature ne peut etre validee, donc tout
+            // est refuse. C'est le comportement voulu — fail-closed.
+            IssuerSigningKey = new SymmetricSecurityKey(
+                Encoding.UTF8.GetBytes(authOptions.IsConfigured ? authOptions.JwtSecret : Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N")))
+        };
+    });
+
+// Politique par DEFAUT : tout controleur exige une session, sauf [AllowAnonymous] explicite.
+// L'inverse (proteger controleur par controleur) laisse passer tout ce qu'on oublie.
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder()
+        .RequireAuthenticatedUser()
+        .Build();
+});
 builder.Services.Configure<SupabaseOptions>(
     builder.Configuration.GetSection(SupabaseOptions.SectionName));
 builder.Services.Configure<DaemonOptions>(
@@ -320,11 +360,14 @@ else
     app.UseCors("ProductionPolicy");
 }
 
-// Authorization disabled in development - no JWT auth configured yet
-// app.UseAuthorization();
+// Ordre IMPERATIF : authentification (qui es-tu) avant autorisation (as-tu le droit).
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapControllers();
-app.MapHealthChecks("/health");
+// /health reste ouvert : sonde du conteneur Docker et de la facade Nginx. Il n expose
+// aucune donnee, seulement l etat du service.
+app.MapHealthChecks("/health").AllowAnonymous();
 
 // ========== SONDE LLM AU DEMARRAGE ==========
 // On APPELLE le modele au lieu de faire confiance a la config : un modele liste par

@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Orion.Core.DTOs;
 using Orion.Core.DTOs.Responses;
@@ -5,6 +6,7 @@ using Orion.Core.Interfaces.Services;
 
 namespace Orion.Api.Controllers;
 
+[AllowAnonymous]   // sonde de sante : aucune donnee exposee
 [ApiController]
 [Route("api/[controller]")]
 public class HealthController : ControllerBase

@@ -30,12 +30,27 @@ public class DaemonWebSocketMiddleware
                 return;
             }
 
-            // Validate token
+            // Validation du jeton — FAIL-CLOSED.
+            //
+            // Avant : `if (!string.IsNullOrEmpty(expectedToken) && token != expectedToken)`.
+            // Une variable d'environnement absente faisait SAUTER le controle : n'importe qui
+            // pouvait ouvrir ce WebSocket. Or ce canal fait executer des actions sur la machine
+            // de l'utilisateur — un oubli de configuration valait execution de code a distance.
+            // Un defaut de configuration doit FERMER la porte, jamais l'ouvrir.
             var token = context.Request.Headers["X-Daemon-Token"].FirstOrDefault();
             var expectedToken = Environment.GetEnvironmentVariable("DAEMON_WS_TOKEN");
 
-            if (!string.IsNullOrEmpty(expectedToken) && token != expectedToken)
+            if (string.IsNullOrEmpty(expectedToken))
             {
+                _logger.LogError("[Daemon] DAEMON_WS_TOKEN non configure — connexion REFUSEE. " +
+                    "Definir la variable d'environnement avant de demarrer en production.");
+                context.Response.StatusCode = 503;
+                return;
+            }
+
+            if (token != expectedToken)
+            {
+                _logger.LogWarning("[Daemon] Jeton invalide depuis {Ip}", context.Connection.RemoteIpAddress);
                 context.Response.StatusCode = 401;
                 return;
             }
