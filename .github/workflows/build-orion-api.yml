@@ -74,3 +74,29 @@ jobs:
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
+
+  # ─── Deploiement ────────────────────────────────────────────────────────────
+  # Sans ce job, l'image etait publiee mais le VPS continuait de tourner sur
+  # l'ancienne jusqu'a ce qu'un humain lance Ansible — le chainon manquant.
+  #
+  # La cle utilisee ici est VERROUILLEE cote serveur sur /usr/local/bin/deploy-orion
+  # (`restrict,command=` dans authorized_keys). La commande envoyee ci-dessous est
+  # donc IGNOREE : le serveur execute toujours son script, quoi qu'on lui demande.
+  # Une fuite de VPS_SSH_KEY ne vaut que le droit de redeployer ORION — ni shell,
+  # ni docker, ni lecture de fichiers. C'est la difference avec un acces root nu.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'   # jamais depuis une branche de travail
+
+    steps:
+      - name: Declencher le deploiement
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          # Contenu sans importance : la commande forcee cote serveur prend le dessus.
+          # On l'ecrit quand meme lisible, pour qui lira ce fichier.
+          script: /usr/local/bin/deploy-orion
