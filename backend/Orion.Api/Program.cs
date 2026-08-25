@@ -55,6 +55,12 @@ builder.Services.Configure<AgentOptions>(
     builder.Configuration.GetSection(AgentOptions.SectionName));
 builder.Services.Configure<NimOptions>(
     builder.Configuration.GetSection(NimOptions.SectionName));
+
+// Embeddings : fournisseur compatible OpenAI, choisi par CONFIGURATION (mistral-embed 1024 dims
+// par defaut, mesure vivant le 2026-08-25). Ollama a ete retire du chemin de production : il
+// n existe pas sur le VPS, la memoire y serait morte en silence.
+builder.Services.Configure<EmbeddingOptions>(
+    builder.Configuration.GetSection(EmbeddingOptions.SectionName));
 builder.Services.Configure<SupabaseOptions>(
     builder.Configuration.GetSection(SupabaseOptions.SectionName));
 builder.Services.Configure<DaemonOptions>(
@@ -222,14 +228,16 @@ builder.Services.AddScoped<IProactiveLearningService, ProactiveLearningService>(
 builder.Services.AddScoped<IChatService, ChatService>();
 builder.Services.AddScoped<IMemoryService, MemoryService>();
 builder.Services.AddScoped<IMemoryConsolidator, MemoryConsolidator>();
+builder.Services.AddScoped<IMemoryRevectorizer, MemoryRevectorizer>();
 builder.Services.AddScoped<IToolService, ToolService>();
 builder.Services.AddScoped<IBriefingService, BriefingService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
 
-// ========== EMBEDDING SERVICE (RAG - nomic-embed-text) ==========
-builder.Services.AddSingleton<IEmbeddingService, EmbeddingService>();
-logger.LogInformation(" Embedding Service registered (Ollama nomic-embed-text)");
+// ========== EMBEDDING SERVICE (RAG — NVIDIA NIM) ==========
+// Ollama a ete retire : il n existe pas sur le VPS, la memoire y serait morte en silence.
+builder.Services.AddHttpClient<IEmbeddingService, OpenAiCompatibleEmbeddingService>();
+logger.LogInformation(" Embedding Service registered (fournisseur compatible OpenAI — Ollama retire du chemin de production)");
 
 // ========== VOICE SERVICE (Phase 4 - Whisper STT) ==========
 builder.Services.AddSingleton<IWhisperService, WhisperService>();

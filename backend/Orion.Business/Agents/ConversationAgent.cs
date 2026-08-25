@@ -408,7 +408,7 @@ public class ConversationAgent : IConversationAgent
                 return new List<MemoryVector>();
             }
 
-            var embedding = await _embeddingService.GenerateEmbeddingAsync(message, ct);
+            var embedding = await _embeddingService.GenerateEmbeddingAsync(message, EmbeddingInputType.Query, ct);
             if (embedding.Success && embedding.Data?.Length > 0)
             {
                 var memories = await _unitOfWork.Memory.SearchSimilarAsync(embedding.Data, 5, ct);

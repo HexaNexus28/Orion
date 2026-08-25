@@ -23,6 +23,7 @@ public class NimOptions
     /// <summary>Repli plus rapide en plancher (801 ms mesurées) si le principal est indisponible.</summary>
     public string FallbackModel { get; set; } = "nvidia/nemotron-3.5-lightning-30b-a3b";
 
+
     public int TimeoutSeconds { get; set; } = 120;
 
     /// <summary>

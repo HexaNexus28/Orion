@@ -25,7 +25,9 @@ public class MemoryService : IMemoryService
     {
         _logger.LogInformation("Searching memories for: {Query}", query);
 
-        var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(query, ct);
+        // Query : on cherche. Vectoriser une recherche comme un passage degrade la pertinence
+        // sans lever d'erreur — le modele NVIDIA est asymetrique.
+        var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(query, EmbeddingInputType.Query, ct);
         if (!embeddingResponse.Success || embeddingResponse.Data == null)
         {
             _logger.LogWarning("Embedding generation failed for memory search");
@@ -50,7 +52,7 @@ public class MemoryService : IMemoryService
     {
         try
         {
-            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(content, ct);
+            var embeddingResponse = await _embeddingService.GenerateEmbeddingAsync(content, EmbeddingInputType.Passage, ct);
             var embedding = embeddingResponse.Success && embeddingResponse.Data != null
                 ? embeddingResponse.Data
                 : Array.Empty<float>();
@@ -75,7 +77,7 @@ public class MemoryService : IMemoryService
             // souvenir est stocke SANS vecteur et reste invisible a la recherche semantique.
             if (embedding.Length > 0)
             {
-                await _unitOfWork.Memory.SaveEmbeddingAsync(memory.Id, embedding, ct);
+                await _unitOfWork.Memory.SaveEmbeddingAsync(memory.Id, embedding, _embeddingService.ModelName, ct);
                 _logger.LogInformation("[MemoryService] Souvenir {Id} enregistre ({Dims} dimensions)",
                     memory.Id, embedding.Length);
             }
