@@ -16,6 +16,9 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      # Depuis que l image embarque la PWA, une modification du front DOIT reconstruire :
+      # sans cette ligne, le front deploye reste fige sans qu aucun signal ne l indique.
+      - 'frontend/**'
       - '.github/workflows/build-orion-api.yml'
   workflow_dispatch:   # declenchement manuel : indispensable pour un premier build
 
