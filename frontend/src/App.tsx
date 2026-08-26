@@ -195,14 +195,21 @@ const App: React.FC = () => {
   // sendAudioRef used to forward PCM chunks to WebSocket from VAD (avoids circular deps)
   const sendAudioRef = useRef<((pcm16: Int16Array) => void) | null>(null);
 
-  const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD } = useVAD({
+  // Telemetrie du micro : le serveur ne peut pas distinguer « contexte en pause » de « parole
+  // trop faible » — les deux donnent le meme silence. On mesure donc ici et on rapporte.
+  const maxAmpRef = useRef(0);
+  const chunksRef = useRef(0);
+
+  const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD, contextState } = useVAD({
     onSpeechStart: handleSpeechStart,
     onAudioReady: handleAudioReady,
-    onAudioChunk: (pcm16) => sendAudioRef.current?.(pcm16),
+    onAudioChunk: (pcm16) => {
+      chunksRef.current += 1;
+      sendAudioRef.current?.(pcm16);
+    },
     onAmplitude: (amp) => {
       setAmplitude(amp);
-      // Debug: log every 2s to see if audio is being captured
-      if (Math.random() < 0.02) console.log('[VAD] RMS amplitude:', amp.toFixed(4));
+      if (amp > maxAmpRef.current) maxAmpRef.current = amp;
     },
     onError: handleVoiceError,
   });
@@ -245,7 +252,7 @@ const App: React.FC = () => {
 
 
   // ── useVoiceWS — Full-duplex WebSocket voice pipeline ─────────────────────
-  const { isTurnActive, sendAudio, endAudio, interrupt } = useVoiceWS({
+  const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic } = useVoiceWS({
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
       voiceWSResponseRef.current = true; // Mark: this response comes from voice WS
@@ -395,6 +402,18 @@ const App: React.FC = () => {
       void processVoiceTurn();
     }
   }, [isSpeaking, isInputVisible, isTurnActive, processVoiceTurn]);
+
+  // ── Telemetrie du micro vers le serveur ──────────────────────────────────────
+  // Toutes les 5 s : etat du contexte audio, amplitude maximale vue, morceaux envoyes.
+  // C est ce qui permet de trancher a distance entre les deux causes possibles du silence,
+  // sans avoir a lire la console d un telephone.
+  useEffect(() => {
+    const t = setInterval(() => {
+      sendDiagnostic(contextState(), maxAmpRef.current, chunksRef.current);
+      maxAmpRef.current = 0;
+    }, 5000);
+    return () => clearInterval(t);
+  }, [contextState, sendDiagnostic]);
 
   // ── Hand tracking / gestures ─────────────────────────────────────────────────
   const { videoRef } = useGestureControl({

@@ -90,6 +90,15 @@ export class VoiceWebSocket {
     this.callbacks = callbacks;
   }
 
+  /**
+   * Telemetrie du micro. Le serveur ne peut PAS distinguer « contexte audio en pause » de
+   * « parole trop faible » : les deux donnent exactement le meme silence. Et la console d'un
+   * telephone est illisible a distance. Le client rapporte donc ce qu il mesure.
+   */
+  sendDiagnostic(ctx: string, maxAmp: number, chunks: number): void {
+    this.sendJson({ type: 'diag', ctx, maxAmp, chunks });
+  }
+
   get isConnected(): boolean {
     return this._isConnected;
   }

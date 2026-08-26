@@ -160,6 +160,8 @@ export const useVAD = (options: UseVADOptions = {}) => {
         document.addEventListener('pointerdown', reprendre, { once: true });
       }
 
+      audioCtxRef.current = ctx;
+
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1);
       const mute = ctx.createGain();
@@ -285,7 +287,15 @@ export const useVAD = (options: UseVADOptions = {}) => {
 
   useEffect(() => () => { destroy(); }, [destroy]);
 
-  return { isSpeaking, isListening, start, pause, resume, destroy, reset };
+  return {
+    isSpeaking, isListening, start, pause, resume, destroy, reset,
+
+    /**
+     * Etat du contexte audio. « running » attendu ; « suspended » signifie que RIEN ne sera
+     * capture — et c est indiscernable d un micro qui fonctionne, d ou la telemetrie.
+     */
+    contextState: (): string => audioCtxRef.current?.state ?? 'absent',
+  };
 };
 
 /** Convert Float32 PCM [-1,1] to Int16 PCM for WebSocket streaming */

@@ -128,6 +128,28 @@ public class VoiceWebSocketHandler
                     _logger.LogInformation("[VoiceWS] Config: lang={Lang}, session={Sid}", _language, _sessionId);
                     break;
 
+                // Telemetrie du micro cote client.
+                //
+                // Le serveur voit « Client connected », « Config », puis le silence — sans jamais
+                // pouvoir dire POURQUOI : contexte audio en pause, ou parole trop faible pour le
+                // seuil ? Les deux produisent exactement la meme trace. Impossible de trancher
+                // depuis ici, et impossible de lire la console d un telephone.
+                //
+                // Le client rapporte donc ce qu il mesure. Aucune donnee personnelle : un etat de
+                // contexte et une amplitude, pas d audio.
+                case "diag":
+                {
+                    var etat = doc.RootElement.TryGetProperty("ctx", out var c) ? c.GetString() : "?";
+                    var ampMax = doc.RootElement.TryGetProperty("maxAmp", out var m) ? m.GetDouble() : -1;
+                    var chunks = doc.RootElement.TryGetProperty("chunks", out var k) ? k.GetInt32() : -1;
+
+                    _logger.LogInformation(
+                        "[VoiceWS] MICRO — contexte: {Etat} | amplitude max: {Amp:F4} | morceaux envoyes: {Chunks} "
+                        + "(seuil de parole atteint a 0,15)",
+                        etat, ampMax, chunks);
+                    break;
+                }
+
                 case "end_audio":
                     // Le tour part en TACHE DE FOND, il n'est PAS attendu ici.
                     //

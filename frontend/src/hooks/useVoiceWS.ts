@@ -235,9 +235,15 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
     cbRef.current.onOrionSpeaking?.(false);
   }, [stopPlayback]);
 
+  /** Telemetrie du micro — voir VoiceWebSocket.sendDiagnostic. */
+  const sendDiagnostic = useCallback((ctx: string, maxAmp: number, chunks: number) => {
+    wsRef.current?.sendDiagnostic(ctx, maxAmp, chunks);
+  }, []);
+
   return {
     isConnected,
     isTurnActive,
+    sendDiagnostic,
     sendAudio,
     endAudio,
     interrupt,
