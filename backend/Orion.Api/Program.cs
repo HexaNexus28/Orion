@@ -402,6 +402,13 @@ builder.Services.AddCors(options =>
 builder.Services.AddHealthChecks();
 
 // ========== BACKGROUND SERVICES ==========
+// Singleton : la liste des clients SSE doit survivre aux requetes — un flux vit des heures.
+// Extrait du controleur parce que les services d arriere-plan doivent diffuser eux aussi.
+builder.Services.AddSingleton<SseClientRegistry>();
+
+// Panneaux permanents du HUD (etape C) : rejoue un outil existant et diffuse SA carte.
+builder.Services.AddHostedService<HudBroadcastService>();
+
 builder.Services.AddHostedService<BriefingScheduler>();
 
 // Draine la file des le retour du daemon, et expire ce qui a trop attendu.

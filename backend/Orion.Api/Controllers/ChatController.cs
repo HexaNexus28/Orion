@@ -47,6 +47,9 @@ public class ChatController : ControllerBase
                 args = evt.ToolArgs,
                 ok = evt.ToolOk,
                 summary = evt.ToolSummary,
+                // Carte du HUD. Nulle la plupart du temps — DefaultIgnoreCondition la retire
+                // alors du message, donc aucun octet paye pour les outils qui n en produisent pas.
+                card = evt.Card,
                 iteration = evt.Iteration
             }, SseJson);
 
@@ -60,7 +63,13 @@ public class ChatController : ControllerBase
 
     private static readonly JsonSerializerOptions SseJson = new()
     {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+
+        // Enums en TEXTE ("status", "warn"), jamais en entier. Un entier obligerait le front a
+        // recopier l ordre de declaration des enums C# : inserer une valeur au milieu decalerait
+        // tout l affichage sans qu aucune erreur ne se produise.
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
     };
 
     private static string WireName(AgentEventType type) => type switch

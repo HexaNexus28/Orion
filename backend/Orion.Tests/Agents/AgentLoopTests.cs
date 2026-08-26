@@ -79,11 +79,17 @@ public class AgentLoopTests
         }
     };
 
+    // Les tests continuent de rendre une simple chaine JSON : ce qu ils verifient, c est le
+    // comportement de la boucle, pas la carte du HUD. L enveloppe est faite ICI, une fois, plutot
+    // que de reecrire les dix appels avec une carte nulle explicite.
     private static async Task<List<AgentEvent>> CollectAsync(
         AgentLoop loop, LLMRequest request, Func<string, string, CancellationToken, Task<string>> executor)
     {
         var events = new List<AgentEvent>();
-        await foreach (var evt in loop.RunAsync(request, executor)) events.Add(evt);
+        Task<ToolOutcome> Enveloppe(string nom, string args, CancellationToken ct)
+            => executor(nom, args, ct).ContinueWith(t => new ToolOutcome(t.Result), ct);
+
+        await foreach (var evt in loop.RunAsync(request, Enveloppe)) events.Add(evt);
         return events;
     }
 

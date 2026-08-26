@@ -57,4 +57,56 @@ public class GitStatusTool : ITool
             JsonSerializer.Serialize(result.Data?.Data),
             Name));
     }
+
+    /// <summary>
+    /// Carte « depot ». Identifiant porte le NOM DU DEPOT (git.ShiftStar) et non l outil :
+    /// interroger deux depots doit produire deux cartes, pas ecraser la premiere.
+    /// </summary>
+    public HudCard? BuildCard(ToolResult result)
+    {
+        if (result.Data is not string json) return null;
+
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            var r = doc.RootElement;
+            if (r.ValueKind != JsonValueKind.Object) return null;
+
+            var chemin = r.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
+            var depot = chemin.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                              .Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                              .LastOrDefault() ?? "depot";
+
+            var branche = r.TryGetProperty("branch", out var b) ? b.GetString() : null;
+
+            var changements = new List<string>();
+            if (r.TryGetProperty("changes", out var c) && c.ValueKind == JsonValueKind.Array)
+            {
+                changements.AddRange(c.EnumerateArray().Select(x => x.GetString() ?? "").Where(x => x.Length > 0));
+            }
+
+            // Plafonne a 6 : au-dela la carte deviendrait un mur de texte, et le compte total
+            // porte deja l information utile.
+            var items = changements.Take(6)
+                .Select(l => new HudCardItem { Label = l.Trim() })
+                .ToList();
+            if (changements.Count > 6)
+                items.Add(new HudCardItem { Label = $"... et {changements.Count - 6} autres" });
+
+            return new HudCard
+            {
+                Id = $"git.{depot}",
+                Kind = HudCardKind.Status,
+                Label = depot,
+                Value = branche,
+                Unit = changements.Count > 0 ? $"{changements.Count} modif." : "propre",
+                State = changements.Count > 0 ? HudCardState.Warn : HudCardState.Ok,
+                Items = items.Count > 0 ? items : null
+            };
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 }

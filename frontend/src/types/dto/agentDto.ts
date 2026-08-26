@@ -15,8 +15,50 @@ export interface AgentEvent {
   ok?: boolean;
   /** Résultat tronqué, destiné à l'affichage (type = 'tool_result'). */
   summary?: string;
+  /** Carte du HUD produite par l'outil (type = 'tool_result'), absente la plupart du temps. */
+  card?: HudCard;
   /** Numéro d'itération de la boucle, à partir de 1. */
   iteration: number;
+}
+
+// ── HUD ────────────────────────────────────────────────────────────────────
+// Miroir de Orion.Core/DTOs/Responses/HudCard.cs — garder les deux alignés.
+
+/** Forme de la carte : détermine le composant de rendu. */
+export type HudCardKind = 'metric' | 'status' | 'list' | 'sources';
+
+/**
+ * Gravité, PAS une couleur. Le backend dit ce qui se passe, le front décide de
+ * l'apparence — sinon changer le thème obligerait à modifier des outils métier.
+ */
+export type HudCardState = 'neutral' | 'ok' | 'warn' | 'critical';
+
+export interface HudCardItem {
+  label: string;
+  value?: string;
+  /** Lien externe : le front en fait un élément ouvrable. */
+  url?: string;
+}
+
+/**
+ * Carte produite par un OUTIL à partir de son résultat réel.
+ *
+ * Remplace parseHoloCards(), qui fabriquait des cartes par expression régulière sur la prose :
+ * toute statistique en gras en devenait une, par accident, et rien n'apparaissait quand ça
+ * comptait. Une carte est désormais la conséquence d'une action réellement exécutée.
+ *
+ * `id` est STABLE et porte le sujet (`git.ShiftStar`) : rappeler le même outil MET À JOUR la
+ * carte au lieu d'en empiler une seconde.
+ */
+export interface HudCard {
+  id: string;
+  kind: HudCardKind;
+  label: string;
+  value?: string;
+  unit?: string;
+  state: HudCardState;
+  items?: HudCardItem[];
+  producedAt?: string;
 }
 
 /** Trace d'un outil exécuté pendant un tour — ce qu'ORION a FAIT, pas seulement dit. */

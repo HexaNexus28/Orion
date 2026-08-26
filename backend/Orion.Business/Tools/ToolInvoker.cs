@@ -86,7 +86,27 @@ public class ToolInvoker : IToolInvoker
     {
         try
         {
-            return await tool.ExecuteAsync(input, ct);
+            var reponse = await tool.ExecuteAsync(input, ct);
+
+            // La carte est construite ICI, et nulle part ailleurs : ToolInvoker est deja le
+            // seul endroit qui execute un outil. La produire dans la boucle agent ou dans un
+            // controleur voudrait dire la reconstruire a chaque nouveau chemin d appel.
+            //
+            // Un outil qui leve en fabriquant sa carte ne doit pas faire echouer son propre
+            // resultat : la carte est un affichage, pas le travail demande.
+            if (reponse.Data is { Success: true } resultat)
+            {
+                try
+                {
+                    resultat.Card = tool.BuildCard(resultat);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[ToolInvoker] {ToolName} : carte HUD non construite", tool.Name);
+                }
+            }
+
+            return reponse;
         }
         catch (Exception ex)
         {

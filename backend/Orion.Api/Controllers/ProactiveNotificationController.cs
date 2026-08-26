@@ -6,6 +6,7 @@ using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Services;
+using Orion.Api.Services;
 using Orion.Core.Interfaces.Daemon;
 
 namespace Orion.Api.Controllers;
@@ -18,7 +19,7 @@ namespace Orion.Api.Controllers;
 [Route("api/[controller]")]
 public class ProactiveNotificationController : ControllerBase
 {
-    private static readonly ConcurrentDictionary<string, HttpResponse> _clients = new();
+    private readonly SseClientRegistry _sse;
     private readonly IDaemonClient _daemonClient;
     private readonly IBriefingAgent _briefingAgent;
     private readonly IProactiveLearningService _apprentissage;
@@ -28,8 +29,10 @@ public class ProactiveNotificationController : ControllerBase
         IDaemonClient daemonClient,
         IBriefingAgent briefingAgent,
         IProactiveLearningService apprentissage,
-        ILogger<ProactiveNotificationController> logger)
+        ILogger<ProactiveNotificationController> logger,
+        SseClientRegistry sse)
     {
+        _sse = sse;
         _daemonClient = daemonClient;
         _briefingAgent = briefingAgent;
         _apprentissage = apprentissage;
@@ -39,7 +42,7 @@ public class ProactiveNotificationController : ControllerBase
     // Internal broadcast — used by BriefingScheduler and this controller
     internal static async Task BroadcastAsync(
         string eventType, string message, string priority, bool speak,
-        ILogger logger)
+        ILogger logger, SseClientRegistry sse)
     {
         var notification = new DaemonNotificationDto
         {
@@ -51,16 +54,10 @@ public class ProactiveNotificationController : ControllerBase
             Timestamp = DateTime.UtcNow
         };
 
-        var deadClients = new List<string>();
-        foreach (var (clientId, response) in _clients)
-        {
-            try { await SendEventAsync(response, "notification", notification); }
-            catch { deadClients.Add(clientId); }
-        }
-        foreach (var id in deadClients) _clients.TryRemove(id, out _);
+        var restants = await sse.BroadcastAsync("notification", notification);
 
         logger.LogInformation("[Broadcast] {Preview} → {Count} clients",
-            message.Length > 60 ? message[..60] + "..." : message, _clients.Count);
+            message.Length > 60 ? message[..60] + "..." : message, restants);
     }
 
     /// <summary>
@@ -82,19 +79,19 @@ public class ProactiveNotificationController : ControllerBase
         Response.Headers["X-Accel-Buffering"] = "no";
 
         var clientId = Guid.NewGuid().ToString();
-        _clients.TryAdd(clientId, Response);
+        _sse.Add(clientId, Response);
         _logger.LogInformation("[NotificationStream] Client {ClientId} connected", clientId);
 
         try
         {
             // Send initial connection message
-            await SendEventAsync(Response, "connected", new { clientId, timestamp = DateTime.UtcNow });
+            await SseClientRegistry.SendAsync(Response, "connected", new { clientId, timestamp = DateTime.UtcNow });
 
             // Keep connection alive
             while (!ct.IsCancellationRequested)
             {
                 await Task.Delay(30000, ct); // Heartbeat every 30s
-                await SendEventAsync(Response, "heartbeat", new { timestamp = DateTime.UtcNow });
+                await SseClientRegistry.SendAsync(Response, "heartbeat", new { timestamp = DateTime.UtcNow });
             }
         }
         catch (OperationCanceledException)
@@ -103,7 +100,7 @@ public class ProactiveNotificationController : ControllerBase
         }
         finally
         {
-            _clients.TryRemove(clientId, out _);
+            _sse.Remove(clientId);
         }
     }
 
@@ -116,27 +113,9 @@ public class ProactiveNotificationController : ControllerBase
         _logger.LogInformation("[Notification] Broadcasting: {Type} - {Message}", 
             notification.Type, notification.Message);
 
-        var deadClients = new List<string>();
+        var clientsNotifies = await _sse.BroadcastAsync("notification", notification);
 
-        foreach (var (clientId, response) in _clients)
-        {
-            try
-            {
-                await SendEventAsync(response, "notification", notification);
-            }
-            catch
-            {
-                deadClients.Add(clientId);
-            }
-        }
-
-        // Cleanup dead clients
-        foreach (var clientId in deadClients)
-        {
-            _clients.TryRemove(clientId, out _);
-        }
-
-        return Ok(ApiResponse<object>.SuccessResponse(new { clientsNotified = _clients.Count }));
+        return Ok(ApiResponse<object>.SuccessResponse(new { clientsNotified = clientsNotifies }));
     }
 
     /// <summary>
@@ -161,13 +140,13 @@ public class ProactiveNotificationController : ControllerBase
             ? messageResult.Data
             : request.Context;
 
-        await BroadcastAsync("proactive", message, request.Priority ?? "normal", speak: true, _logger);
+        await BroadcastAsync("proactive", message, request.Priority ?? "normal", speak: true, _logger, _sse);
 
         // La trace de ce qui a ETE DIT : c'est elle qui alimente l'apprentissage. La table
         // `behavior_patterns` existait depuis le premier jour sans que rien n'y ecrive.
         await _apprentissage.EnregistrerSignalementAsync(request.Pattern, request.Context, message, ct);
 
-        return Ok(ApiResponse<object>.SuccessResponse(new { message, clientsNotified = _clients.Count }));
+        return Ok(ApiResponse<object>.SuccessResponse(new { message, clientsNotified = _sse.Count }));
     }
 
     /// <summary>
@@ -204,18 +183,8 @@ public class ProactiveNotificationController : ControllerBase
         return StatusCode(result.StatusCode, result);
     }
 
-    private static readonly System.Text.Json.JsonSerializerOptions _jsonOptions = new()
-    {
-        PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase
-    };
-
-    private static async Task SendEventAsync(HttpResponse response, string eventName, object data)
-    {
-        var json = System.Text.Json.JsonSerializer.Serialize(data, _jsonOptions);
-        await response.WriteAsync($"event: {eventName}\n");
-        await response.WriteAsync($"data: {json}\n\n");
-        await response.Body.FlushAsync();
-    }
+    // La serialisation et l envoi vivent desormais dans SseClientRegistry : ils servaient a
+    // trois endroits de ce fichier ET, maintenant, au service d arriere-plan du HUD.
 }
 
 public class ProactiveTriggerRequest

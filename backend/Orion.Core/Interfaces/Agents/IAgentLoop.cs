@@ -17,6 +17,6 @@ public interface IAgentLoop
 {
     IAsyncEnumerable<AgentEvent> RunAsync(
         LLMRequest request,
-        Func<string, string, CancellationToken, Task<string>> toolExecutor,
+        Func<string, string, CancellationToken, Task<ToolOutcome>> toolExecutor,
         CancellationToken ct = default);
 }

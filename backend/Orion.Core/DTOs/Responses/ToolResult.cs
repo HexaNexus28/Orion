@@ -17,6 +17,15 @@ public class ToolResult
     public string? Source { get; set; } // 'local', 'api', 'daemon'
     public Dictionary<string, object>? Metadata { get; set; }
 
+    /// <summary>
+    /// Carte du HUD, remplie par ToolInvoker apres execution.
+    ///
+    /// Sans risque pour le contexte du modele : ce qui lui est envoye est `Data`, jamais le
+    /// ToolResult entier (cf. ConversationAgent.ExecuteToolAsync). La carte voyage donc A COTE
+    /// du resultat, elle ne le pollue pas.
+    /// </summary>
+    public HudCard? Card { get; set; }
+
     public static ToolResult SuccessResult(object? data = null, string? toolName = null)
         => new() { Success = true, Data = data, ToolName = toolName };
 

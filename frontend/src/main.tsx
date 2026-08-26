@@ -2,6 +2,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { EntityProvider } from './context/EntityContext'
 import { OrionStatusProvider } from './context/OrionStatusContext'
+import { HudCardsProvider } from './context/HudCardsContext'
 import { AuthGate } from './components/auth/AuthGate'
 import './index.css'
 
@@ -20,7 +21,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <AuthGate>
     <EntityProvider>
       <OrionStatusProvider>
-        <App />
+        <HudCardsProvider>
+          <App />
+        </HudCardsProvider>
       </OrionStatusProvider>
     </EntityProvider>
   </AuthGate>,

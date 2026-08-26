@@ -352,7 +352,7 @@ public class ConversationAgent : IConversationAgent
     /// l'agent ne fait plus que traduire. C'est ce qui garantit que l'API outils et la
     /// conversation obéissent aux mêmes règles.
     /// </summary>
-    private async Task<string> ExecuteToolAsync(
+    private async Task<ToolOutcome> ExecuteToolAsync(
         string toolName,
         string argumentsJson,
         ToolInvocationContext invocation,
@@ -373,10 +373,12 @@ public class ConversationAgent : IConversationAgent
         var result = await _toolInvoker.InvokeAsync(toolName, input, invocation, ct);
 
         if (result.Success && result.Data is { Success: true })
-            return JsonSerializer.Serialize(result.Data.Data);
+            return new ToolOutcome(JsonSerializer.Serialize(result.Data.Data), result.Data.Card);
 
+        // Echec : aucune carte. Afficher une carte vide ou fausse serait pire que rien —
+        // le HUD doit refleter ce qui s est reellement passe.
         var error = result.Data?.Error ?? result.Message ?? "Execution de l'outil echouee";
-        return JsonSerializer.Serialize(new { error });
+        return new ToolOutcome(JsonSerializer.Serialize(new { error }));
     }
 
     private async Task<Dictionary<string, string>> BuildUserProfileAsync(CancellationToken ct)

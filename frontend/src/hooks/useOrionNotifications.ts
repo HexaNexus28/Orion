@@ -1,4 +1,6 @@
 import { authService } from '../services/authService';
+import { useHudCards } from '../context/HudCardsContext';
+import type { HudCard } from '../types/dto/agentDto';
 import { useEffect, useCallback, useState } from 'react';
 import { apiClient } from '../services/api';
 import { ENDPOINTS, API_BASE } from '../config/endpoints';
@@ -84,6 +86,8 @@ export const useOrionNotifications = () => {
     return sendAction('speak', text);
   }, [sendAction]);
 
+  const { upsertCard } = useHudCards();
+
   useEffect(() => {
     // Reconnexion REPRISE A LA MAIN, et ce n est pas un raffinement.
     //
@@ -126,6 +130,17 @@ export const useOrionNotifications = () => {
           }
         });
 
+        // Cartes PERMANENTES poussees par le serveur (HudBroadcastService), independamment de
+        // toute conversation. Meme magasin et meme identifiant stable que les cartes issues des
+        // outils : une carte poussee remplace simplement celle de meme id, d ou qu elle vienne.
+        source.addEventListener("card", (event) => {
+          try {
+            upsertCard(JSON.parse((event as MessageEvent).data) as HudCard);
+          } catch (err) {
+            console.error("[useOrionNotifications] Carte illisible :", err);
+          }
+        });
+
         source.addEventListener("heartbeat", () => { /* connexion vivante */ });
 
         source.onerror = () => {
@@ -160,7 +175,7 @@ export const useOrionNotifications = () => {
       source?.close();
       setIsConnected(false);
     };
-  }, [speak]);
+  }, [speak, upsertCard]);
 
   return {
     lastNotification,

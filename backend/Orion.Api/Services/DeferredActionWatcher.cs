@@ -23,13 +23,16 @@ public class DeferredActionWatcher : BackgroundService
     private readonly IDaemonClient _daemon;
     private readonly DaemonOptions _options;
     private readonly ILogger<DeferredActionWatcher> _logger;
+    private readonly SseClientRegistry _sse;
 
     public DeferredActionWatcher(
         IServiceScopeFactory scopeFactory,
         IDaemonClient daemon,
         IOptions<DaemonOptions> options,
-        ILogger<DeferredActionWatcher> logger)
+        ILogger<DeferredActionWatcher> logger,
+        SseClientRegistry sse)
     {
+        _sse = sse;
         _scopeFactory = scopeFactory;
         _daemon = daemon;
         _options = options.Value;
@@ -106,7 +109,7 @@ public class DeferredActionWatcher : BackgroundService
             message: Raconter(rapport),
             priority: rapport.AwaitingConfirmation.Count > 0 ? "high" : "normal",
             speak: true,
-            _logger);
+            _logger, _sse);
     }
 
     private async Task BalayerAsync(CancellationToken ct)

@@ -40,6 +40,9 @@ public class AgentEvent
     /// <summary>Résultat tronqué, destiné à l'affichage (Type = ToolResult).</summary>
     public string? ToolSummary { get; set; }
 
+    /// <summary>Carte du HUD produite par l'outil (Type = ToolResult), ou null.</summary>
+    public HudCard? Card { get; set; }
+
     /// <summary>Numéro d'itération de la boucle, à partir de 1.</summary>
     public int Iteration { get; set; }
 
@@ -49,8 +52,8 @@ public class AgentEvent
     public static AgentEvent ToolStart(string name, string argsJson, int iteration)
         => new() { Type = AgentEventType.ToolStart, ToolName = name, ToolArgs = argsJson, Iteration = iteration };
 
-    public static AgentEvent ToolResult(string name, bool ok, string summary, int iteration)
-        => new() { Type = AgentEventType.ToolResult, ToolName = name, ToolOk = ok, ToolSummary = summary, Iteration = iteration };
+    public static AgentEvent ToolResult(string name, bool ok, string summary, int iteration, HudCard? card = null)
+        => new() { Type = AgentEventType.ToolResult, ToolName = name, ToolOk = ok, ToolSummary = summary, Iteration = iteration, Card = card };
 
     public static AgentEvent Done(int iteration)
         => new() { Type = AgentEventType.Done, Iteration = iteration };

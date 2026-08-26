@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { chatService } from '../services/chatService';
 import type { ToolActivity } from '../types/dto/agentDto';
+import { useHudCards } from '../context/HudCardsContext';
 
 interface StreamState {
   text: string;
@@ -14,6 +15,11 @@ const EMPTY: StreamState = { text: '', isStreaming: false, error: null, tools: [
 
 export const useStream = () => {
   const [state, setState] = useState<StreamState>(EMPTY);
+
+  // Les cartes ne vivent PAS dans cet état : il est remis à zéro à chaque message envoyé,
+  // et un panneau permanent y disparaîtrait dès que tu écris quelque chose. Elles vont dans
+  // le magasin partagé, que le flux proactif alimente aussi.
+  const { upsertCard } = useHudCards();
 
   const streamMessage = useCallback(async (message: string, sessionId?: string) => {
     setState({ ...EMPTY, isStreaming: true });
@@ -46,6 +52,11 @@ export const useStream = () => {
             break;
 
           case 'tool_result':
+            // Poussée ICI, en dehors du setState : une fonction de mise à jour doit rester pure.
+            // React la rejoue en mode strict, et un effet de bord à l'intérieur serait exécuté
+            // deux fois.
+            if (event.card) upsertCard(event.card);
+
             setState(prev => {
               // Clôture le dernier appel encore en cours pour cet outil.
               const tools = [...prev.tools];
@@ -79,7 +90,7 @@ export const useStream = () => {
       setState(prev => ({ ...prev, isStreaming: false, error }));
       throw err;
     }
-  }, []);
+  }, [upsertCard]);
 
   const reset = useCallback(() => setState(EMPTY), []);
 

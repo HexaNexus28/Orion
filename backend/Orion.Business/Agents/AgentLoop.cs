@@ -36,7 +36,7 @@ public class AgentLoop : IAgentLoop
 
     public async IAsyncEnumerable<AgentEvent> RunAsync(
         LLMRequest request,
-        Func<string, string, CancellationToken, Task<string>> toolExecutor,
+        Func<string, string, CancellationToken, Task<ToolOutcome>> toolExecutor,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
         // Copie de travail : la boucle enrichit l'historique à chaque itération sans muter
@@ -110,13 +110,13 @@ public class AgentLoop : IAgentLoop
             {
                 yield return AgentEvent.ToolStart(call.Name, call.ArgumentsJson, iteration);
 
-                var (resultJson, ok) = await ExecuteToolAsync(toolExecutor, call, ct);
+                var (resultJson, ok, carte) = await ExecuteToolAsync(toolExecutor, call, ct);
 
                 _logger.LogInformation(
                     "[AgentLoop] Outil {Tool} — succes: {Ok} (iteration {Iteration})",
                     call.Name, ok, iteration);
 
-                yield return AgentEvent.ToolResult(call.Name, ok, Summarize(resultJson), iteration);
+                yield return AgentEvent.ToolResult(call.Name, ok, Summarize(resultJson), iteration, carte);
 
                 messages.Add(new LLMMessage
                 {
@@ -191,15 +191,15 @@ public class AgentLoop : IAgentLoop
         }
     }
 
-    private async Task<(string Json, bool Ok)> ExecuteToolAsync(
-        Func<string, string, CancellationToken, Task<string>> toolExecutor,
+    private async Task<(string Json, bool Ok, HudCard? Card)> ExecuteToolAsync(
+        Func<string, string, CancellationToken, Task<ToolOutcome>> toolExecutor,
         LLMToolCall call,
         CancellationToken ct)
     {
         try
         {
-            var json = await toolExecutor(call.Name, call.ArgumentsJson, ct);
-            return (json, !CarriesError(json));
+            var execution = await toolExecutor(call.Name, call.ArgumentsJson, ct);
+            return (execution.Json, !CarriesError(execution.Json), execution.Card);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -208,7 +208,7 @@ public class AgentLoop : IAgentLoop
         catch (Exception ex)
         {
             _logger.LogError(ex, "[AgentLoop] Outil {Tool} a leve une exception", call.Name);
-            return (JsonSerializer.Serialize(new { error = ex.Message }), false);
+            return (JsonSerializer.Serialize(new { error = ex.Message }), false, null);
         }
     }
 

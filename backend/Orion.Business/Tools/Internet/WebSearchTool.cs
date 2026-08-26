@@ -210,4 +210,31 @@ public class WebSearchTool : ITool
     {
         return Regex.Replace(html, @"<[^>]+>", "").Trim();
     }
+
+    /// <summary>
+    /// Carte « sources ». C est la carte qui repond directement a la demande d « infos reelles du
+    /// monde » : chaque resultat reste OUVRABLE, au lieu d etre fondu dans la reponse du modele.
+    /// </summary>
+    public HudCard? BuildCard(ToolResult result)
+    {
+        if (result.Data is not JsonNode noeud || noeud is not JsonArray tableau || tableau.Count == 0)
+            return null;
+
+        var items = tableau.Take(5).Select(x => new HudCardItem
+        {
+            Label = x?["Title"]?.GetValue<string>() ?? x?["title"]?.GetValue<string>() ?? "(sans titre)",
+            Url   = x?["Url"]?.GetValue<string>()   ?? x?["url"]?.GetValue<string>()
+        }).ToList();
+
+        return new HudCard
+        {
+            Id = "web.sources",
+            Kind = HudCardKind.Sources,
+            Label = "Sources",
+            Value = tableau.Count.ToString(),
+            Unit = tableau.Count > 1 ? "resultats" : "resultat",
+            State = HudCardState.Neutral,
+            Items = items
+        };
+    }
 }

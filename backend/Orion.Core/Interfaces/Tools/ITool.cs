@@ -33,4 +33,17 @@ public interface ITool
     bool IsDeferrable => false;
 
     Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default);
+
+    /// <summary>
+    /// Carte du HUD produite a partir du resultat, ou null si cet outil n a rien a montrer.
+    ///
+    /// Implementation PAR DEFAUT : aucun outil existant ne casse, et un outil sans interet
+    /// visuel ne declare simplement rien.
+    ///
+    /// Definie ICI plutot que dans un registre separe indexe par nom d outil : un second
+    /// registre serait un deuxieme endroit a tenir synchronise, et la carte d un nouvel outil
+    /// vivrait loin de lui. C est exactement ainsi que naissent les controles presents a un
+    /// endroit et absents a cote.
+    /// </summary>
+    HudCard? BuildCard(ToolResult result) => null;
 }

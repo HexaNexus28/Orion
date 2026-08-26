@@ -17,10 +17,13 @@ public class BriefingScheduler : BackgroundService
 
     private static readonly TimeOnly BriefingTime = new(8, 0);
 
-    public BriefingScheduler(IServiceScopeFactory scopeFactory, ILogger<BriefingScheduler> logger)
+    private readonly SseClientRegistry _sse;
+
+    public BriefingScheduler(IServiceScopeFactory scopeFactory, ILogger<BriefingScheduler> logger, SseClientRegistry sse)
     {
         _scopeFactory = scopeFactory;
         _logger = logger;
+        _sse = sse;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -61,7 +64,7 @@ public class BriefingScheduler : BackgroundService
                 message: result.Data.Content,
                 priority: "high",
                 speak: true,
-                _logger);
+                _logger, _sse);
 
             _logger.LogInformation("[BriefingScheduler] Morning briefing broadcasted");
         }

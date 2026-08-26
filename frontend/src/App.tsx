@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { SlideInput } from './components/input/SlideInput';
 import { Scene3D } from './components/canvas/Scene3D';
-import { HoloCards, parseHoloCards } from './components/ui/HoloCards';
+import { HoloCards } from './components/ui/HoloCards';
+import { useHudCards } from './context/HudCardsContext';
 import { MemoryOverlay } from './components/overlay/MemoryOverlay';
 import { BriefingOverlay } from './components/overlay/BriefingOverlay';
 import { SettingsOverlay } from './components/overlay/SettingsOverlay';
@@ -29,6 +30,11 @@ const App: React.FC = () => {
   const deferredQueue = useDeferredQueue();
   const spokenUpToRef = useRef(0);
   const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
+
+  // Cartes du HUD : magasin partagé, alimenté par le flux de chat ET par le flux proactif.
+  // Elles survivent au tour de conversation — un panneau permanent ne doit pas disparaître
+  // parce que tu as envoyé un message.
+  const { cards: hudCards } = useHudCards();
 
   const [isInputVisible, setIsInputVisible] = useState(false);
   const [isMemoryOpen, setIsMemoryOpen] = useState(false);
@@ -465,7 +471,7 @@ const App: React.FC = () => {
 
       {/* HoloCards draggables — données structurées extraites de la réponse */}
       {!isStreaming && responseText && (
-        <HoloCards cards={parseHoloCards(responseText)} />
+        <HoloCards cards={hudCards} />
       )}
 
       {/* Layer 2 — input caché, slide depuis le bas */}
