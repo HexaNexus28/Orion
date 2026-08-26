@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using Orion.Api.Authentication;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Authorization;
@@ -61,7 +62,13 @@ public class AuthController : ControllerBase
         var token = new JwtSecurityToken(
             issuer: "orion",
             audience: "orion",
-            claims: new[] { new Claim(ClaimTypes.Name, "owner") },
+            // Le ROLE, pas seulement le nom : c.est lui que verifient la politique par defaut et
+            // le garde des WebSocket. Un jeton sans role ne satisferait plus rien.
+            claims: new[]
+            {
+                new Claim(ClaimTypes.Name, OrionAuth.OwnerRole),
+                new Claim(ClaimTypes.Role, OrionAuth.OwnerRole)
+            },
             expires: expires,
             signingCredentials: new SigningCredentials(key, SecurityAlgorithms.HmacSha256));
 

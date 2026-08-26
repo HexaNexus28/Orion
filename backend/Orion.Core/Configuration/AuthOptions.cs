@@ -13,8 +13,9 @@ namespace Orion.Core.Configuration;
 /// son bundle serait lisible par quiconque charge la page. Un mot de passe echange contre un
 /// jeton de session resout exactement ce probleme — rien de permanent ne vit cote client.
 ///
-/// Le daemon, lui, garde son `X-Daemon-Token` : il est sur une machine de confiance et son
-/// canal WebSocket est deja verifie (fail-closed) par DaemonWebSocketMiddleware.
+/// Le daemon garde son `X-Daemon-Token`, mais il n.est plus compare a la main dans un
+/// middleware : il passe par un schema d.authentification a part entiere (OrionAuth.DaemonScheme)
+/// et devient une identite avec un role. Voir Orion.Api/Authentication/OrionAuth.cs.
 /// </summary>
 public class AuthOptions
 {
@@ -25,6 +26,13 @@ public class AuthOptions
 
     /// <summary>Cle de signature des jetons. 32 caracteres minimum (HMAC-SHA256).</summary>
     public string JwtSecret { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Secret partage du daemon. Aucun login interactif n.est possible sur un service Windows,
+    /// donc pas de JWT pour lui. Alimente depuis DAEMON_WS_TOKEN au demarrage (cf. Program.cs) :
+    /// le nom de la variable reste celui deploye par Ansible, mais il n.est lu QU.UNE fois, ici.
+    /// </summary>
+    public string DaemonToken { get; set; } = string.Empty;
 
     /// <summary>30 jours : c'est un assistant personnel consulte depuis un telephone, pas une banque.</summary>
     public int TokenLifetimeDays { get; set; } = 30;

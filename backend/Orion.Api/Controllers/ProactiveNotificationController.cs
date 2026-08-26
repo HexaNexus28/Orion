@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.AspNetCore.Authorization;
+using Orion.Api.Authentication;
 using Microsoft.AspNetCore.Mvc;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
@@ -133,6 +135,11 @@ public class ProactiveNotificationController : ControllerBase
     /// <summary>
     /// Le daemon appelle ce endpoint avec un pattern détecté → LLM génère le message → broadcast SSE
     /// </summary>
+    // Appelee par le DAEMON, jamais par le navigateur. Le role est exige explicitement :
+    // sans cet attribut la politique par defaut exigerait `owner`, et le daemon — qui n.a pas
+    // de JWT et ne peut pas en obtenir — se prendrait un 401 a chaque detection. C.est
+    // exactement ce qui se passait : le mode proactif etait mort en silence.
+    [Authorize(Policy = OrionAuth.DaemonPolicy)]
     [HttpPost("trigger")]
     public async Task<IActionResult> TriggerProactiveMessage(
         [FromBody] ProactiveTriggerRequest request, CancellationToken ct)
@@ -160,6 +167,7 @@ public class ProactiveNotificationController : ControllerBase
     /// Pénalités apprises par pattern. Le daemon les récupère périodiquement et les soustrait
     /// au score : un signal rejeté plusieurs fois finit sous le seuil, puis se tait.
     /// </summary>
+    [Authorize(Policy = OrionAuth.DaemonPolicy)]
     [HttpGet("weights")]
     public async Task<IActionResult> GetWeights(CancellationToken ct)
     {

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.IdentityModel.Tokens;
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using Orion.Api.Authentication;
 using Orion.Api.Middleware;
 using Orion.Api.Services;
 using Orion.Api.WebSockets;
@@ -74,8 +75,25 @@ builder.Services.Configure<AuthOptions>(
     builder.Configuration.GetSection(AuthOptions.SectionName));
 
 var authOptions = builder.Configuration.GetSection(AuthOptions.SectionName).Get<AuthOptions>() ?? new AuthOptions();
+// Le secret du daemon est lu ICI, une seule fois, et range dans AuthOptions comme le reste.
+// Avant, un `Environment.GetEnvironmentVariable` trainait au milieu d'un middleware : la
+// configuration d'authentification vivait a deux endroits sans rapport l'un avec l'autre.
+builder.Services.PostConfigure<AuthOptions>(o =>
+    o.DaemonToken = Environment.GetEnvironmentVariable("DAEMON_WS_TOKEN") ?? o.DaemonToken);
 
-builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+// UNE porte d'entree. Le schema par defaut est un SELECTEUR, pas un validateur : il regarde la
+// requete et delegue au bon schema. Sans lui, `UseAuthentication()` n'executerait que JWT et le
+// daemon n'aurait jamais d'identite, quel que soit le nombre de schemas declares.
+builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
+    .AddPolicyScheme(OrionAuth.SelectorScheme, OrionAuth.SelectorScheme, options =>
+    {
+        options.ForwardDefaultSelector = context =>
+            context.Request.Headers.ContainsKey(OrionAuth.DaemonTokenHeader)
+                ? OrionAuth.DaemonScheme
+                : JwtBearerDefaults.AuthenticationScheme;
+    })
+    .AddScheme<Microsoft.AspNetCore.Authentication.AuthenticationSchemeOptions, DaemonAuthenticationHandler>(
+        OrionAuth.DaemonScheme, null)
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
@@ -86,26 +104,27 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = "orion",
             ValidAudience = "orion",
+            // Explicite : c.est ce claim que lisent `RequireRole` et le garde WebSocket. Le laisser
+            // implicite marcherait par defaut, mais un echec de mappage se traduirait par un 403
+            // partout, sans message — le genre de panne qu.on cherche pendant une heure.
+            RoleClaimType = System.Security.Claims.ClaimTypes.Role,
             // Cle vide si non configuree : aucune signature ne peut etre validee, donc tout
             // est refuse. C'est le comportement voulu — fail-closed.
             IssuerSigningKey = new SymmetricSecurityKey(
                 Encoding.UTF8.GetBytes(authOptions.IsConfigured ? authOptions.JwtSecret : Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N")))
         };
 
-        // EventSource et WebSocket ne peuvent porter AUCUN en-tete personnalise — c'est une
-        // limite des navigateurs, pas un choix d'implementation. Le seul moyen d'authentifier
-        // un flux SSE est donc le parametre d'URL.
-        //
-        // Restreint a CE chemin exclusivement : une URL se retrouve dans les journaux d'acces,
-        // dans l'historique et dans l'en-tete Referer. On ne l'accepte que la ou il n'existe
-        // aucune alternative, jamais sur les routes qui peuvent porter un en-tete.
+        // EventSource et WebSocket cote navigateur ne peuvent porter AUCUN en-tete — limite des
+        // navigateurs, pas choix d'implementation. Le jeton passe donc par l'URL, et UNIQUEMENT
+        // sur les chemins listes dans OrionAuth.QueryTokenPaths. La liste est fermee et vit a un
+        // seul endroit : c'est ce qui empeche ce contournement de s'etendre par negligence.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
                 var accessToken = context.Request.Query["access_token"];
                 if (!string.IsNullOrEmpty(accessToken) &&
-                    context.HttpContext.Request.Path.StartsWithSegments("/api/proactivenotification/stream"))
+                    OrionAuth.AllowsQueryToken(context.HttpContext.Request.Path))
                 {
                     context.Token = accessToken;
                 }
@@ -114,12 +133,16 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-// Politique par DEFAUT : tout controleur exige une session, sauf [AllowAnonymous] explicite.
-// L'inverse (proteger controleur par controleur) laisse passer tout ce qu'on oublie.
+// FERME PAR DEFAUT, en un seul endroit. Toute route sans attribut exige le proprietaire : une
+// route oubliee est refusee, jamais ouverte. Le daemon ne satisfait PAS cette politique — son
+// secret n'ouvre que les deux routes qui la declarent explicitement.
 builder.Services.AddAuthorization(options =>
 {
+    options.AddPolicy(OrionAuth.OwnerPolicy, p => p.RequireRole(OrionAuth.OwnerRole));
+    options.AddPolicy(OrionAuth.DaemonPolicy, p => p.RequireRole(OrionAuth.DaemonRole));
+
     options.FallbackPolicy = new AuthorizationPolicyBuilder()
-        .RequireAuthenticatedUser()
+        .RequireRole(OrionAuth.OwnerRole)
         .Build();
 });
 builder.Services.Configure<SupabaseOptions>(
@@ -357,12 +380,50 @@ app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// WebSocket support for daemon + voice
-app.UseWebSockets(new WebSocketOptions
+// WebSocket — daemon + voix.
+//
+// AllowedOrigins etait EN DUR sur localhost. Quand cette liste est non vide, toute connexion
+// dont l.en-tete Origin n.y figure pas est REJETEE. Depuis un telephone le navigateur envoie
+// https://orion.shift-star.app : la voix etait donc refusee en silence en production, alors que
+// le WebSocket du daemon passait — un client non-navigateur n.envoie aucun Origin. Meme source
+// de verite que le CORS : deux listes d.origines finissent toujours par diverger.
+// ATTENTION : AllowedOrigins ne peut PAS venir de appsettings.json, qui est gitignore donc
+// absent de l image. En production la valeur arrive par la variable d environnement
+// AllowedOrigins__0, posee par Ansible depuis le domaine declare de la stack.
+var wsOptions = new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(30) };
+foreach (var origin in builder.Configuration.GetSection("AllowedOrigins").Get<string[]>() ?? Array.Empty<string>())
 {
-    KeepAliveInterval = TimeSpan.FromSeconds(30),
-    AllowedOrigins = { "http://localhost:5173", "http://localhost:3000" }
-});
+    wsOptions.AllowedOrigins.Add(origin);
+}
+
+// Les origines de developpement ne sont ajoutees QU en developpement. En production elles
+// n autoriseraient rien d utile et elargiraient la surface pour rien.
+if (app.Environment.IsDevelopment())
+{
+    wsOptions.AllowedOrigins.Add("http://localhost:5173");
+    wsOptions.AllowedOrigins.Add("http://localhost:3000");
+}
+
+// Liste VIDE = le framework accepte TOUTE origine. En production ce serait la porte ouverte au
+// detournement de WebSocket inter-sites : une page tierce ouvrirait un canal vers l assistant.
+// On refuse de demarrer plutot que de tourner grand ouvert sans que personne ne le remarque.
+if (wsOptions.AllowedOrigins.Count == 0)
+{
+    throw new InvalidOperationException(
+        "Aucune origine WebSocket autorisee. Definir AllowedOrigins__0 (cf. env de la stack Ansible).");
+}
+app.UseWebSockets(wsOptions);
+// L.authentification est remontee ICI, et pas laissee a sa place habituelle plus bas, parce
+// que les middlewares WebSocket en ont besoin : sans elle `context.User` serait vide et aucun
+// controle ne serait possible dans /ws/voice — c.est precisement pourquoi ce canal est reste
+// ouvert a tous. `UseAuthentication` ne REJETTE rien par lui-meme (c.est `UseAuthorization` qui
+// rejette) : la remonter n.a donc aucun effet sur les routes existantes.
+//
+// L.inverse — descendre les WebSocket sous l.authentification — casserait tout : ils
+// passeraient alors par `UseHttpsRedirection`, or derriere nginx l.application voit du HTTP en
+// loopback. L.upgrade partirait en redirection 307 et les DEUX WebSocket tomberaient.
+app.UseAuthentication();
+
 app.UseMiddleware<DaemonWebSocketMiddleware>();
 app.UseMiddleware<VoiceWebSocketMiddleware>();
 
@@ -390,8 +451,8 @@ else
     app.UseCors("ProductionPolicy");
 }
 
-// Ordre IMPERATIF : authentification (qui es-tu) avant autorisation (as-tu le droit).
-app.UseAuthentication();
+// Autorisation seule : l.authentification est deja passee, bien plus haut (cf. le bloc
+// WebSocket). L.ordre authentification -> autorisation reste respecte.
 app.UseAuthorization();
 
 app.MapControllers();

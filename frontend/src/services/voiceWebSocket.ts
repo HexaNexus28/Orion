@@ -22,8 +22,26 @@
  */
 
 import { API_BASE, ENDPOINTS } from '../config/endpoints';
+import { authService } from './authService';
 
-const WS_URL = API_BASE.replace(/^http/, 'ws') + ENDPOINTS.voiceWS;
+/**
+ * URL construite a CHAQUE connexion, jamais au chargement du module.
+ *
+ * Le jeton n'existe pas encore quand ce fichier est evalue : au premier chargement, l'ecran de
+ * connexion n'a pas ete rempli. Une constante figee au niveau module embarquerait donc un jeton
+ * vide pour toute la duree de la session — la connexion partirait sans authentification et
+ * serait refusee, sans que rien n'indique pourquoi. C'est exactement le piege qui avait rendu
+ * le chat muet sur telephone.
+ *
+ * Le jeton passe par l'URL parce qu'un WebSocket de navigateur ne peut porter aucun en-tete.
+ * Cote serveur, /ws/voice figure dans OrionAuth.QueryTokenPaths — la liste FERMEE des seuls
+ * chemins ou ce contournement est accepte.
+ */
+function buildWsUrl(): string {
+  const base = API_BASE.replace(/^http/, 'ws') + ENDPOINTS.voiceWS;
+  const token = authService.getToken();
+  return token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
+}
 
 /** Message JSON reçu du backend sur /ws/voice. */
 interface VoiceWSMessage {
@@ -64,6 +82,8 @@ export class VoiceWebSocket {
   private _isConnected = false;
   private sessionId: string | null = null;
   private language = 'fr';
+  /** Echecs consecutifs SANS ouverture reussie — sert au palier et au message d'erreur. */
+  private echecsConsecutifs = 0;
 
   constructor(callbacks: VoiceWSCallbacks) {
     this.callbacks = callbacks;
@@ -77,12 +97,13 @@ export class VoiceWebSocket {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     try {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(buildWsUrl());
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
         console.log('[VoiceWS] Connected');
         this._isConnected = true;
+        this.echecsConsecutifs = 0;
 
         // Send config
         this.sendJson({
@@ -250,10 +271,25 @@ export class VoiceWebSocket {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+
+    // Palier exponentiel plafonne a 30 s. Avant : 3 s fixes, indefiniment. Un refus du
+    // serveur (jeton invalide) ne se resout JAMAIS tout seul : l'ancien code martelait donc
+    // l'API toutes les 3 secondes pour l'eternite, sans qu'aucune de ces tentatives puisse
+    // aboutir. Le plafond garde une reconnexion utile apres une vraie coupure reseau.
+    this.echecsConsecutifs += 1;
+    const delai = Math.min(3000 * 2 ** (this.echecsConsecutifs - 1), 30000);
+
+    // Le navigateur ne donne AUCUN statut HTTP sur un WebSocket refuse (onclose, code 1006).
+    // Apres quelques echecs on previent l'interface : sans ca, un micro muet reste
+    // inexplicable pour l'utilisateur.
+    if (this.echecsConsecutifs === 4) {
+      this.callbacks.onError?.('Connexion vocale impossible — verifier la session');
+    }
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      console.log('[VoiceWS] Reconnecting...');
+      console.log(`[VoiceWS] Reconnexion (tentative ${this.echecsConsecutifs})...`);
       this.connect();
-    }, 3000);
+    }, delai);
   }
 }

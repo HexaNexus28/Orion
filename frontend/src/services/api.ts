@@ -25,7 +25,11 @@ apiClient.interceptors.response.use(
     if (error.response) {
       // 401 = session absente ou expiree. On purge le jeton mort et on previent l'application :
       // sans ca l'utilisateur verrait « erreur » partout sans comprendre qu'il doit se reconnecter.
-      if (error.response.status === 401) {
+      // 403 traite COMME un 401, et ce n'est pas un raccourci : le front n'appelle aucune route
+      // reservee au daemon, donc un 403 ne peut venir que d'un jeton emis avant l'ajout du role
+      // « owner ». Sans cette ligne, un jeton de 30 jours deja stocke sur le telephone ferait
+      // echouer toute l'application sans jamais proposer de se reconnecter.
+      if (error.response.status === 401 || error.response.status === 403) {
         authService.logout();
         window.dispatchEvent(new CustomEvent('orion:unauthenticated'));
         throw new Error('Session expiree — reconnexion necessaire');
