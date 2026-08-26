@@ -502,6 +502,25 @@ const App: React.FC = () => {
         </button>
       )}
 
+      {/* Panne micro — affichée EN GRAND, au centre.
+
+          Le message existait déjà, mais discret : « Écoute passive active » s’affichait juste
+          après un échec, et l’interface donnait tous les signes du bon fonctionnement pendant
+          que rien ne marchait. Une panne qui se déguise en succès coûte des heures. */}
+      {voiceError && micArme && (
+        <div className="absolute inset-x-0 top-0 z-50 flex justify-center p-4">
+          <button
+            onClick={() => { setVoiceError(null); void startPassiveListeningRef.current?.(); }}
+            className="max-w-md rounded-xl border border-amber-400/40 bg-amber-950/80 px-4 py-3
+                       text-left backdrop-blur-sm"
+          >
+            <p className="text-[10px] uppercase tracking-[0.2em] text-amber-300/70">Micro indisponible</p>
+            <p className="mt-1 text-xs leading-relaxed text-amber-100/90">{voiceError}</p>
+            <p className="mt-2 text-[10px] text-amber-300/60">Touche ce message pour réessayer.</p>
+          </button>
+        </div>
+      )}
+
       {/* Canvas 3D — orbe + texte 3D réponse */}
       <Scene3D
         responseText={responseText}

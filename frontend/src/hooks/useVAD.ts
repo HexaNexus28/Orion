@@ -94,6 +94,10 @@ export const useVAD = (options: UseVADOptions = {}) => {
   const start = useCallback(async () => {
     if (listeningRef.current) return;
 
+    // Declaree ICI et non dans le try : le catch doit pouvoir la journaliser a cote de
+    // l erreur reelle. Quand les deux divergent, c est l API de permissions qui se trompe.
+    let etatPermission = 'inconnu';
+
     try {
       console.log('[VAD] Démarrage écoute...');
 
@@ -101,22 +105,38 @@ export const useVAD = (options: UseVADOptions = {}) => {
       // Sans ça, un micro refusé — ou une invite jamais validée — laisse `getUserMedia` en
       // attente indéfinie : ORION reste silencieusement sourd et l'interface se contente
       // d'afficher « vad inactif », sans jamais dire pourquoi. Observé au test Playwright.
+      // L’API de permissions est CONSULTÉE, jamais obéie.
+      //
+      // Avant, un état « denied » provoquait un `return` : getUserMedia n’était même pas
+      // tenté. Or cette API est indicative et se trompe — elle rapporte « denied » quand la
+      // permission a été réinitialisée, quand aucun périphérique par défaut n’est défini, ou
+      // quand le blocage vient de Windows et non du site. Résultat observé le 2026-08-26 :
+      // micro autorisé côté navigateur, et ORION refusait de tenter quoi que ce soit.
+      //
+      // La seule autorité, c’est getUserMedia. On l’appelle TOUJOURS ; l’état de permission ne
+      // sert plus qu’à rendre le message d’erreur exact.
       if (navigator.permissions?.query) {
         try {
-          const permission = await navigator.permissions.query({
-            name: 'microphone' as PermissionName,
-          });
-          if (permission.state === 'denied') {
-            console.warn('[VAD] Autorisation micro refusée');
-            onError?.("Micro refusé — autorise l'accès au microphone dans les réglages du navigateur, puis recharge la page.");
-            return;
-          }
-          if (permission.state === 'prompt') {
-            console.log('[VAD] En attente de l’autorisation micro…');
-          }
+          const p = await navigator.permissions.query({ name: 'microphone' as PermissionName });
+          etatPermission = p.state;
+          console.log('[VAD] Permission déclarée :', p.state, '— on tente quand même');
         } catch {
-          // Permissions API indisponible (Safari) : on tente getUserMedia directement.
+          // API indisponible (Safari) : sans importance, on tente de toute façon.
         }
+      }
+
+      // Périphériques visibles : « aucun micro » et « micro refusé » sont deux pannes
+      // différentes qui produisaient jusqu’ici le même message inutile.
+      try {
+        const peripheriques = await navigator.mediaDevices.enumerateDevices();
+        const micros = peripheriques.filter(d => d.kind === 'audioinput');
+        console.log('[VAD] Micros détectés :', micros.length);
+        if (micros.length === 0) {
+          onError?.("Aucun microphone détecté sur cet appareil.");
+          return;
+        }
+      } catch {
+        // Enumération refusée : on tente quand même getUserMedia.
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -248,9 +268,21 @@ export const useVAD = (options: UseVADOptions = {}) => {
 
       console.log('[VAD] Écoute active ✓');
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Accès microphone refusé';
-      console.error('[VAD] Erreur démarrage:', err);
+      // getUserMedia distingue precisement les causes, contrairement a l API de permissions.
+      // Les confondre sous un seul message envoyait chercher au mauvais endroit.
+      const nom = err instanceof DOMException ? err.name : 'Erreur';
+      const msg =
+        nom === 'NotAllowedError'  ? 'Micro bloqué par le navigateur — clique le cadenas à gauche de l’URL, mets Microphone sur « Autoriser », puis recharge.'
+      : nom === 'NotFoundError'    ? 'Aucun microphone trouvé — vérifie qu’il est branché et activé dans Windows.'
+      : nom === 'NotReadableError' ? 'Micro occupé par une autre application — ferme Teams, Discord ou un onglet qui l’utilise.'
+      : nom === 'SecurityError'    ? 'Capture audio interdite dans ce contexte (connexion non sécurisée ?).'
+      : (err instanceof Error ? err.message : 'Accès microphone impossible');
+
+      // L etat declare par l API est journalise A COTE de l erreur reelle : quand les deux
+      // divergent (declare 'denied', getUserMedia reussit), c est l API qui se trompe.
+      console.error('[VAD] Erreur démarrage —', nom, '| permission déclarée :', etatPermission, err);
       onError?.(msg);
+      throw err;   // l’appelant DOIT savoir que ça a échoué — cf. « Écoute passive active » mensonger
     }
   }, [onSpeechStart, onSpeechEnd, onAudioReady, onAudioChunk, onAmplitude, onError, clearSilence, finalizeSpeech]);
 
