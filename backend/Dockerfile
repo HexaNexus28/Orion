@@ -48,7 +48,7 @@ WORKDIR /app
 # mcr.microsoft.com/dotnet/aspnet:9.0 (elle est volontairement minimale).
 # Sans lui le conteneur est marque "unhealthy" en PERMANENCE tout en fonctionnant :
 # panne fantome qui bloque tout depends_on et fausse le monitoring.
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends curl libgomp1 && rm -rf /var/lib/apt/lists/*
 
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
@@ -57,6 +57,18 @@ COPY --from=publish /app/publish .
 # La PWA construite atterrit dans wwwroot : ASP.NET la sert en statique, et l'API repond sur
 # la meme origine. Une seule URL pour l'utilisateur, une seule chose a securiser.
 COPY --from=frontend /front/dist ./wwwroot
+
+# Whisper.net livre ses bibliotheques natives dans runtimes/linux-x64/, SANS RPATH. L editeur de
+# liens n y cherche pas : libwhisper.so ne trouvait pas libggml.so pourtant posee a cote.
+#
+# Diagnostic reel du 2026-08-26, dans le conteneur :
+#   ldd libwhisper.so -> libggml.so    not found
+#   ldd libggml.so    -> libgomp.so.1  not found   (OpenMP, absent de l image aspnet slim)
+#
+# Consequence : « Failed to load native whisper library » au demarrage, et la TRANSCRIPTION
+# morte — donc toute la voix. Le conteneur restait "healthy" et l API repondait normalement :
+# panne totalement silencieuse pour qui ne lit pas les journaux de demarrage.
+ENV LD_LIBRARY_PATH=/app/runtimes/linux-x64
 
 ENV ASPNETCORE_ENVIRONMENT=Production
 ENV ASPNETCORE_URLS=http://+:8080
