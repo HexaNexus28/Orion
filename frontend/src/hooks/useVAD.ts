@@ -1,5 +1,6 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import { encodeWav } from '../services/voiceApi';
+import { NOM_PROCESSEUR, urlWorklet } from '../audio/vadWorklet';
 
 interface UseVADOptions {
   onSpeechStart?: () => void;
@@ -15,7 +16,7 @@ interface UseVADOptions {
  *
  * Pas de dépendances ONNX/WASM. Détection fiable via RMS.
  * Pipeline :
- *   getUserMedia → ScriptProcessorNode → RMS > seuil → speech
+ *   getUserMedia → AudioWorklet (fil audio) → RMS > seuil → speech
  *   Silence SILENCE_TIMEOUT_MS → onSpeechEnd(Float32Array PCM 16kHz)
  */
 
@@ -41,7 +42,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
 
   const audioCtxRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const processorRef = useRef<AudioWorkletNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const samplesRef = useRef<Float32Array[]>([]);
   const prerollRef = useRef<Float32Array[]>([]);
@@ -162,20 +163,29 @@ export const useVAD = (options: UseVADOptions = {}) => {
 
       audioCtxRef.current = ctx;
 
+      // La fréquence RÉELLE peut différer de celle demandée : sur beaucoup d’appareils Android,
+      // `sampleRate: 16000` est ignoré silencieusement et le contexte tourne à 48 kHz. L’audio
+      // partirait alors à 48 kHz en étant ANNONCÉ à 16 kHz — Whisper ne transcrirait que du
+      // charabia, ou rien. On refuse de deviner : on le constate et on le dit.
+      if (ctx.sampleRate !== SAMPLE_RATE) {
+        console.warn(`[VAD] Fréquence réelle ${ctx.sampleRate} Hz au lieu de ${SAMPLE_RATE} Hz`);
+      }
+
+      await ctx.audioWorklet.addModule(urlWorklet());
+
       const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1);
+      const processor = new AudioWorkletNode(ctx, NOM_PROCESSEUR, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        processorOptions: { taille: BUFFER_SIZE },
+      });
       const mute = ctx.createGain();
       mute.gain.value = 0;
 
-      processor.onaudioprocess = (e) => {
+      processor.port.onmessage = (event: MessageEvent<{ rms: number; bloc: Float32Array }>) => {
         if (!listeningRef.current) return;
 
-        const data = e.inputBuffer.getChannelData(0);
-
-        // RMS amplitude
-        let sum = 0;
-        for (let i = 0; i < data.length; i++) sum += data[i] * data[i];
-        const rms = Math.sqrt(sum / data.length);
+        const { rms, bloc: data } = event.data;
 
         onAmplitude?.(Math.min(1, rms / 0.1));
 

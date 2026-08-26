@@ -197,6 +197,15 @@ const App: React.FC = () => {
 
   // Telemetrie du micro : le serveur ne peut pas distinguer « contexte en pause » de « parole
   // trop faible » — les deux donnent le meme silence. On mesure donc ici et on rapporte.
+  // Le micro ne démarre QUE sur un geste. Ce n’est pas un choix ergonomique, c’est la
+  // plateforme : un navigateur refuse la capture audio tant que l’utilisateur n’a rien touché,
+  // et il le refuse EN SILENCE — AudioContext « suspended », zéro octet, aucune erreur.
+  // Démarrer au montage revenait à espérer que le navigateur ferait une exception.
+  //
+  // Google Assistant ne fait pas autrement dans un navigateur : le mot-clé « OK Google » est
+  // détecté par une couche NATIVE, dont une PWA ne dispose pas.
+  const [micArme, setMicArme] = useState(false);
+
   const maxAmpRef = useRef(0);
   const chunksRef = useRef(0);
 
@@ -215,6 +224,16 @@ const App: React.FC = () => {
   });
 
   // ── Input controls ───────────────────────────────────────────────────────────
+  /**
+   * Le geste qui arme le micro. À appeler depuis un vrai événement utilisateur — c’est ce
+   * contexte d’exécution qui autorise le navigateur à démarrer l’audio.
+   */
+  const armerMicro = useCallback(() => {
+    unlockSpeech();      // débloque aussi la synthèse vocale, soumise à la même règle
+    setMicArme(true);
+    setVoiceError(null);
+  }, [unlockSpeech]);
+
   const handleOpenInput = useCallback(() => {
     unlockSpeech(); // Déverrouillle TTS dès le premier tap
     setIsInputVisible(true);
@@ -294,8 +313,11 @@ const App: React.FC = () => {
         voiceWSResponseRef.current = false;
       }
     },
-    onAmplitude: (amp) => {
-      setAmplitude(amp);
+    onAmplitude: () => {
+      // NE PAS ecrire dans `amplitude` : cette mesure est celle de la voix qu ORION JOUE,
+      // pas de ce que le micro entend. Les deux finissaient dans la meme variable, et le
+      // barge-in (amplitudeRef > 0,04) pouvait donc interrompre ORION en entendant ORION.
+      // Deux grandeurs differentes n ont rien a faire dans un seul etat.
     },
     onError: (err) => {
       setStreaming(false);
@@ -378,13 +400,15 @@ const App: React.FC = () => {
   // VAD tourne en continu SAUF si input texte ouvert.
   // Pendant que ORION parle, le VAD continue → permet barge-in.
   useEffect(() => {
-    if (isInputVisible) {
+    // `micArme` est la garde qui manquait : tant qu’aucun geste n’a eu lieu, on ne tente même
+    // pas la capture. Une fois armé, l’écoute continue reprend seule après chaque tour.
+    if (!micArme || isInputVisible) {
       stopPassiveListeningRef.current?.();
       return;
     }
     void startPassiveListeningRef.current?.();
     return () => { stopPassiveListeningRef.current?.(); };
-  }, [isInputVisible]); // Only re-run when input visibility changes
+  }, [micArme, isInputVisible]);
 
   // ── VAD → trigger voice turn ─────────────────────────────────────────────────
   // Quand MicVAD détecte la fin de parole (isSpeaking passe false → true → false)
@@ -453,6 +477,31 @@ const App: React.FC = () => {
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
+      {/* Voile d’armement du micro.
+
+          Tant qu’aucun geste n’a eu lieu, le navigateur REFUSE la capture audio — en silence.
+          Plutôt que de tenter et d’échouer sans rien dire, on demande explicitement le geste.
+          C’est aussi ce qui débloque la synthèse vocale, soumise à la même règle. */}
+      {!micArme && (
+        <button
+          onClick={armerMicro}
+          className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4
+                     bg-orion-darker/80 backdrop-blur-sm"
+        >
+          <span className="relative flex h-20 w-20 items-center justify-center rounded-full
+                           border border-cyan-400/40 text-3xl">
+            <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400/10" />
+            🎙️
+          </span>
+          <span className="text-sm tracking-[0.2em] uppercase text-cyan-300/80">
+            Touche pour activer
+          </span>
+          <span className="max-w-[15rem] text-center text-[11px] leading-relaxed text-cyan-100/40">
+            Le navigateur exige un geste avant d’ouvrir le micro.
+          </span>
+        </button>
+      )}
+
       {/* Canvas 3D — orbe + texte 3D réponse */}
       <Scene3D
         responseText={responseText}
