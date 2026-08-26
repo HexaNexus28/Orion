@@ -51,6 +51,14 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends curl libgomp1 && rm -rf /var/lib/apt/lists/*
 
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
+
+# Le dossier du modele Whisper doit exister DANS L IMAGE et appartenir a appuser.
+#
+# Un volume nomme monte sur un chemin absent de l image est cree vide et appartenant a ROOT :
+# le conteneur, qui tourne en appuser, ne pourrait pas y ecrire et le telechargement du modele
+# echouerait. Quand le chemin existe, Docker initialise le volume a partir de lui et conserve
+# le proprietaire.
+RUN mkdir -p /app/models/whisper && chown -R appuser /app/models
 USER appuser
 
 COPY --from=publish /app/publish .
