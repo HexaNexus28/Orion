@@ -6,6 +6,7 @@ using Orion.Core.Configuration;
 using Orion.Core.DTOs.Internal.Tools;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Entities;
+using Orion.Core.Enums;
 using Orion.Core.Interfaces.Daemon;
 using Orion.Core.Interfaces.Repositories;
 using Orion.Core.Interfaces.Tools;
@@ -63,6 +64,25 @@ public class ToolInvoker : IToolInvoker
             return tool.IsDeferrable
                 ? await EnqueueAsync(tool, input, context, ct)
                 : RefuserFranchement(tool);
+        }
+
+        // GARDE-FOU DES ACTIONS IRREVERSIBLES.
+        //
+        // Avant, `IsDestructive` ne servait QUE lorsque le PC etait eteint : PC allume, un
+        // run_script, un write_file ou un kill_process partait immediatement. Le seul garde-fou
+        // etait une phrase du prompt systeme demandant au modele de confirmer d abord —
+        // c est-a-dire une SUGGESTION, pas une regle. Un modele qui decide d agir agit.
+        //
+        // Ce n est pas un risque theorique : ORION lit le web (web_browse, web_fetch). Une page
+        // peut contenir des instructions qui detournent le modele, et la requete resultante est
+        // parfaitement AUTHENTIFIEE — aucun controle d acces ne peut l arreter. Seule une regle
+        // placee ici, apres la decision du modele, le peut.
+        //
+        // On reutilise la file existante : elle sait deja demander confirmation, et le drainage
+        // refuse deja de rejouer une action destructive tout seul. Rien de nouveau a inventer.
+        if (tool.IsDestructive)
+        {
+            return await EnqueueAsync(tool, input, context, ct);
         }
 
         return await ExecuteAsync(tool, input, ct);
@@ -123,6 +143,11 @@ public class ToolInvoker : IToolInvoker
         ToolInvocationContext context,
         CancellationToken ct)
     {
+        // DEUX raisons distinctes de ne pas executer tout de suite, et le message doit dire
+        // laquelle : « ton PC est eteint » alors que le PC tourne serait un mensonge, et
+        // l utilisateur chercherait un probleme qui n existe pas.
+        var pcEteint = tool.RequiresDaemon && !_daemon.IsConnected;
+
         var now = DateTime.UtcNow;
         var action = new DeferredAction
         {
@@ -135,20 +160,37 @@ public class ToolInvoker : IToolInvoker
             ConversationId = context.ConversationId,
             RequestedBy = context.RequestedBy,
             RequestedAt = now,
-            ExpiresAt = now.AddHours(Math.Max(1, _options.DeferredTtlHours))
+            ExpiresAt = now.AddHours(Math.Max(1, _options.DeferredTtlHours)),
+
+            // PC allume + action destructive : ce n est pas le PC qu on attend, c est TOI.
+            // L etat le dit explicitement, sinon le drainage au reveil la traiterait comme une
+            // action simplement en retard.
+            // Destructif ET PC allume -> c est TOI qu on attend : AwaitingConfirmation.
+            // PC eteint -> c est le PC qu on attend : Pending. Le drainage passera l action en
+            // AwaitingConfirmation a son reveil, et lui seul sait si le PC est revenu. Marquer
+            // AwaitingConfirmation des maintenant la sortirait de la file de drainage, et une
+            // confirmation donnee PC eteint echouerait faute de daemon.
+            Status = tool.IsDestructive && !pcEteint
+                ? DeferredActionStatus.AwaitingConfirmation
+                : DeferredActionStatus.Pending
         };
 
         await _unitOfWork.DeferredActions.AddAsync(action, ct);
         await _unitOfWork.SaveChangesAsync(ct);
 
         _logger.LogInformation(
-            "[ToolInvoker] {ToolName} différé (destructif: {Destructif}) — expire le {Expiration:u}",
-            tool.Name, action.IsDestructive, action.ExpiresAt);
+            "[ToolInvoker] {ToolName} en attente ({Raison}) — expire le {Expiration:u}",
+            tool.Name, action.IsDestructive ? "confirmation" : "PC éteint", action.ExpiresAt);
 
-        var message = action.IsDestructive
-            ? $"Ton PC est éteint. J'ai noté « {tool.Name} » et je te le redemanderai à son réveil "
-              + "avant de le lancer — je ne rejoue pas une action qui modifie l'état sans te la remontrer."
-            : $"Ton PC est éteint. J'ai mis « {tool.Name} » en file et je le fais dès qu'il revient.";
+        var message = (action.IsDestructive, pcEteint) switch
+        {
+            (true, false) => $"« {tool.Name} » modifie l'état de ta machine — je ne le lance pas "
+                           + "sans ton accord. Confirme et je l'exécute.",
+            (true, true)  => $"Ton PC est éteint. J'ai noté « {tool.Name} » et je te le redemanderai "
+                           + "à son réveil avant de le lancer.",
+            _             => $"Ton PC est éteint. J'ai mis « {tool.Name} » en file et je le fais "
+                           + "dès qu'il revient."
+        };
 
         return ApiResponse<ToolResult>.SuccessResponse(ToolResult.SuccessResult(
             new

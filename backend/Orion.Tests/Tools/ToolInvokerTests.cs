@@ -196,4 +196,57 @@ public class ToolInvokerTests : IDisposable
                 ToolResult.SuccessResult(new { ok = true }, Name)));
         }
     }
+
+    // ── Garde-fou des actions irreversibles ────────────────────────────────────────────
+    //
+    // Avant, IsDestructive ne servait QUE PC eteint : PC allume, run_script partait
+    // immediatement. Le seul garde-fou etait une phrase du prompt systeme — une suggestion au
+    // modele, pas une regle. Et ORION lit le web : une page peut detourner le modele, et la
+    // requete qui en resulte est parfaitement AUTHENTIFIEE. Aucun controle d acces ne l arrete.
+
+    [Fact]
+    public async Task Outil_destructif_PC_ALLUME_ne_s_execute_PAS_sans_confirmation()
+    {
+        _daemon.Setup(d => d.IsConnected).Returns(true);   // le PC repond
+        var outil = new OutilFactice("run_script", requiresDaemon: true, deferrable: true, destructive: true);
+
+        var resultat = await Build(outil).InvokeAsync(
+            "run_script", new JsonObject { ["script"] = "rm -rf /" }, ToolInvocationContext.Direct);
+
+        Assert.False(outil.AEteExecute);                    // LE point du test
+        Assert.True(resultat.Data!.Success);                // le modele recoit une reponse, pas une erreur
+
+        var enAttente = Assert.Single(_context.DeferredActions);
+        Assert.Equal(DeferredActionStatus.AwaitingConfirmation, enAttente.Status);
+        Assert.True(enAttente.IsDestructive);
+    }
+
+    [Fact]
+    public async Task Outil_NON_destructif_PC_allume_s_execute_normalement()
+    {
+        // Le garde-fou ne doit pas transformer ORION en machine a confirmations : lire un
+        // fichier ou lister un dossier reste immediat.
+        _daemon.Setup(d => d.IsConnected).Returns(true);
+        var outil = new OutilFactice("read_file", requiresDaemon: true, deferrable: false);
+
+        await Build(outil).InvokeAsync("read_file", new JsonObject(), ToolInvocationContext.Direct);
+
+        Assert.True(outil.AEteExecute);
+        Assert.Empty(_context.DeferredActions);
+    }
+
+    [Fact]
+    public async Task Le_message_ne_pretend_PAS_que_le_PC_est_eteint_quand_il_tourne()
+    {
+        // Dire « ton PC est eteint » alors qu il tourne enverrait chercher un probleme qui
+        // n existe pas. Les deux raisons de mettre en file doivent se distinguer.
+        _daemon.Setup(d => d.IsConnected).Returns(true);
+        var outil = new OutilFactice("write_file", requiresDaemon: true, deferrable: true, destructive: true);
+
+        var resultat = await Build(outil).InvokeAsync("write_file", new JsonObject(), ToolInvocationContext.Direct);
+
+        var charge = System.Text.Json.JsonSerializer.Serialize(resultat.Data!.Data);
+        Assert.DoesNotContain("éteint", charge);
+        Assert.Contains("accord", charge);
+    }
 }
