@@ -80,6 +80,18 @@ var authOptions = builder.Configuration.GetSection(AuthOptions.SectionName).Get<
 // Le secret du daemon est lu ICI, une seule fois, et range dans AuthOptions comme le reste.
 // Avant, un `Environment.GetEnvironmentVariable` trainait au milieu d'un middleware : la
 // configuration d'authentification vivait a deux endroits sans rapport l'un avec l'autre.
+// ASP.NET journalise l URL COMPLETE de chaque requete (« Request starting GET /ws/voice?... »).
+// Le billet de flux s y retrouve donc EN CLAIR dans les journaux du conteneur — constate le
+// 2026-08-26, apres avoir cru la fuite fermee parce que nginx, lui, la masquait.
+//
+// Ces lignes sont une DUPLICATION : nginx journalise deja chaque requete, avec le jeton
+// remplace par ***. On coupe donc la copie non masquee plutot que d ecrire un filtre de plus.
+// Warning et non None : une exception non geree du pipeline doit rester visible.
+if (!builder.Environment.IsDevelopment())
+{
+    builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+}
+
 builder.Services.PostConfigure<AuthOptions>(o =>
     o.DaemonToken = Environment.GetEnvironmentVariable("DAEMON_WS_TOKEN") ?? o.DaemonToken);
 

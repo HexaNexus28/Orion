@@ -131,6 +131,35 @@ export const useVAD = (options: UseVADOptions = {}) => {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx({ sampleRate: SAMPLE_RATE });
 
+      // REPRISE OBLIGATOIRE, et c’est la panne qui a rendu ORION sourd sur téléphone.
+      //
+      // Le VAD démarre dans un useEffect au montage de la page, donc SANS geste utilisateur.
+      // Sur mobile, un AudioContext créé hors geste naît à l’état « suspended » et
+      // `onaudioprocess` ne se déclenche JAMAIS. Résultat observé le 2026-08-26 : micro
+      // autorisé, WebSocket accepté (101), indicateur « vad actif »… et pas un seul octet
+      // envoyé. Côté serveur : « Client connected », « Config: lang=fr », puis 60 s de silence.
+      //
+      // Rien ne signalait l’anomalie : ni erreur, ni permission refusée. Le contexte était
+      // simplement en pause, et personne ne le lisait.
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(() => { /* le navigateur exige un geste : traité juste après */ });
+      }
+
+      if (ctx.state === 'suspended') {
+        // Le navigateur refuse tant que l’utilisateur n’a rien touché. On le DIT — au lieu de
+        // rester sourd en silence — et on reprend au premier contact avec l’écran.
+        console.warn('[VAD] AudioContext suspendu — attente d’un geste utilisateur');
+        onError?.('Touche l’écran pour activer le micro.');
+
+        const reprendre = () => {
+          void ctx.resume().then(() => {
+            console.log('[VAD] AudioContext repris après geste');
+            onError?.('');   // message efface : le micro fonctionne
+          });
+        };
+        document.addEventListener('pointerdown', reprendre, { once: true });
+      }
+
       const source = ctx.createMediaStreamSource(stream);
       const processor = ctx.createScriptProcessor(BUFFER_SIZE, 1, 1);
       const mute = ctx.createGain();
