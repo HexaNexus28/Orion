@@ -37,10 +37,11 @@ import { authService } from './authService';
  * Cote serveur, /ws/voice figure dans OrionAuth.QueryTokenPaths — la liste FERMEE des seuls
  * chemins ou ce contournement est accepte.
  */
-function buildWsUrl(): string {
+async function buildWsUrl(): Promise<string> {
   const base = API_BASE.replace(/^http/, 'ws') + ENDPOINTS.voiceWS;
-  const token = authService.getToken();
-  return token ? `${base}?access_token=${encodeURIComponent(token)}` : base;
+  // BILLET, pas le jeton de session : ce qui part dans une URL doit expirer en une minute.
+  const billet = await authService.getStreamTicket();
+  return `${base}?access_token=${encodeURIComponent(billet)}`;
 }
 
 /** Message JSON reçu du backend sur /ws/voice. */
@@ -93,11 +94,15 @@ export class VoiceWebSocket {
     return this._isConnected;
   }
 
-  connect(): void {
+  /**
+   * Asynchrone parce qu il faut d abord obtenir un billet de flux. L appelant n a pas a
+   * l attendre : les rappels (onReady, onError) portent deja le resultat.
+   */
+  async connect(): Promise<void> {
     if (this.ws?.readyState === WebSocket.OPEN) return;
 
     try {
-      this.ws = new WebSocket(buildWsUrl());
+      this.ws = new WebSocket(await buildWsUrl());
       this.ws.binaryType = 'arraybuffer';
 
       this.ws.onopen = () => {
@@ -137,7 +142,13 @@ export class VoiceWebSocket {
         this._isConnected = false;
       };
     } catch (err) {
-      console.error('[VoiceWS] Failed to connect:', err);
+      // Passe ICI notamment quand le billet de flux est refuse (session absente ou expiree).
+      // Se contenter de journaliser laisserait un micro definitivement muet, sans rien a
+      // l ecran : le navigateur ne signale aucun echec puisque la connexion n a jamais ete
+      // tentee. On previent l interface ET on replanifie.
+      console.error('[VoiceWS] Connexion impossible :', err);
+      this._isConnected = false;
+      this.scheduleReconnect();
     }
   }
 
@@ -289,7 +300,9 @@ export class VoiceWebSocket {
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       console.log(`[VoiceWS] Reconnexion (tentative ${this.echecsConsecutifs})...`);
-      this.connect();
+      // Chaque reconnexion redemande un billet FRAIS — celui de la tentative precedente a
+      // expire depuis longtemps.
+      void this.connect();
     }, delai);
   }
 }

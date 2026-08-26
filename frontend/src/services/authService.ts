@@ -57,6 +57,36 @@ export const authService = {
     localStorage.setItem(EXPIRY_KEY, data.data.expiresAt);
   },
 
+  /**
+   * Billet de flux — jeton de 60 secondes, seul autorise a voyager dans une URL.
+   *
+   * SSE et WebSocket de navigateur ne peuvent porter aucun en-tete : leur jeton doit passer
+   * par l URL. Or une URL finit dans les journaux du serveur, ceux du CDN, l historique et le
+   * Referer. Y mettre le jeton de session — valable 30 jours — revenait a le publier ; il a
+   * ete retrouve en clair dans access.log le 2026-08-26.
+   *
+   * A demander JUSTE AVANT d ouvrir le flux, et a redemander a CHAQUE reconnexion : un billet
+   * expire ne rouvre rien.
+   *
+   * Instance axios NUE, comme login() : passer par apiClient ferait boucler l intercepteur
+   * si le serveur repondait 401.
+   */
+  async getStreamTicket(): Promise<string> {
+    const token = authService.getToken();
+    if (!token) throw new Error("Session absente");
+
+    const { data } = await axios.post<{ success: boolean; data: LoginResult; message?: string }>(
+      `${API_BASE}/api/auth/stream-ticket`,
+      {},
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 15000 }
+    );
+
+    if (!data.success || !data.data?.token) {
+      throw new Error(data.message || "Billet de flux refuse");
+    }
+    return data.data.token;
+  },
+
   logout(): void {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(EXPIRY_KEY);

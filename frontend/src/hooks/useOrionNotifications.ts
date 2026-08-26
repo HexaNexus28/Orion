@@ -85,47 +85,79 @@ export const useOrionNotifications = () => {
   }, [sendAction]);
 
   useEffect(() => {
-    // EventSource ne permet AUCUN en-tete personnalise — limite du navigateur, pas un choix.
-    // Le jeton passe donc en parametre d URL, et le backend l accepte sur ce chemin precis.
-    // C est moins elegant qu un en-tete, mais l alternative serait un flux non authentifie.
-    const token = authService.getToken();
-    const eventSource = new EventSource(
-      `${API_BASE}/api/proactivenotification/stream${token ? `?access_token=${encodeURIComponent(token)}` : ''}`
-    );
+    // Reconnexion REPRISE A LA MAIN, et ce n est pas un raffinement.
+    //
+    // EventSource se reconnecte tout seul — sur la MEME URL, donc avec le meme billet. Un
+    // billet vivant 60 secondes, cette reconnexion automatique echouerait indefiniment des la
+    // premiere coupure : le flux serait mort sans qu aucune erreur ne le dise. On ferme donc
+    // nous-memes et on rouvre avec un billet FRAIS.
+    let source: EventSource | null = null;
+    let minuteur: ReturnType<typeof setTimeout> | null = null;
+    let echecs = 0;
+    let abandonne = false;
 
-    eventSource.addEventListener('connected', (event) => {
-      const data: ConnectionStatus = JSON.parse(event.data);
-      setClientId(data.clientId);
-      setIsConnected(true);
-      console.log('[useOrionNotifications] Connected:', data.clientId);
-    });
-
-    eventSource.addEventListener('notification', (event) => {
+    const ouvrir = async () => {
+      if (abandonne) return;
       try {
-        const notification: OrionNotification = JSON.parse(event.data);
-        setLastNotification(notification);
-        console.log('[useOrionNotifications] Received:', notification.title);
+        const billet = await authService.getStreamTicket();
+        if (abandonne) return;
 
-        // Parler si demandé
-        if (notification.speak && notification.message) {
-          speak(notification.message);
-        }
+        source = new EventSource(
+          `${API_BASE}/api/proactivenotification/stream?access_token=${encodeURIComponent(billet)}`
+        );
+
+        source.addEventListener("connected", (event) => {
+          const data: ConnectionStatus = JSON.parse((event as MessageEvent).data);
+          setClientId(data.clientId);
+          setIsConnected(true);
+          echecs = 0;   // palier remis a zero seulement sur une connexion REELLEMENT etablie
+          console.log("[useOrionNotifications] Connecte :", data.clientId);
+        });
+
+        source.addEventListener("notification", (event) => {
+          try {
+            const notification: OrionNotification = JSON.parse((event as MessageEvent).data);
+            setLastNotification(notification);
+            if (notification.speak && notification.message) {
+              speak(notification.message);
+            }
+          } catch (err) {
+            console.error("[useOrionNotifications] Notification illisible :", err);
+          }
+        });
+
+        source.addEventListener("heartbeat", () => { /* connexion vivante */ });
+
+        source.onerror = () => {
+          setIsConnected(false);
+          source?.close();   // sinon EventSource retenterait seul, avec le billet perime
+          source = null;
+          replanifier();
+        };
       } catch (err) {
-        console.error('[useOrionNotifications] Failed to parse notification:', err);
+        // Billet refuse = session invalide. assertSessionValide ne s applique pas ici (axios
+        // nu), mais l intercepteur d apiClient s en chargera au premier appel normal.
+        console.warn("[useOrionNotifications] Billet de flux indisponible :", err);
+        setIsConnected(false);
+        replanifier();
       }
-    });
-
-    eventSource.addEventListener('heartbeat', () => {
-      // Connection alive
-    });
-
-    eventSource.onerror = () => {
-      setIsConnected(false);
-      console.error('[useOrionNotifications] SSE connection lost');
     };
 
+    const replanifier = () => {
+      if (abandonne || minuteur) return;
+      echecs += 1;
+      // Palier plafonne a 30 s : une session invalide ne se repare pas toute seule, inutile
+      // de marteler le serveur toutes les secondes en attendant.
+      const delai = Math.min(2000 * 2 ** (echecs - 1), 30000);
+      minuteur = setTimeout(() => { minuteur = null; void ouvrir(); }, delai);
+    };
+
+    void ouvrir();
+
     return () => {
-      eventSource.close();
+      abandonne = true;
+      if (minuteur) clearTimeout(minuteur);
+      source?.close();
       setIsConnected(false);
     };
   }, [speak]);

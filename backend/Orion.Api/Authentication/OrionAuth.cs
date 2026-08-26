@@ -37,6 +37,35 @@ public static class OrionAuth
     public const string DaemonScheme = "Daemon";
     public const string DaemonTokenHeader = "X-Daemon-Token";
 
+    public const string Issuer = "orion";
+
+    /// <summary>Audience des jetons de session (en-tete Authorization).</summary>
+    public const string Audience = "orion";
+
+    /// <summary>
+    /// Audience des BILLETS DE FLUX — les seuls jetons autorises a voyager dans une URL.
+    ///
+    /// Une audience distincte, et pas seulement une duree courte : elle rend les deux jetons
+    /// NON INTERCHANGEABLES. Un billet ne peut pas servir d en-tete Authorization sur le reste
+    /// de l API, et un jeton de session ne peut pas etre colle dans une URL. Sans cette
+    /// separation, raccourcir la duree n empecherait rien : il suffirait d utiliser le jeton
+    /// de session la ou le billet est attendu, et la fuite par l URL reviendrait.
+    /// </summary>
+    public const string StreamAudience = "orion-stream";
+
+    /// <summary>
+    /// 60 secondes. Le billet ne sert qu a OUVRIR le flux ; une fois la connexion etablie,
+    /// elle vit aussi longtemps qu elle veut — l expiration ne la coupe pas. Cette duree n a
+    /// donc besoin de couvrir qu un aller-retour reseau, pas la session.
+    /// </summary>
+    public const int StreamTicketLifetimeSeconds = 60;
+
+    /// <summary>
+    /// Marque, posee sur la requete, indiquant que le jeton vient de l URL et non d un en-tete.
+    /// C est ce qui permet de refuser un jeton de session presente dans une URL.
+    /// </summary>
+    public const string TokenVenuDeLUrl = "orion.jeton.url";
+
     public const string OwnerRole = "owner";
     public const string DaemonRole = "daemon";
 

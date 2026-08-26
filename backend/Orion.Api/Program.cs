@@ -1,3 +1,5 @@
+using System.IdentityModel.Tokens.Jwt;
+using Microsoft.IdentityModel.JsonWebTokens;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
@@ -102,8 +104,11 @@ builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
             ValidateAudience = true,
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            ValidIssuer = "orion",
-            ValidAudience = "orion",
+            ValidIssuer = OrionAuth.Issuer,
+            // DEUX audiences acceptees ici, mais PAS interchangeables : OnTokenValidated verifie
+            // ensuite que chacune est utilisee la ou elle doit l etre. Sans cette seconde etape,
+            // declarer les deux audiences reviendrait a les rendre equivalentes.
+            ValidAudiences = new[] { OrionAuth.Audience, OrionAuth.StreamAudience },
             // Explicite : c.est ce claim que lisent `RequireRole` et le garde WebSocket. Le laisser
             // implicite marcherait par defaut, mais un echec de mappage se traduirait par un 403
             // partout, sans message — le genre de panne qu.on cherche pendant une heure.
@@ -127,7 +132,46 @@ builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
                     OrionAuth.AllowsQueryToken(context.HttpContext.Request.Path))
                 {
                     context.Token = accessToken;
+                    // Marque indispensable a OnTokenValidated : sans elle, impossible de
+                    // distinguer un jeton lu dans l URL d un jeton lu dans l en-tete.
+                    context.HttpContext.Items[OrionAuth.TokenVenuDeLUrl] = true;
                 }
+                return Task.CompletedTask;
+            },
+
+            // Le jeton de session ne doit JAMAIS voyager dans une URL : une URL finit dans les
+            // journaux du serveur, ceux du CDN, l historique du navigateur et l en-tete Referer.
+            // Constate en production le 2026-08-26 — un jeton valide 30 jours en clair dans
+            // access.log. Seul un BILLET DE FLUX, valable une minute, a le droit d y figurer.
+            //
+            // Le controle vaut dans LES DEUX SENS, et c est ce qui le rend efficace :
+            //   - jeton de session dans l URL  -> refuse (force l usage du billet)
+            //   - billet hors d un chemin de flux -> refuse (un billet vole ne donne acces a rien)
+            OnTokenValidated = context =>
+            {
+                // Depuis .NET 8, JwtBearer valide avec JsonWebTokenHandler : SecurityToken est
+                // un JsonWebToken, PAS un JwtSecurityToken. Un simple `as JwtSecurityToken`
+                // renvoyait null, donc une liste d audiences VIDE, donc estBillet toujours faux
+                // — le controle etait inerte dans un sens et un billet passait comme jeton de
+                // session. On accepte les deux types plutot que de parier sur le handler actif.
+                var audiences = context.SecurityToken switch
+                {
+                    JsonWebToken jwt        => jwt.Audiences,
+                    JwtSecurityToken ancien => ancien.Audiences,
+                    _                       => Enumerable.Empty<string>()
+                };
+                var estBillet = audiences.Contains(OrionAuth.StreamAudience);
+                var venuDeLUrl = context.HttpContext.Items.ContainsKey(OrionAuth.TokenVenuDeLUrl);
+
+                if (estBillet && !venuDeLUrl)
+                {
+                    context.Fail("Un billet de flux ne peut pas servir de jeton de session.");
+                }
+                else if (!estBillet && venuDeLUrl)
+                {
+                    context.Fail("Le jeton de session ne peut pas voyager dans une URL — utiliser un billet de flux.");
+                }
+
                 return Task.CompletedTask;
             }
         };
