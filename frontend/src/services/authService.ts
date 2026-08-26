@@ -62,3 +62,36 @@ export const authService = {
     localStorage.removeItem(EXPIRY_KEY);
   },
 };
+
+/**
+ * En-tetes d authentification pour un appel fetch().
+ *
+ * fetch() est OBLIGATOIRE partout ou l on lit un ReadableStream (chat en flux, voix binaire) :
+ * axios ne sait pas le faire. Mais ces appels echappent donc a l intercepteur d apiClient, et
+ * chaque site d appel doit poser le jeton LUI-MEME. Le centraliser ici evite qu un nouvel appel
+ * parte sans Authorization — c est exactement ce qui avait rendu le chat muet sur telephone.
+ */
+export function fetchAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  const headers: Record<string, string> = { ...extra };
+  const token = authService.getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+/**
+ * Garde de session pour une reponse fetch(). Leve si la session est invalide.
+ *
+ * Meme role que l intercepteur d apiClient, pour les appels qui ne passent pas par lui. Sans
+ * lui, un jeton perime laisse l interface afficher "Stream failed: 401" indefiniment, sans
+ * jamais proposer de se reconnecter.
+ *
+ * 403 compte AUSSI : un jeton emis avant l ajout du role `owner` est refuse ainsi, et le front
+ * n appelle aucune route reservee au daemon — un 403 ne peut donc venir que de la session.
+ */
+export function assertSessionValide(response: Response): void {
+  if (response.status === 401 || response.status === 403) {
+    authService.logout();
+    window.dispatchEvent(new CustomEvent("orion:unauthenticated"));
+    throw new Error("Session expiree — reconnexion necessaire");
+  }
+}

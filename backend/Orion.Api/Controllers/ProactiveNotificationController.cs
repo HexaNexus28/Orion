@@ -74,6 +74,13 @@ public class ProactiveNotificationController : ControllerBase
         Response.Headers.Append("Cache-Control", "no-cache");
         Response.Headers.Append("Connection", "keep-alive");
 
+        // Sans cet en-tete, nginx TAMPONNE la reponse : par defaut proxy_buffering est actif,
+        // donc il accumule le flux au lieu de le transmettre. Les evenements — battements de
+        // coeur compris — restaient bloques dans son tampon, et les notifications proactives
+        // n arrivaient jamais en temps reel. ChatController le posait deja ; celui-ci l avait
+        // oublie, et le defaut ne se voit que derriere un proxy, jamais en developpement.
+        Response.Headers["X-Accel-Buffering"] = "no";
+
         var clientId = Guid.NewGuid().ToString();
         _clients.TryAdd(clientId, Response);
         _logger.LogInformation("[NotificationStream] Client {ClientId} connected", clientId);

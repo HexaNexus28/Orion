@@ -1,5 +1,5 @@
 // Voice API Service - Uses apiClient and endpoints.ts (Pattern ORION)
-import { authService } from './authService';
+import { assertSessionValide, fetchAuthHeaders } from './authService';
 import { API_BASE, ENDPOINTS } from '../config/endpoints';
 import { apiClient } from './api';
 import type { ApiResponse } from '../types';
@@ -221,17 +221,15 @@ export const converseStream = async (
 
   // fetch() is required for streaming binary response (axios does not support ReadableStream).
   // Propagate auth headers from apiClient to maintain consistent auth behavior.
-  const headers: Record<string, string> = {};
-  // Jeton lu a la SOURCE : l intercepteur d apiClient ne couvre pas les appels fetch,
-  // et defaults.headers.common est vide. Voir chatService pour le detail.
-  const token = authService.getToken();
-  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const headers = fetchAuthHeaders();
 
   const response = await fetch(url, {
     method: 'POST',
     headers,
     body: formData,
   });
+
+  assertSessionValide(response);
 
   if (!response.ok) {
     throw new Error(`Converse failed: ${response.status}`);
