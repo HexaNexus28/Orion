@@ -55,6 +55,14 @@ public class VoxtralTranscriptionService : IWhisperService
         {
             var client = _httpFactory.CreateClient(HttpClientName);
 
+            // Pose ICI et non a l enregistrement du client : la fabrique construit ses clients
+            // au demarrage, avant que PostConfigure n ait repli la cle depuis Embedding:ApiKey.
+            // Un en-tete fige a ce moment-la partirait vide — c est exactement ce qui s est
+            // produit en production le 2026-08-27 : « 401 Invalid API Key », et la cascade a
+            // bascule sur Whisper local sans que la voix ne tombe.
+            client.DefaultRequestHeaders.Authorization =
+                new AuthenticationHeaderValue("Bearer", _options.ApiKey);
+
             using var form = new MultipartFormDataContent();
             var filePart = new ByteArrayContent(audioData);
             filePart.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");

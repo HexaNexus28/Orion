@@ -1,351 +1,198 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
+import { MicVAD } from '@ricky0123/vad-web';
 import { encodeWav } from '../services/voiceApi';
-import { PROCESSOR_NAME, workletUrl } from '../audio/vadWorklet';
 
 interface UseVADOptions {
   onSpeechStart?: () => void;
   onSpeechEnd?: (audio: Float32Array) => void;
   onAudioReady?: (blob: Blob) => void;
-  onAudioChunk?: (pcm16: Int16Array) => void; // Streaming: called during speech with PCM int16 chunks
+  onAudioChunk?: (pcm16: Int16Array) => void;
   onAmplitude?: (amplitude: number) => void;
   onError?: (error: string) => void;
 }
 
 /**
- * useVAD — Voice Activity Detection par amplitude (Web Audio API)
+ * useVAD — détection de parole par MODÈLE (Silero v5), plus par volume.
  *
- * Pas de dépendances ONNX/WASM. Détection fiable via RMS.
- * Pipeline :
- *   getUserMedia → AudioWorklet (fil audio) → RMS > seuil → speech
- *   Silence SILENCE_TIMEOUT_MS → onSpeechEnd(Float32Array PCM 16kHz)
+ * CE QUI A CHANGÉ. La version précédente comparait l'énergie RMS d'un bloc à un seuil fixe de
+ * 0,015. Un seuil d'énergie ne distingue pas une voix d'un bruit : une porte, la télévision, une
+ * conversation à côté déclenchaient un tour complet — transcription, modèle, réponse vocale —
+ * pour du vide. Et le réglage était intenable : trop bas il partait sur tout, trop haut il ratait
+ * une phrase prononcée doucement. Aucune valeur ne marche pour les deux.
+ *
+ * Silero répond à une autre question : « est-ce de la PAROLE HUMAINE ? », avec une probabilité par
+ * tranche de 30 ms. Le volume n'entre plus en compte — on peut chuchoter, et la télévision ne
+ * déclenche plus rien.
+ *
+ * Le modèle était DÉJÀ dans le dépôt : public/vad/silero_vad_v5.onnx et son moteur ONNX, 81 Mo
+ * embarqués dans chaque image depuis des mois, jamais appelés. Le code chargeait à la place un
+ * détecteur d'énergie écrit à la main. Ici on branche ce qui existait.
+ *
+ * Le contrat du hook est INCHANGÉ : App.tsx ne bouge pas.
  */
 
-const SPEECH_THRESHOLD = 0.015;   // RMS amplitude — ajuster si trop/peu sensible
-const SILENCE_TIMEOUT_MS = 700;   // Silence avant de clôturer la prise (700ms pour conversation naturelle)
-const MIN_SPEECH_MS = 250;        // Durée min pour ne pas déclencher sur un bruit court
+// Servis depuis public/vad : aucun téléchargement au premier usage, aucune dépendance à un CDN,
+// et le service worker les précharge déjà.
+const ASSET_PATH = '/vad/';
+
+/**
+ * Probabilité minimale pour déclarer « c'est de la parole ».
+ *
+ * 0,5 est la valeur de référence de Silero. Contrairement à un seuil d'énergie, elle ne dépend NI
+ * du micro, NI de la distance, NI du volume — seulement de la confiance du modèle. C'est ce qui la
+ * rend transposable d'un appareil à l'autre sans réglage.
+ */
+const POSITIVE_SPEECH_THRESHOLD = 0.5;
+const NEGATIVE_SPEECH_THRESHOLD = 0.35;
+
+// Silence toléré à l'intérieur d'une phrase avant de clore la prise. 24 tranches ≈ 770 ms : assez
+// pour respirer au milieu d'une phrase, assez peu pour faire attendre.
+const REDEMPTION_FRAMES = 24;
+
+// En dessous, c'est un bruit bref classé parole par erreur — ignoré au lieu de lancer un tour
+// complet. 9 tranches ≈ 290 ms.
+const MIN_SPEECH_FRAMES = 9;
+
 const SAMPLE_RATE = 16000;
-
-// 2048 échantillons à 16 kHz = 128 ms par bloc.
-// Le RMS est calculé sur le bloc ENTIER : avec des blocs de 256 ms, un mot qui démarre en milieu
-// de bloc voit son énergie diluée par le silence qui précède, et le bloc est classé « silence ».
-const BUFFER_SIZE = 2048;
-
-// Pré-roll : blocs conservés en permanence AVANT la détection de parole.
-// Sans lui, l'attaque du premier mot est perdue — le seuil RMS n'est franchi qu'une fois la
-// voyelle installée. « Ouvre Notepad » arrivait en « ...vre Notepad » côté Whisper.
-// 4 blocs x 128 ms = 512 ms d'historique, largement de quoi couvrir une attaque de mot.
-const PREROLL_CHUNKS = 4;
 
 export const useVAD = (options: UseVADOptions = {}) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [isListening, setIsListening] = useState(false);
 
-  const audioCtxRef = useRef<AudioContext | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
-  const processorRef = useRef<AudioWorkletNode | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const samplesRef = useRef<Float32Array[]>([]);
-  const prerollRef = useRef<Float32Array[]>([]);
-  const silenceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const speechStartTs = useRef<number | null>(null);
-  const speakingRef = useRef(false);
+  const vadRef = useRef<MicVAD | null>(null);
   const listeningRef = useRef(false);
+  const startingRef = useRef(false);
 
-  const { onSpeechStart, onSpeechEnd, onAudioReady, onAudioChunk, onAmplitude, onError } = options;
-
-  const clearSilence = useCallback(() => {
-    if (silenceTimer.current !== null) {
-      clearTimeout(silenceTimer.current);
-      silenceTimer.current = null;
-    }
-  }, []);
-
-  const finalizeSpeech = useCallback(() => {
-    if (!speakingRef.current) return;
-
-    const duration = speechStartTs.current ? Date.now() - speechStartTs.current : 0;
-    speakingRef.current = false;
-    speechStartTs.current = null;
-    setIsSpeaking(false);
-
-    if (duration < MIN_SPEECH_MS) {
-      samplesRef.current = [];
-      console.log('[VAD] Prise trop courte, ignorée');
-      return;
-    }
-
-    const totalLen = samplesRef.current.reduce((acc, s) => acc + s.length, 0);
-    const combined = new Float32Array(totalLen);
-    let offset = 0;
-    for (const chunk of samplesRef.current) {
-      combined.set(chunk, offset);
-      offset += chunk.length;
-    }
-    samplesRef.current = [];
-
-    console.log('[VAD] onSpeechEnd — durée:', duration, 'ms | samples:', combined.length);
-    onSpeechEnd?.(combined);
-
-    const wav = encodeWav(combined, SAMPLE_RATE);
-    console.log('[VAD] WAV encodé:', wav.size, 'bytes');
-    onAudioReady?.(wav);
-  }, [onSpeechEnd, onAudioReady]);
+  // Rappels dans une ref : les recréer changerait `start` à chaque rendu, et MicVAD serait détruit
+  // puis reconstruit — avec un nouveau getUserMedia à chaque fois.
+  const cbRef = useRef(options);
+  cbRef.current = options;
 
   const start = useCallback(async () => {
-    if (listeningRef.current) return;
-
-    // Declaree ICI et non dans le try : le catch doit pouvoir la journaliser a cote de
-    // l erreur reelle. Quand les deux divergent, c est l API de permissions qui se trompe.
-    let etatPermission = 'inconnu';
+    if (listeningRef.current || startingRef.current) return;
+    startingRef.current = true;
 
     try {
-      console.log('[VAD] Démarrage écoute...');
+      console.log('[VAD] Démarrage — modèle Silero v5');
 
-      // Diagnostic explicite de l'autorisation micro.
-      // Sans ça, un micro refusé — ou une invite jamais validée — laisse `getUserMedia` en
-      // attente indéfinie : ORION reste silencieusement sourd et l'interface se contente
-      // d'afficher « vad inactif », sans jamais dire pourquoi. Observé au test Playwright.
-      // L’API de permissions est CONSULTÉE, jamais obéie.
-      //
-      // Avant, un état « denied » provoquait un `return` : getUserMedia n’était même pas
-      // tenté. Or cette API est indicative et se trompe — elle rapporte « denied » quand la
-      // permission a été réinitialisée, quand aucun périphérique par défaut n’est défini, ou
-      // quand le blocage vient de Windows et non du site. Résultat observé le 2026-08-26 :
-      // micro autorisé côté navigateur, et ORION refusait de tenter quoi que ce soit.
-      //
-      // La seule autorité, c’est getUserMedia. On l’appelle TOUJOURS ; l’état de permission ne
-      // sert plus qu’à rendre le message d’erreur exact.
-      if (navigator.permissions?.query) {
-        try {
-          const p = await navigator.permissions.query({ name: 'microphone' as PermissionName });
-          etatPermission = p.state;
-          console.log('[VAD] Permission déclarée :', p.state, '— on tente quand même');
-        } catch {
-          // API indisponible (Safari) : sans importance, on tente de toute façon.
-        }
-      }
+      const vad = await MicVAD.new({
+        model: 'v5',
+        baseAssetPath: ASSET_PATH,
+        onnxWASMBasePath: ASSET_PATH,
 
-      // Périphériques visibles : « aucun micro » et « micro refusé » sont deux pannes
-      // différentes qui produisaient jusqu’ici le même message inutile.
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const mics = devices.filter(d => d.kind === 'audioinput');
-        console.log('[VAD] Micros détectés :', mics.length);
-        if (mics.length === 0) {
-          onError?.("Aucun microphone détecté sur cet appareil.");
-          return;
-        }
-      } catch {
-        // Enumération refusée : on tente quand même getUserMedia.
-      }
+        positiveSpeechThreshold: POSITIVE_SPEECH_THRESHOLD,
+        negativeSpeechThreshold: NEGATIVE_SPEECH_THRESHOLD,
+        redemptionFrames: REDEMPTION_FRAMES,
+        minSpeechFrames: MIN_SPEECH_FRAMES,
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: SAMPLE_RATE,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
+        onSpeechStart: () => {
+          setIsSpeaking(true);
+          console.log('[VAD] Parole détectée');
+          cbRef.current.onSpeechStart?.();
+        },
+
+        onSpeechEnd: (audio: Float32Array) => {
+          setIsSpeaking(false);
+          console.log('[VAD] Fin de prise —', audio.length, 'échantillons');
+
+          // La prise complète part en une fois. Le découpage en continu ne servait que parce que
+          // la transcription locale mettait cinq secondes : on recouvrait la parole et le calcul.
+          // Avec Voxtral à 0,35 s ce recouvrement ne rapporte plus rien, et coûtait une machine à
+          // états de plus.
+          cbRef.current.onAudioChunk?.(floatTo16BitPCM(audio));
+          cbRef.current.onSpeechEnd?.(audio);
+          cbRef.current.onAudioReady?.(encodeWav(audio, SAMPLE_RATE));
+        },
+
+        onVADMisfire: () => {
+          setIsSpeaking(false);
+          console.log('[VAD] Bruit bref ignoré');
+        },
+
+        onFrameProcessed: (probabilities) => {
+          // On remonte la PROBABILITÉ DE PAROLE, plus le volume. L'indicateur dit enfin « ORION
+          // pense que tu parles » au lieu de « il y a du son quelque part ».
+          cbRef.current.onAmplitude?.(probabilities.isSpeech);
         },
       });
 
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      const ctx = new AudioCtx({ sampleRate: SAMPLE_RATE });
-
-      // REPRISE OBLIGATOIRE, et c’est la panne qui a rendu ORION sourd sur téléphone.
-      //
-      // Le VAD démarre dans un useEffect au montage de la page, donc SANS geste utilisateur.
-      // Sur mobile, un AudioContext créé hors geste naît à l’état « suspended » et
-      // `onaudioprocess` ne se déclenche JAMAIS. Résultat observé le 2026-08-26 : micro
-      // autorisé, WebSocket accepté (101), indicateur « vad actif »… et pas un seul octet
-      // envoyé. Côté serveur : « Client connected », « Config: lang=fr », puis 60 s de silence.
-      //
-      // Rien ne signalait l’anomalie : ni erreur, ni permission refusée. Le contexte était
-      // simplement en pause, et personne ne le lisait.
-      if (ctx.state === 'suspended') {
-        await ctx.resume().catch(() => { /* le navigateur exige un geste : traité juste après */ });
-      }
-
-      if (ctx.state === 'suspended') {
-        // Le navigateur refuse tant que l’utilisateur n’a rien touché. On le DIT — au lieu de
-        // rester sourd en silence — et on reprend au premier contact avec l’écran.
-        console.warn('[VAD] AudioContext suspendu — attente d’un geste utilisateur');
-        onError?.('Touche l’écran pour activer le micro.');
-
-        const resumeOnGesture = () => {
-          void ctx.resume().then(() => {
-            console.log('[VAD] AudioContext repris après geste');
-            onError?.('');   // message efface : le micro fonctionne
-          });
-        };
-        document.addEventListener('pointerdown', resumeOnGesture, { once: true });
-      }
-
-      audioCtxRef.current = ctx;
-
-      // La fréquence RÉELLE peut différer de celle demandée : sur beaucoup d’appareils Android,
-      // `sampleRate: 16000` est ignoré silencieusement et le contexte tourne à 48 kHz. L’audio
-      // partirait alors à 48 kHz en étant ANNONCÉ à 16 kHz — Whisper ne transcrirait que du
-      // charabia, ou rien. On refuse de deviner : on le constate et on le dit.
-      if (ctx.sampleRate !== SAMPLE_RATE) {
-        console.warn(`[VAD] Fréquence réelle ${ctx.sampleRate} Hz au lieu de ${SAMPLE_RATE} Hz`);
-      }
-
-      await ctx.audioWorklet.addModule(workletUrl());
-
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = new AudioWorkletNode(ctx, PROCESSOR_NAME, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        processorOptions: { size: BUFFER_SIZE },
-      });
-      const mute = ctx.createGain();
-      mute.gain.value = 0;
-
-      processor.port.onmessage = (event: MessageEvent<{ rms: number; block: Float32Array }>) => {
-        if (!listeningRef.current) return;
-
-        const { rms, block: data } = event.data;
-
-        onAmplitude?.(Math.min(1, rms / 0.1));
-
-        if (rms > SPEECH_THRESHOLD) {
-          if (!speakingRef.current) {
-            speakingRef.current = true;
-            speechStartTs.current = Date.now();
-            setIsSpeaking(true);
-            onSpeechStart?.();
-            console.log('[VAD] Parole détectée — RMS:', rms.toFixed(4));
-
-            // Rejoue le pré-roll : sans lui le début du premier mot est perdu.
-            samplesRef.current = [...prerollRef.current];
-            if (onAudioChunk) {
-              for (const buffered of prerollRef.current) {
-                onAudioChunk(floatTo16BitPCM(buffered));
-              }
-            }
-            prerollRef.current = [];
-          }
-          clearSilence();
-          const chunk = new Float32Array(data);
-          samplesRef.current.push(chunk);
-          // Stream PCM int16 to WebSocket in real-time
-          if (onAudioChunk) {
-            const int16 = floatTo16BitPCM(chunk);
-            onAudioChunk(int16);
-          }
-        } else if (!speakingRef.current) {
-          // Silence : on garde une fenêtre glissante pour le prochain démarrage de parole.
-          prerollRef.current.push(new Float32Array(data));
-          if (prerollRef.current.length > PREROLL_CHUNKS) prerollRef.current.shift();
-        } else if (speakingRef.current) {
-          const chunk = new Float32Array(data);
-          samplesRef.current.push(chunk);
-          if (onAudioChunk) {
-            const int16 = floatTo16BitPCM(chunk);
-            onAudioChunk(int16);
-          }
-          if (silenceTimer.current === null) {
-            silenceTimer.current = setTimeout(() => {
-              clearSilence();
-              console.log('[VAD] Silence → fin de prise');
-              finalizeSpeech();
-            }, SILENCE_TIMEOUT_MS);
-          }
-        }
-      };
-
-      source.connect(processor);
-      processor.connect(mute);
-      mute.connect(ctx.destination);
-
-      audioCtxRef.current = ctx;
-      sourceRef.current = source;
-      processorRef.current = processor;
-      streamRef.current = stream;
+      vad.start();
+      vadRef.current = vad;
       listeningRef.current = true;
       setIsListening(true);
-
       console.log('[VAD] Écoute active ✓');
     } catch (err) {
-      // getUserMedia distingue precisement les causes, contrairement a l API de permissions.
-      // Les confondre sous un seul message envoyait chercher au mauvais endroit.
+      // MicVAD appelle getUserMedia en interne : mêmes causes, mêmes distinctions. Les confondre
+      // sous un seul message envoyait chercher au mauvais endroit.
       const errorName = err instanceof DOMException ? err.name : 'Erreur';
       const msg =
-        errorName === 'NotAllowedError'  ? 'Micro bloqué par le navigateur — clique le cadenas à gauche de l’URL, mets Microphone sur « Autoriser », puis recharge.'
-      : errorName === 'NotFoundError'    ? 'Aucun microphone trouvé — vérifie qu’il est branché et activé dans Windows.'
-      : errorName === 'NotReadableError' ? 'Micro occupé par une autre application — ferme Teams, Discord ou un onglet qui l’utilise.'
-      : errorName === 'SecurityError'    ? 'Capture audio interdite dans ce contexte (connexion non sécurisée ?).'
-      : (err instanceof Error ? err.message : 'Accès microphone impossible');
+        errorName === 'NotAllowedError'
+          ? "Micro bloqué par le navigateur — clique le cadenas à gauche de l'URL, mets Microphone sur « Autoriser », puis recharge."
+          : errorName === 'NotFoundError'
+            ? "Aucun microphone trouvé — vérifie qu'il est branché et activé dans Windows."
+            : errorName === 'NotReadableError'
+              ? "Micro occupé par une autre application — ferme Teams, Discord ou un onglet qui l'utilise."
+              : errorName === 'SecurityError'
+                ? 'Capture audio interdite dans ce contexte (connexion non sécurisée ?).'
+                : err instanceof Error
+                  ? err.message
+                  : 'Accès microphone impossible';
 
-      // L etat declare par l API est journalise A COTE de l erreur reelle : quand les deux
-      // divergent (declare 'denied', getUserMedia reussit), c est l API qui se trompe.
-      console.error('[VAD] Erreur démarrage —', errorName, '| permission déclarée :', etatPermission, err);
-      onError?.(msg);
-      throw err;   // l’appelant DOIT savoir que ça a échoué — cf. « Écoute passive active » mensonger
+      console.error('[VAD] Erreur démarrage —', errorName, err);
+      cbRef.current.onError?.(msg);
+      throw err; // l'appelant DOIT savoir que ça a échoué
+    } finally {
+      startingRef.current = false;
     }
-  }, [onSpeechStart, onSpeechEnd, onAudioReady, onAudioChunk, onAmplitude, onError, clearSilence, finalizeSpeech]);
+  }, []);
 
   const pause = useCallback(() => {
+    vadRef.current?.pause();
     listeningRef.current = false;
-    clearSilence();
-    if (speakingRef.current) finalizeSpeech();
     setIsListening(false);
     setIsSpeaking(false);
-  }, [clearSilence, finalizeSpeech]);
+  }, []);
+
+  const resume = useCallback(() => {
+    if (!vadRef.current) return;
+    vadRef.current.start();
+    listeningRef.current = true;
+    setIsListening(true);
+  }, []);
 
   const destroy = useCallback(() => {
+    vadRef.current?.destroy();
+    vadRef.current = null;
     listeningRef.current = false;
-    speakingRef.current = false;
-    clearSilence();
-
-    processorRef.current?.disconnect();
-    sourceRef.current?.disconnect();
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    audioCtxRef.current?.close().catch(() => { });
-
-    audioCtxRef.current = null;
-    sourceRef.current = null;
-    processorRef.current = null;
-    streamRef.current = null;
-    samplesRef.current = [];
-    prerollRef.current = [];
-    speechStartTs.current = null;
-
     setIsListening(false);
     setIsSpeaking(false);
-  }, [clearSilence]);
+  }, []);
 
-  const reset = useCallback(() => { destroy(); }, [destroy]);
-
-  const resume = useCallback(async () => {
-    if (!audioCtxRef.current) {
-      await start();
-    } else {
-      listeningRef.current = true;
-      setIsListening(true);
-    }
-  }, [start]);
+  const reset = useCallback(() => setIsSpeaking(false), []);
 
   useEffect(() => () => { destroy(); }, [destroy]);
 
   return {
-    isSpeaking, isListening, start, pause, resume, destroy, reset,
+    isSpeaking,
+    isListening,
+    start,
+    pause,
+    resume,
+    destroy,
+    reset,
 
-    /**
-     * Etat du contexte audio. « running » attendu ; « suspended » signifie que RIEN ne sera
-     * capture — et c est indiscernable d un micro qui fonctionne, d ou la telemetrie.
-     */
-    contextState: (): string => audioCtxRef.current?.state ?? 'absent',
+    /** Télémétrie : « running » quand MicVAD tourne, « absent » s'il n'a jamais démarré. */
+    contextState: (): string =>
+      vadRef.current ? (listeningRef.current ? 'running' : 'paused') : 'absent',
   };
 };
 
-/** Convert Float32 PCM [-1,1] to Int16 PCM for WebSocket streaming */
+/** Float32 PCM [-1,1] vers Int16 PCM, format attendu par le WebSocket vocal. */
 function floatTo16BitPCM(float32: Float32Array): Int16Array {
   const int16 = new Int16Array(float32.length);
   for (let i = 0; i < float32.length; i++) {
     const s = Math.max(-1, Math.min(1, float32[i]));
-    int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
   }
   return int16;
 }
