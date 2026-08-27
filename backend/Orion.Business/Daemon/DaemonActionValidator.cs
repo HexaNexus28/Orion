@@ -13,6 +13,11 @@ public class DaemonActionValidator
         "open_url",
         "launch_claude",
         "system_status",
+
+        // Lecture seule : application au premier plan et titre de sa fenetre. Aucun effet sur la
+        // machine. Le chemin par OUTIL fonctionnait deja — cette liste ne protege que l endpoint
+        // direct /api/daemon/action, et une action absente ici serait invisible depuis le front.
+        "work_context",
         "read_file",
         "write_file",
         "git_status",

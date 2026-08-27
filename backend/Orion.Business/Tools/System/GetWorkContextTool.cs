@@ -92,10 +92,15 @@ public class GetWorkContextTool : ITool
                 };
             }
 
-            var (file, project) = Decompose(title);
+            var file = FindFile(title);
 
             var items = new List<HudCardItem>();
-            if (project is not null) items.Add(new HudCardItem { Label = "Projet", Value = project });
+
+            // Le titre complet est montre tel quel : il porte le projet, l onglet ou le dossier
+            // selon l application, et lui coller une etiquette serait inventer.
+            if (title is not null)
+                items.Add(new HudCardItem { Label = title.Length > 60 ? title[..60] + "..." : title });
+
             if (application is not null) items.Add(new HudCardItem { Label = "Application", Value = application });
 
             return new HudCard
@@ -119,26 +124,49 @@ public class GetWorkContextTool : ITool
     }
 
     /// <summary>
-    /// Extrait fichier et projet d'un titre de fenêtre.
+    /// Repere le FICHIER dans un titre de fenetre. Ne devine rien d autre.
     ///
-    /// Les éditeurs séparent par « - » : VS Code rend « useVAD.ts - ShiftCore - Visual Studio
-    /// Code », Visual Studio « Program.cs - Orion.Api - Microsoft Visual Studio ». Le premier
-    /// segment est le document, le dernier le logiciel, celui du milieu le projet.
+    /// Le decoupage par POSITION ne peut pas fonctionner : chaque application a son ordre.
+    /// Titres reels releves le 2026-08-27 :
+    ///   Devin    « tiktok-workflow - Devin - .env.cloudflare »   projet - app - fichier
+    ///   Notepad  « supabase-shiftstar-dev.env - Bloc-notes »     fichier - app
+    ///   VS Code  « useVAD.ts - ShiftCore - Visual Studio Code »  fichier - projet - app
     ///
-    /// Renvoie null plutôt que de deviner quand le format ne correspond pas : afficher un mauvais
-    /// nom de fichier ferait proposer une action sur le mauvais fichier.
+    /// Une premiere version prenait le premier segment comme fichier et l avant-dernier comme
+    /// projet : sur Devin elle annoncait « fichier : tiktok-workflow, projet : Devin ». Un
+    /// contexte FAUX est pire qu un contexte absent — il ferait proposer une action sur le
+    /// mauvais fichier.
+    ///
+    /// On ne retient donc que ce qui est identifiable avec certitude : un segment portant une
+    /// extension est un fichier. Le reste est montre BRUT, sans etiquette inventee.
     /// </summary>
-    private static (string? File, string? Project) Decompose(string? title)
+    private static string? FindFile(string? title)
     {
-        if (string.IsNullOrWhiteSpace(title)) return (null, null);
+        if (string.IsNullOrWhiteSpace(title)) return null;
 
-        var parts = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length < 2) return (null, null);
+        var segments = title.Split(" - ", StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
-        // Une pastille « ● » précède le nom quand le fichier a des modifications non enregistrées.
-        var file = parts[0].TrimStart('●', '*', ' ');
-        var project = parts.Length >= 3 ? parts[^2] : null;
+        foreach (var brut in segments)
+        {
+            // Une pastille precede le nom quand le fichier a des modifications non enregistrees.
+            var segment = brut.TrimStart('●', '*', ' ');
+            if (segment.Length == 0) continue;
 
-        return (file, project);
+            // Fichier CACHE : « .env », « .gitignore », « .env.cloudflare ». Leur suffixe n est
+            // pas une extension courte — « cloudflare » fait dix caracteres — et la regle
+            // ci-dessous les rejetait. Le cas s est presente des le premier test reel.
+            if (segment[0] == '.' && segment.Length > 1) return segment;
+
+            var point = segment.LastIndexOf('.');
+            if (point <= 0 || point == segment.Length - 1) continue;
+
+            var extension = segment[(point + 1)..];
+            // Une extension plausible : courte et alphanumerique. « Bloc-notes » n en a pas,
+            // « 29 pages de plus » non plus.
+            if (extension.Length is >= 1 and <= 6 && extension.All(char.IsLetterOrDigit))
+                return segment;
+        }
+
+        return null;
     }
 }
