@@ -45,14 +45,21 @@
 
 ## Sécurité — chantier ouvert
 
-**J11 ⛔ Périmètre des outils** — audit du 2026-08-27, [security.md](security.md). Deux constats
-**critiques** : `read_file` / `list_files` / `write_file` atteignent n'importe quel chemin de la
-machine, sans périmètre — et les deux premiers sont non destructifs, donc exécutés **sans
-confirmation**. Vecteur réel : injection de prompt via `web_fetch` / `web_browse`, que le code
-lui-même documente comme menace. À traiter avant toute exposition élargie.
+**J11 🚧 Périmètre des outils** — audit du 2026-08-27, [security.md](security.md).
 
-Ordre proposé : C1 + C2 (même correctif, `AllowedRoots`) → E1 (`-EncodedCommand`) → E2 (schéma +
-adresses privées + `BlockedDomains`) → M1/M2.
+- **C1 ✅** (2026-08-27) — `PathScope` dans `Orion.Daemon.Core/Security`. `read_file` et
+  `list_files` portent un périmètre `AllowedRoots`, fail-closed, appliqué sur le chemin normalisé,
+  liens résolus, noms sensibles refusés même sous une racine autorisée, filtrage appliqué aussi au
+  listing. 16 tests écrits sur les contournements. `DaemonOptions` est enfin **lu**.
+  M2 corrigé au passage (triple lecture disque).
+- **C2 ⛔** — `write_file` écrit encore n'importe où. Le correctif est court : câbler
+  `WriteFileAction` sur le `PathScope` existant.
+- **E1 ⛔** — `run_script` : passer en `-EncodedCommand`, pour que la commande exécutée soit
+  exactement celle qui a été confirmée.
+- **E2 ⛔** — `web_fetch` / `web_browse` : schéma, adresses privées, et `BlockedDomains` enfin lu.
+- **M1 / M3 ⛔** — `kill_process` annonce N processus ; la doc n'enseigne plus `Bypass`.
+
+Ordre : C2 → E1 → E2 → M1 → M3.
 
 ## Phases historiques
 

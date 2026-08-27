@@ -34,12 +34,12 @@ Toute action doit être dans la **whitelist** (`DaemonActionValidator`) avant im
 
 ⚠️ **La whitelist ne filtre que le NOM de l'action, jamais ses arguments.** Un chemin de fichier ou
 une URL la traverse sans être examiné. Le **périmètre** est donc la responsabilité de l'action
-elle-même — et il manque aujourd'hui à `ReadFile`, `WriteFile` et `ListFiles`, qui atteignent
-n'importe quel chemin de la machine. Voir [security.md](security.md) C1/C2 avant d'ajouter une
-action qui touche au disque.
+elle-même.
 
-Noter aussi que `DaemonOptions` est injecté dans plusieurs actions **sans jamais être lu** : il
-donne l'illusion d'un garde-fou configurable qui n'existe pas.
+`ReadFile` et `ListFiles` le portent depuis le 2026-08-27 via
+`Orion.Daemon.Core/Security/PathScope.cs`. `WriteFile` **ne l'a pas encore** — il reste protégé par
+la seule confirmation (constat C2 ouvert). Lire [security.md](security.md) avant d'ajouter une
+action qui touche au disque.
 
 ## Installation
 
@@ -90,6 +90,29 @@ secours repond). Le script les transporte depuis la sortie de build ; c est l et
 
 Pour la meme raison, le lanceur `demarrer-orion.vbs` fixe `CurrentDirectory` : ces chemins sont
 **relatifs**. Lance depuis ailleurs, ORION est muet.
+
+## Périmètre de lecture — `AllowedRoots`
+
+`read_file` et `list_files` sont **fail-closed** : sans racine déclarée, ils refusent tout. Ce
+n'est pas une panne — c'est le défaut voulu, et le message d'erreur nomme la clé à renseigner.
+
+```json
+{ "Daemon": {
+  "AllowedRoots": [
+    "C:\\chemin\\vers\\tes\\depots",
+    "C:\\Users\\<toi>\\Documents"
+  ],
+  "DeniedNames": []
+}}
+```
+
+À déclarer **étroit**. Surtout pas `C:\Users\<toi>` : le profil contient `.ssh`, les bases de
+cookies et les jetons. Une racine autorisée dit où ORION a le droit de chercher — et ce qu'il y
+lit repart dans sa réponse, donc hors de la machine.
+
+`DeniedNames` vide = liste par défaut (`.ssh`, `.aws`, `.git`, `id_rsa`, `.env*`,
+`appsettings.Production.json`, …), refusée **même sous une racine autorisée** : un dépôt de code
+légitime contient presque toujours un `.env`.
 
 ## Config Production
 

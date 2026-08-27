@@ -2,46 +2,57 @@ using System.Text.Json;
 using Orion.Daemon.Core.Configuration;
 using Orion.Daemon.Core.Entities;
 using Orion.Daemon.Core.Interfaces;
+using Orion.Daemon.Core.Security;
 
 namespace Orion.Daemon.Actions;
 
 public class ReadFileAction : IAction
 {
-    private readonly DaemonOptions _options;
+    private readonly PathScope _perimetre;
 
     public ReadFileAction(DaemonOptions options)
     {
-        _options = options;
+        // `options` était injecté ici sans JAMAIS être lu : le garde-fou avait l'air
+        // configurable, il n'existait pas. Constat C1 de l'audit du 2026-08-27.
+        _perimetre = new PathScope(options.AllowedRoots, options.DeniedNames);
     }
 
     public string Name => "read_file";
 
     public Task<DaemonResponse> ExecuteAsync(JsonElement payload, string correlationId)
     {
-        var path = payload.GetProperty("path").GetString();
-        if (string.IsNullOrEmpty(path))
+        var path = payload.TryGetProperty("path", out var p) ? p.GetString() : null;
+
+        // Le périmètre AVANT tout accès disque — et on travaille ensuite sur le chemin qu'il
+        // renvoie, jamais sur l'entrée : vérifier une chaîne puis en ouvrir une autre est le
+        // motif classique du contournement.
+        var fullPath = _perimetre.Resoudre(path, out var raison);
+        if (fullPath is null)
         {
-            return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, "Missing path"));
+            return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, raison));
         }
 
         try
         {
-            var fullPath = Path.GetFullPath(path);
-
             if (!File.Exists(fullPath))
             {
                 return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, $"File not found: {fullPath}"));
             }
 
             var maxLines = payload.TryGetProperty("maxLines", out var ml) ? ml.GetInt32() : 100;
-            var lines = File.ReadLines(fullPath).Take(maxLines).ToList();
+
+            // UNE seule lecture. Avant, `File.ReadLines` était appelé TROIS fois (contenu,
+            // total, troncature) : trois parcours disque, et trois instants différents — un
+            // fichier qui change entre-temps produisait un `truncated` incohérent.
+            var toutes = File.ReadLines(fullPath).ToList();
+            var lines = toutes.Take(maxLines).ToList();
 
             var data = new
             {
                 path = fullPath,
-                lines = lines,
-                totalLines = File.ReadLines(fullPath).Count(),
-                truncated = lines.Count < File.ReadLines(fullPath).Count()
+                lines,
+                totalLines = toutes.Count,
+                truncated = lines.Count < toutes.Count
             };
 
             return Task.FromResult(DaemonResponse.SuccessResponse(correlationId, data));

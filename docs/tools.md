@@ -49,6 +49,9 @@ seul endroit où il puisse tenir face à une injection de prompt (cf. [security.
 
 ### Système — 14 outils, tous `RequiresDaemon`
 
+⚠️ `read_file` et `list_files` refusent tout tant que `Daemon:AllowedRoots` n'est pas renseigné
+côté daemon (défaut fail-closed, cf. [security.md](security.md) C1).
+
 | Outil | Destructif | Différable | Rôle |
 |---|:---:|:---:|---|
 | `get_system_status` | | | CPU, RAM, disque, uptime |
@@ -57,10 +60,10 @@ seul endroit où il puisse tenir face à une injection de prompt (cf. [security.
 | `git_commit` | ✅ | ✅ | commit du travail en cours |
 | `open_app` | | ✅ | lance une application |
 | `open_browser_url` | | ✅ | ouvre une URL |
-| `read_file` | | | lit un fichier ⚠️ **sans périmètre — [security.md](security.md) C1** |
+| `read_file` | | | lit un fichier — périmètre `AllowedRoots` ✅ |
 | `write_file` | ✅ | ✅ | écrit un fichier ⚠️ **sans périmètre — C2** |
 | `run_script` | ✅ | ❌ | PowerShell arbitraire ⚠️ **échappement absent — E1** |
-| `list_files` | | | liste un répertoire ⚠️ **sans périmètre — C1** |
+| `list_files` | | | liste un répertoire — périmètre `AllowedRoots` ✅ |
 | `kill_process` | ✅ | | termine un processus ⚠️ **par nom = N processus — M1** |
 | `clipboard` | ✅ | | lit / écrit le presse-papiers |
 | `type_text` | ✅ | | frappe du texte au clavier |

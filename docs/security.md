@@ -61,32 +61,64 @@ Aucun maillon de cette chaîne ne dit non.
 
 ---
 
-### C1 — CRITIQUE — Lecture du disque sans périmètre, et sans confirmation
+### C1 — ✅ CORRIGÉ le 2026-08-27 — Lecture du disque sans périmètre
 
 **Où** : `daemon/Orion.Daemon.Actions/ReadFileAction.cs`, `ListFilesAction.cs`
 **Outils** : `read_file`, `list_files`
 
-`ReadFileAction` reçoit `DaemonOptions` par injection **et ne s'en sert jamais** (`grep '_options\.'`
-sur `Orion.Daemon.Actions/` : zéro résultat). Le chemin est simplement normalisé :
+#### Le constat
+
+`ReadFileAction` recevait `DaemonOptions` par injection **et ne s'en servait jamais**
+(`grep '_options\.'` sur `Orion.Daemon.Actions/` : zéro résultat). Le chemin était simplement
+normalisé :
 
 ```csharp
 var fullPath = Path.GetFullPath(path);   // et c'est tout
 ```
 
-Aucune racine autorisée, aucun refus. `list_files` accepte en plus `recursive: true` : un seul
-appel sur `C:\Users\<moi>` énumère tout le profil.
+Aucune racine autorisée, aucun refus. `list_files` acceptait en plus `recursive: true` : un seul
+appel sur `C:\Users\<moi>` énumérait tout le profil.
 
-**Ce qui aggrave** : les deux outils ont `IsDestructive == false`. Ils ne passent donc **pas** par
-la file de confirmation — ils partent immédiatement. Le seul garde-fou du projet ne les couvre pas.
+**Ce qui aggravait** : les deux outils ont `IsDestructive == false`. Ils ne passaient donc **pas**
+par la file de confirmation — ils partaient immédiatement. Le seul garde-fou du projet ne les
+couvrait pas.
 
-**Impact concret** : `%USERPROFILE%\.ssh\id_rsa`, `.env` de n'importe quel projet,
+**Impact** : `%USERPROFILE%\.ssh\id_rsa`, `.env` de n'importe quel projet,
 `appsettings.Production.json` du daemon (qui contient `DAEMON_WS_TOKEN` — soit la compromission du
-canal lui-même), bases de cookies des navigateurs. Le contenu revient au modèle, qui le restitue
+canal lui-même), bases de cookies des navigateurs. Le contenu revenait au modèle, qui le restitue
 dans sa réponse : **la lecture est l'exfiltration**, aucun canal sortant supplémentaire n'est requis.
 
-**Correctif** : une racine autorisée (`AllowedRoots`) portée par `DaemonOptions`, appliquée après
-`GetFullPath` et **avant** tout accès disque. Comparaison sur le chemin normalisé, pas sur la
-chaîne d'entrée — sinon `..\..\` la contourne. Refus par défaut si la liste est vide.
+#### Le correctif
+
+`Orion.Daemon.Core/Security/PathScope.cs` — un périmètre partagé par les deux actions, placé
+**avant tout accès disque**. `DaemonOptions.AllowedRoots` est désormais **lu**.
+
+| Règle | Pourquoi elle est là |
+|---|---|
+| Liste vide ⇒ **tout refusé** | le défaut est le refus, jamais l'ouverture (ADR-017) |
+| Contrôle sur le chemin **normalisé**, et l'appelant ouvre le chemin **retourné** | vérifier une chaîne puis en ouvrir une autre est le motif classique du contournement — `..\..\` |
+| Comparaison **par segment** | `C:\Data` ne doit pas autoriser `C:\DataSecret` — un `StartsWith` nu se fait avoir |
+| Résolution des **liens** | un raccourci déposé dans un dossier autorisé rouvrirait tout le disque |
+| **Noms refusés** même sous une racine autorisée | autoriser « le dossier projet » reste correct : c'est le `.env` qui s'y trouve qui ne doit pas sortir |
+| `.env*` par **préfixe** | `.env.local`, `.env.production` — les lister un par un garantirait d'en oublier un |
+| Filtrage appliqué **aussi au listing** | révéler qu'un `.ssh` existe renseigne l'attaquant même sans en lire le contenu |
+| `OrdinalIgnoreCase` | Windows est insensible à la casse : `.SSH` et `.ssh` sont le même dossier |
+
+Noms refusés par défaut : `.ssh` · `.aws` · `.azure` · `.gnupg` · `.git` · `id_rsa` ·
+`id_ed25519` · `id_ecdsa` · `credentials` · `secrets.json` · `.npmrc` · `.pypirc` ·
+`appsettings.Production.json` · `appsettings.Development.json` · `.env*`
+
+⚠️ **Conséquence opérationnelle** : `AllowedRoots` étant vide par défaut, `read_file` et
+`list_files` **refusent tout** tant que la configuration ne déclare pas de racine. C'est voulu —
+et le message d'erreur nomme la clé à renseigner. À déclarer **étroit** : les dépôts de code et
+les documents de travail, **pas** `C:\Users\<toi>`, qui contient `.ssh`, les cookies et les jetons.
+
+16 tests dans `daemon/Orion.Daemon.Tests/PathScopeTests.cs`, écrits sur les **contournements**
+plutôt que sur le cas passant : remontée par `..`, racine voisine au nom plus long, casse, nom
+sensible enfoui, racine de volume, entrée blanche dans la liste.
+
+**Ce que ça ne couvre pas** : `write_file` (C2) partage le même besoin mais n'est pas encore câblé
+sur `PathScope` — il reste protégé par la seule confirmation.
 
 ---
 
@@ -170,11 +202,12 @@ une classe de configuration est un mensonge pour le prochain lecteur.
 donc confirmé, mais la confirmation annonce un nom et l'effet porte sur N processus.
 **Correctif** : annoncer le compte et les PID dans la demande de confirmation.
 
-### M2 — MOYEN — `ReadFileAction` lit le fichier trois fois
+### M2 — ✅ CORRIGÉ le 2026-08-27 — `ReadFileAction` lisait le fichier trois fois
 
-`File.ReadLines(fullPath)` est appelé **trois fois** (contenu, `totalLines`, `truncated`) : trois
-parcours disque, et trois instants différents — un fichier qui change entre les deux donne un
-`truncated` incohérent. **Correctif** : matérialiser une fois en liste, calculer sur elle.
+`File.ReadLines(fullPath)` était appelé **trois fois** (contenu, `totalLines`, `truncated`) : trois
+parcours disque, et trois instants différents — un fichier qui change entre les deux donnait un
+`truncated` incohérent. Corrigé en même temps que C1, l'action ayant été réécrite : une seule
+matérialisation, tout se calcule dessus.
 
 ### M3 — MOYEN — `-ExecutionPolicy Bypass` dans la doc d'installation
 
@@ -188,16 +221,20 @@ politique par réflexe. **Correctif** : documenter `Unblock-File` comme alternat
 
 | # | Sévérité | Constat | Confirmation ? | Périmètre ? |
 |---|---|---|---|---|
-| C1 | 🔴 Critique | `read_file` / `list_files` — tout le disque | ❌ non | ❌ aucun |
+| C1 | ✅ **Corrigé** | `read_file` / `list_files` — tout le disque | ❌ non | ✅ `PathScope` |
 | C2 | 🔴 Critique | `write_file` — tout le disque | ✅ oui | ❌ aucun |
 | E1 | 🟠 Élevé | `run_script` — échappement absent | ✅ oui | n/a |
 | E2 | 🟠 Élevé | `web_fetch` / `web_browse` — SSRF, `BlockedDomains` mort | ❌ non | ❌ aucun |
 | M1 | 🟡 Moyen | `kill_process` — tue N processus pour un nom | ✅ oui | n/a |
-| M2 | 🟡 Moyen | `ReadFileAction` — triple lecture disque | — | — |
+| M2 | ✅ **Corrigé** | `ReadFileAction` — triple lecture disque | — | — |
 | M3 | 🟡 Moyen | `Bypass` enseigné par la doc | — | — |
 
-**Ordre de traitement** : C1 d'abord — c'est le seul qui soit à la fois sans périmètre **et** sans
-confirmation. C2 partage son correctif : les deux se referment avec le même `AllowedRoots`.
+**Ordre de traitement** : C1 d'abord — c'était le seul à la fois sans périmètre **et** sans
+confirmation. ✅ Fait le 2026-08-27.
+
+**Reste à faire**, dans cet ordre : C2 (câbler `WriteFileAction` sur le `PathScope` existant —
+le plus court, tout est déjà écrit) → E1 (`-EncodedCommand`) → E2 (schéma + adresses privées +
+`BlockedDomains`) → M1 → M3. M2 a été corrigé en passant, `ReadFileAction` ayant été réécrite.
 
 ## 5. La règle qui manquait
 

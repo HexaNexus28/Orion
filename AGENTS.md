@@ -103,6 +103,8 @@ Dépôt    : PUBLIC — aucune info personnelle, aucun secret, aucun hôte réel
 
 [RULE-18] Tout outil qui touche au disque, au réseau interne ou aux processus
           porte un PÉRIMÈTRE explicite, appliqué dans le code qui agit
+          → Côté daemon, réutiliser Orion.Daemon.Core/Security/PathScope :
+            resoudre() AVANT tout accès, et ouvrir le chemin qu'il RETOURNE
           → Comparer sur le chemin NORMALISÉ (après GetFullPath), sinon ..\..\
             contourne le contrôle
           → Périmètre vide = rien n'est autorisé, PAS "tout est autorisé"
@@ -1090,7 +1092,10 @@ Raison   : audit du 2026-08-27. DaemonOptions et InternetOptions.BlockedDomains
            pire qu'une absence — ça ne se voit pas à la lecture.
 Règle    : périmètre vide = rien n'autorisé. Comparaison sur le chemin
            NORMALISÉ, sinon ..\..\ contourne le contrôle.
-Statut   : ⚠️ RÈGLE POSÉE, CONSTATS OUVERTS — voir docs/security.md
+Statut   : C1 APPLIQUÉ le 2026-08-27 — PathScope dans Orion.Daemon.Core/Security,
+           utilise par read_file et list_files. DaemonOptions est enfin LU.
+           C2 (write_file), E1 (run_script), E2 (web_fetch) restent OUVERTS.
+           Voir docs/security.md
 Date     : 2026-08-27
 ```
 
