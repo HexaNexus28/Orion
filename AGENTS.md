@@ -10,12 +10,12 @@ Il définit les règles de comportement, les workflows, les contraintes, et la m
 ## 1. Contexte Projet
 
 ```
-Projet   : ORION — assistant IA personnel de l'utilisateur
-Owner    : Yawo Zoglo
+Projet   : ORION — assistant IA personnel agentique
 Univers  : HexaNexus (ShiftStar, ORION, HexaNexus 2.0)
 Langue   : Français (réponses ORION) / Anglais (code, commentaires)
-Stack    : .NET 9, React 19 + Vite, Supabase, Ollama, Claude API
+Stack    : .NET 9, React 19 + Vite, PostgreSQL + pgvector, cascade NVIDIA NIM -> Ollama
 Niveau   : Développeur avancé — pas d'explications basiques
+Dépôt    : PUBLIC — aucune info personnelle, aucun secret, aucun hôte réel versionné
 ```
 
 ---
@@ -23,14 +23,19 @@ Niveau   : Développeur avancé — pas d'explications basiques
 ## 2. Règles Absolues (ne jamais violer)
 
 ```
-[RULE-01] Ne jamais appeler Ollama ou Claude directement
-          → Toujours passer par LLMRouter.cs
+[RULE-01] Ne jamais appeler un fournisseur LLM directement
+          → Toute inférence passe par IAgentLoop (AgentLoop.cs)
+          → Transport : ILLMAgentClient (LLMCascade : NIM -> Ollama local)
+          → L'ORDRE du tableau de la cascade EST la politique de repli
 
-[RULE-02] Ne jamais bypasser ILLMClient
-          → Toute inférence LLM passe par l'interface
+[RULE-02] Ne jamais utiliser ILLMClient / ILLMRouter pour du nouveau code
+          → Ancien chemin, SANS outils : ils ne portent pas de tool_call
 
 [RULE-03] Ne jamais exécuter une action Daemon sans whitelist check
-          → DaemonActionValidator.cs doit être appelé avant Process.Start
+          → DaemonActionValidator.cs, avant tout Process.Start
+          → ⚠️ La whitelist ne filtre QUE le nom de l'action, jamais ses
+            arguments : un chemin ou une URL passe sans être examiné.
+            Le PÉRIMÈTRE est la responsabilité de l'action elle-même.
 
 [RULE-04] Ne jamais stocker de conversation sans persistence Supabase
           → ConversationRepository.SaveAsync() obligatoire après chaque échange
@@ -38,8 +43,11 @@ Niveau   : Développeur avancé — pas d'explications basiques
 [RULE-05] Ne jamais exposer SUPABASE_SERVICE_KEY au frontend
           → Uniquement backend + daemon
 
-[RULE-06] Ne jamais créer un tool sans implémenter ITool + ToolRegistry
-          → Voir procédure dans CLAUDE.md section Tools
+[RULE-06] Ne jamais créer un tool sans implémenter ITool + l'enregistrer DEUX
+          fois dans Program.cs (le type concret, PUIS ITool)
+          → Sans la 2e ligne, ToolRegistry ne le découvre pas : le modèle ne
+            le voit jamais, et rien n'échoue bruyamment
+          → Trancher IsDeferrable, IsDestructive ET le périmètre (docs/tools.md)
 
 [RULE-07] Strict TypeScript frontend — aucun any, aucun as unknown
           → Types dans src/types/ obligatoires
@@ -59,7 +67,9 @@ Niveau   : Développeur avancé — pas d'explications basiques
 
 [RULE-12] WebSocket Daemon: WSS en production, WS en dev uniquement
           → Vérifier RenderWsUrl commence par wss:// en prod
-          → Token d'authentification obligatoire
+            (le nom "Render" est un VESTIGE : l'hébergement est un VPS + Nginx)
+          → Token X-Daemon-Token obligatoire, et FAIL-CLOSED : jeton absent
+            côté serveur = connexion REFUSÉE, jamais ouverte
 
 [RULE-13] Notifications proactive: SSE du backend au frontend
           → Pas de polling, utiliser EventSource natif
@@ -76,151 +86,182 @@ Niveau   : Développeur avancé — pas d'explications basiques
           → Texte via drei Text (SDF), pas via drei Html
           → Shader GLSL custom pour panneau holographique
           → Pas de ReactMarkdown en 3D — stripMarkdown() vers plain text
+
+[RULE-16] FERMÉ PAR DÉFAUT, et le défaut est le REFUS
+          → FallbackPolicy exige le propriétaire : une route sans attribut est
+            refusée, jamais ouverte. Les exceptions sont EXPLICITES.
+          → Un secret absent REFUSE au lieu d'ouvrir (fail-closed)
+          → Ne jamais poser [AllowAnonymous] au niveau d'un CONTRÔLEUR : il
+            l'emporte sur tout [Authorize] d'action et ne peut pas être annulé
+
+[RULE-17] Le garde-fou des actions vit dans le CODE, jamais dans le prompt
+          → ORION lit le web : une page peut détourner le modèle, et la requête
+            résultante est parfaitement AUTHENTIFIÉE. Aucun contrôle d'accès ne
+            peut l'arrêter — seule une règle placée APRÈS la décision du modèle
+            le peut (IToolInvoker + ITool.IsDestructive).
+          → Une phrase dans un prompt système est une SUGGESTION, pas une règle
+
+[RULE-18] Tout outil qui touche au disque, au réseau interne ou aux processus
+          porte un PÉRIMÈTRE explicite, appliqué dans le code qui agit
+          → Comparer sur le chemin NORMALISÉ (après GetFullPath), sinon ..\..\
+            contourne le contrôle
+          → Périmètre vide = rien n'est autorisé, PAS "tout est autorisé"
+          → Une option de config déclarée et jamais lue est pire que son
+            absence : elle se fait passer pour une défense (cf. docs/security.md)
+
+[RULE-19] Aucun secret, aucune info personnelle, aucun hôte réel versionné
+          → appsettings.json / appsettings.Development.json / .env : gitignorés
+          → Le dépôt est PUBLIC. Modèle de config : .env.example
 ```
 
 ---
 
 ## 3. Architecture des Agents ORION
 
-ORION utilise un système multi-agents simple :
+⚠️ **Corrigé le 2026-08-27.** Ce chapitre décrivait un `MemoryAgent` et un `ToolAgent` qui
+**n'existent pas** dans le dépôt. La mémoire est un *service*, et l'exécution d'outil est passée
+sous `IToolInvoker`. Le fichier `Orion.Business/Agents/` contient exactement trois agents.
 
 ```
-┌─────────────────────────────────────────────┐
-│              ORION AGENT CORE               │
-│                                             │
-│  ConversationAgent    ← agent principal     │
-│       │                                     │
-│       ├── MemoryAgent    ← RAG + profil     │
-│       ├── ToolAgent      ← exécute tools    │
-│       └── BriefingAgent  ← proactif matin   │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│  AgentLoop  (IAgentLoop)          ← LE cœur : boucle multi-tours │
+│      │                                                           │
+│      ├── ILLMAgentClient → LLMCascade [ NIM , Ollama ]           │
+│      ├── IToolInvoker    → exécute │ diffère │ refuse            │
+│      └── PromptBuilder   → prompt stable → volatil (cache)       │
+│                                                                  │
+│  ConversationAgent  ← prépare le contexte, persiste, streame     │
+│  BriefingAgent      ← briefing proactif du matin                 │
+│                                                                  │
+│  Services (PAS des agents) :                                     │
+│    MemoryService · MemoryConsolidator · MemoryRevectorizer       │
+│    ProactiveLearningService · ChatService · AuditService         │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### ConversationAgent
-**Fichier** : `Orion.Business/Agents/ConversationAgent.cs`
-**Rôle** : Point d'entrée de toute requête utilisateur.
-**Workflow chat (HTTP)** :
+### AgentLoop — `Orion.Business/Agents/AgentLoop.cs`
+
+**Rôle** : la boucle agentique. Le modèle peut enchaîner plusieurs outils avant de répondre.
+
 ```
-1. Reçoit le message utilisateur
-2. Appelle MemoryAgent → récupère contexte (profil + souvenirs RAG)
-3. Construit le prompt complet : [system] + [mémoire] + [historique] + [message]
-4. Appelle LLMRouter → inférence
-5. Si le LLM retourne un tool_call → délègue à ToolAgent
-6. Sauvegarde le message + embedding en DB
-7. Retourne la réponse (stream ou complète)
-```
-**Workflow streaming (WS voice)** :
-```
-1. PrepareStreamAsync(message, sessionId) → ApiResponse<StreamContext>
-   - Valide session, charge mémoire, construit prompt, retourne StreamContext
-2. StreamLLMAsync(streamContext) → IAsyncEnumerable<string>
-   - Stream token par token depuis LLMRouter
-   - Utilisé par VoiceWebSocketHandler pour envoyer chunks au frontend
-3. Après stream : sauvegarde message complet + embedding
+1. Construit le prompt (PromptBuilder) : sections stable → volatil, pour le cache de préfixe
+2. Injecte le catalogue d'outils FILTRÉ — un outil qui ne peut pas aboutir n'est pas proposé
+3. Streame depuis ILLMAgentClient
+4. tool_call reçu → IToolInvoker.InvokeAsync(...)   ← JAMAIS tool.ExecuteAsync en direct
+5. Réinjecte le résultat, reboucle jusqu'à réponse finale ou plafond de tours
+6. Émet des événements typés : token · tool_start · tool_result · done · error
 ```
 
-### MemoryAgent
-**Fichier** : `Orion.Business/Agents/MemoryAgent.cs`
-**Rôle** : Gestion de la mémoire court et long terme.
-**Workflow** :
-```
-1. Charge le profil utilisateur depuis user_profile (Supabase)
-2. Génère l'embedding du message entrant (Ollama nomic-embed-text)
-3. Recherche top-5 vecteurs similaires (pgvector cosine)
-4. Retourne : { profile, relevant_memories[], recent_messages[] }
-5. Après chaque échange : SaveMemoryAsync() → insère embedding
-```
-**Règle** : Ne jamais dépasser 2000 tokens de contexte mémoire injecté.
+**Règle** : aucun agent ni service n'appelle un fournisseur LLM directement (RULE-01).
 
-### ToolAgent
-**Fichier** : `Orion.Business/Agents/ToolAgent.cs`
-**Rôle** : Exécute les tools demandés par le LLM.
-**Workflow** :
+### ConversationAgent — `Orion.Business/Agents/ConversationAgent.cs`
+
+**Rôle** : point d'entrée d'une requête utilisateur — contexte, persistance, streaming.
+
 ```
-1. Reçoit tool_name + tool_input depuis ConversationAgent
-2. Cherche le tool dans ToolRegistry
-3. Valide les paramètres (JSON Schema)
-4. Si tool système → envoie commande au Daemon via WebSocket
-5. Si tool data → exécute directement (Supabase, API)
-6. Retourne tool_result au ConversationAgent
-7. Logue l'appel dans tool_executions (Supabase)
+PrepareStreamAsync(message, sessionId) → ApiResponse<StreamContext>
+   valide la session · charge profil + souvenirs RAG · construit le prompt
+StreamLLMAsync(streamContext) → IAsyncEnumerable<string>
+   utilisé par VoiceWebSocketHandler et par le SSE de chat
+puis : sauvegarde du message complet + embedding
 ```
 
-### BriefingAgent
-**Fichier** : `Orion.Business/Agents/BriefingAgent.cs`
-**Rôle** : Morning briefing proactif — tourne en BackgroundService .NET.
-**Workflow** :
+**Règle** : toute conversation est persistée, **sans exception**. DB inaccessible → `ApiResponse`
+503, le tour échoue. Une conversation perdue est pire qu'un tour raté.
+
+### BriefingAgent — `Orion.Business/Agents/BriefingAgent.cs`
+
+**Rôle** : briefing proactif, déclenché par `BriefingScheduler` (`BackgroundService`).
+Il s'appuie sur les outils réellement disponibles (système, git, mémoire, web) — les anciens
+`get_emails` / `get_calendar` / `get_shiftstar_stats` n'ont jamais existé.
+
+### Mémoire — services, pas agent
+
 ```
-Cron : 07h00 tous les jours (configurable)
-1. Appelle get_shiftstar_stats → stats du jour
-2. Appelle get_calendar (si connecté) → événements
-3. Appelle get_emails (si connecté) → emails non lus
-4. Génère résumé LLM → format markdown court
-5. Envoie Push Notification PWA via Web Push API
-6. Sauvegarde dans conversations (type: "briefing")
+MemoryService        recherche vectorielle top-K (pgvector, cosinus) + profil
+MemoryConsolidator   compacte les épisodes en souvenirs durables, schéma fermé 4 slots
+MemoryRevectorizer   rejoue toute la table quand le modèle d'embedding change
 ```
+
+**Règles** :
+- Ne jamais dépasser ~2000 tokens de contexte mémoire injecté.
+- RAG **non bloquant** : embeddings en panne → liste vide, la conversation continue.
+- ⚠️ Un embedding **ne bascule pas à chaud** : chaque modèle a son propre espace vectoriel.
+  Changer de fournisseur impose une revectorisation complète. Modèle et dimension sont écrits
+  À CÔTÉ de chaque vecteur et vérifiés au démarrage — mélanger deux espaces ne lève **aucune
+  erreur** et renvoie des résultats absurdes.
 
 ---
 
 ## 4. Structure Complète des Fichiers
 
 ### Backend — Orion.Api
+
+⚠️ **Corrigé le 2026-08-27** : `ToolsController`, `AuthMiddleware` et `LoggingMiddleware`
+n'existent pas. Les outils s'exposent par `DaemonController` (`GET /api/daemon/tools`).
+
 ```
 Orion.Api/
-├── Program.cs                              # DI, middleware, CORS, SSE, WebSocket
+├── Program.cs                              # DI, auth, middleware, CORS, WebSocket, sonde LLM
 ├── Controllers/
-│   ├── ChatController.cs                   # POST /chat → IActionResult
-│   ├── MemoryController.cs                 # GET /memory, DELETE /memory/{id}
-│   ├── ToolsController.cs                  # GET /tools, POST /tools/test
-│   ├── BriefingController.cs               # GET /briefing/today
-│   ├── VoiceController.cs                  # Legacy HTTP voice
-│   ├── ProactiveNotificationController.cs  # SSE stream + daemon notify
+│   ├── AuthController.cs                   # POST /auth/login · /auth/stream-ticket
+│   ├── ChatController.cs                   # POST /chat · /chat/stream (SSE)
+│   ├── MemoryController.cs                 # GET/POST/DELETE /memory · /search · /revectorize
+│   ├── DaemonController.cs                 # GET /daemon/status · /tools · POST /daemon/action
+│   ├── DeferredActionsController.cs        # file d'actions : GET · confirm · cancel
+│   ├── BriefingController.cs               # GET /briefing/today · /history
+│   ├── VoiceController.cs                  # transcribe · synthesize · converse · status
+│   ├── ProactiveNotificationController.cs  # SSE stream · notify · weights · trigger
 │   └── HealthController.cs                 # GET /health
+├── Authentication/
+│   ├── OrionAuth.cs                        # UNE réponse à « qui appelle ? » — rôles, audiences
+│   └── DaemonAuthenticationHandler.cs      # secret partagé → ClaimsPrincipal (fail-closed)
 ├── WebSockets/
 │   ├── VoiceWebSocketHandler.cs            # /ws/voice full-duplex
-│   └── VoiceWebSocketMiddleware.cs         # Route /ws/voice
+│   └── VoiceWebSocketMiddleware.cs
 ├── Middleware/
-│   ├── AuthMiddleware.cs
 │   ├── ErrorHandlingMiddleware.cs
-│   ├── LoggingMiddleware.cs
-│   └── DaemonWebSocketMiddleware.cs
-└── appsettings.json
+│   └── DaemonWebSocketMiddleware.cs        # /daemon
+├── Services/                               # BackgroundServices + registre SSE
+│   ├── SseClientRegistry.cs                # singleton : un flux vit des heures
+│   ├── BriefingScheduler.cs
+│   ├── DeferredActionWatcher.cs            # draine la file au retour du daemon, expire le reste
+│   └── HudBroadcastService.cs              # widgets permanents du HUD
+└── appsettings.json                        # ⚠️ GITIGNORÉ — absent du dépôt
 ```
 
 ### Backend — Orion.Business
+
+⚠️ **Corrigé le 2026-08-27** : `MemoryAgent`, `ToolAgent`, `LLMRouter`, `OllamaClient`,
+`AnthropicClient` et les outils ShiftStar **n'existent pas** dans le dépôt.
+
 ```
 Orion.Business/
 ├── Agents/
-│   ├── ConversationAgent.cs      # IConversationAgent
-│   │                             # ProcessAsync() → ApiResponse<ChatResponse>
-│   │                             # PrepareStreamAsync() → ApiResponse<StreamContext>
-│   │                             # StreamLLMAsync() → IAsyncEnumerable<string>
-│   ├── MemoryAgent.cs            # IMemoryAgent → ApiResponse<MemoryContext>
-│   ├── ToolAgent.cs              # IToolAgent → ApiResponse<ToolResult>
-│   └── BriefingAgent.cs         # IBriefingAgent + IHostedService (cron 07h00)
+│   ├── AgentLoop.cs              # IAgentLoop — LA boucle multi-tours, streaming + outils
+│   ├── ConversationAgent.cs      # PrepareStreamAsync → StreamContext ; StreamLLMAsync
+│   └── BriefingAgent.cs          # IBriefingAgent, déclenché par BriefingScheduler
 ├── LLM/
-│   ├── LLMRouter.cs              # ILLMRouter — ping Ollama → fallback Claude
-│   ├── OllamaClient.cs           # ILLMClient → ApiResponse<LLMResponse>
-│   ├── AnthropicClient.cs        # ILLMClient → ApiResponse<LLMResponse>
-│   └── PromptBuilder.cs          # Construit les prompts système ORION
+│   ├── LLMCascade.cs             # ILLMAgentClient composite — L'ORDRE EST LA POLITIQUE
+│   ├── NimAgentClient.cs         # NVIDIA NIM, compatible OpenAI (distant)
+│   ├── OllamaAgentClient.cs      # local (repli hors-ligne)
+│   └── PromptBuilder.cs          # sections stable → volatil (cache de préfixe)
 ├── Tools/
-│   ├── ToolRegistry.cs           # IToolRegistry
-│   ├── GetShiftStarStatsTool.cs  # ITool → ApiResponse<ToolResult>
-│   ├── GetShiftStarVotesTool.cs
-│   ├── GetShiftStarMrrTool.cs
-│   ├── GetShiftStarTenantsTool.cs
-│   ├── CreateChallengeTool.cs
-│   ├── MorningBriefingTool.cs
-│   ├── SendNotificationTool.cs
-│   └── OpenAppTool.cs            # → délègue via IDaemonClient (Core)
+│   ├── ToolRegistry.cs           # IToolRegistry — auto-découverte via IEnumerable<ITool>
+│   ├── ToolInvoker.cs            # IToolInvoker — POINT D'APPLICATION UNIQUE
+│   ├── System/                   # 14 outils daemon (fichiers, git, processus, écran…)
+│   ├── Internet/                 # web_search · web_fetch · web_browse · screenshot_page
+│   └── Memory/                   # memory_save/update/forget/reflect · profile_update
 ├── Daemon/
-│   ├── DaemonWebSocketClient.cs  # IDaemonClient (Core) — client WebSocket
-│   └── DaemonActionValidator.cs  # Vérifie whitelist avant envoi
+│   ├── DaemonWebSocketClient.cs  # IDaemonClient
+│   ├── DaemonActionValidator.cs  # whitelist des NOMS d'action (jamais des arguments)
+│   └── DeferredActionService.cs  # file : confirmation, annulation, expiration
 └── Services/
-    ├── EmbeddingService.cs           # Ollama nomic-embed-text
-    ├── WhisperService.cs             # Whisper.net STT local
-    ├── VoiceNotificationService.cs   # TTS via daemon (Kokoro)
-    └── PushNotificationService.cs    # Web Push API
+    ├── MemoryService.cs · MemoryConsolidator.cs · MemoryRevectorizer.cs
+    ├── ChatService.cs · BriefingService.cs · AuditService.cs · HealthService.cs
+    ├── OpenAiCompatibleEmbeddingService.cs        # mistral-embed, 1024 dims
+    ├── TranscriptionCascade.cs                    # Voxtral → Whisper local
+    └── VoxtralTranscriptionService.cs · WhisperService.cs · VoiceNotificationService.cs
 ```
 
 ### Backend — Orion.Core
@@ -252,18 +293,19 @@ Orion.Core/                       # Ne dépend de rien
 │   │   ├── IMemoryRepository.cs  # + SearchSimilarAsync() pgvector
 │   │   └── IUserProfileRepository.cs
 │   ├── Agents/
+│   │   ├── IAgentLoop.cs         # LA boucle — tout passe par elle
 │   │   ├── IConversationAgent.cs
-│   │   ├── IMemoryAgent.cs
-│   │   ├── IToolAgent.cs
 │   │   └── IBriefingAgent.cs
 │   ├── LLM/
-│   │   ├── ILLMClient.cs         # IMMUABLE — ne pas modifier
-│   │   └── ILLMRouter.cs
+│   │   ├── ILLMAgentClient.cs    # chemin ACTUEL — streaming AVEC outils
+│   │   ├── ILLMClient.cs         # ancien chemin, SANS outils — ne pas réutiliser
+│   │   └── ILLMRouter.cs         # idem
 │   ├── Services/
-│   │   ├── IEmbeddingService.cs
-│   │   └── IPushNotificationService.cs
+│   │   ├── IEmbeddingService.cs · IWhisperService.cs · IMemoryService.cs
+│   │   └── IChatService.cs · IBriefingService.cs · IAuditService.cs · IHealthService.cs
 │   ├── Tools/
 │   │   ├── ITool.cs
+│   │   ├── IToolInvoker.cs       # point d'application UNIQUE de l'exécution
 │   │   └── IToolRegistry.cs
 │   └── Daemon/
 │       ├── IDaemonClient.cs      # Contrat — implémenté par DaemonWebSocketClient
@@ -452,36 +494,82 @@ memory/
 
 ## 5. Contrats Interfaces (IMMUABLES)
 
-### ILLMClient
+### IAgentLoop — LE chemin, depuis 2026-08
+
 ```csharp
-public interface ILLMClient
-{
-    Task<ApiResponse<LLMResponse>> CompleteAsync(LLMRequest request, CancellationToken ct = default);
-    Task StreamAsync(LLMRequest request, Func<string, Task> onChunk, CancellationToken ct = default);
-    bool IsAvailable();
-    LLMProvider Provider { get; }
-}
+// Orion.Core/Interfaces/Agents/IAgentLoop.cs
+// Boucle multi-tours : streaming AVEC outils. Tout passe par là.
 ```
 
-### ITool
+### ILLMAgentClient — transport
+
+```csharp
+// Orion.Core/Interfaces/LLM/ILLMAgentClient.cs
+// Implémentations : NimAgentClient · OllamaAgentClient · LLMCascade (composite)
+// LLMCascade prend un ILLMAgentClient[] — L'ORDRE DU TABLEAU EST LA POLITIQUE.
+// Le modèle réellement servi est élu au démarrage par ProbeAsync, en APPELANT
+// le fournisseur : `ollama list` ne prouve rien.
+```
+
+⚠️ `ILLMClient` / `ILLMRouter` existent encore mais sont l'**ancien chemin, SANS outils**. Ils ne
+portent pas de `tool_call`. Aucun nouveau développement ne doit les utiliser (RULE-02).
+
+### ITool — quatre membres, trois décisions
+
 ```csharp
 public interface ITool
 {
-    string Name { get; }           // snake_case : "get_shiftstar_stats"
-    string Description { get; }   // Pour le LLM
+    string Name { get; }            // snake_case : "get_work_context"
+    string Description { get; }     // pour le LLM
     JsonObject InputSchema { get; }
+
+    bool RequiresDaemon => false;   // passe par le PC de l'utilisateur
+    bool IsDestructive  => false;   // écrit/supprime/exécute → CONFIRMATION exigée
+    bool IsDeferrable   => false;   // garde un sens exécuté PLUS TARD
+
     Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default);
+
+    HudCard? BuildCard(ToolResult result) => null;   // carte du HUD, ou rien
 }
 ```
 
+Les trois drapeaux sont **`false` par défaut** — donc le plus restrictif pour les deux premiers,
+et « n'encombre pas la file » pour le troisième. Un nouvel outil daemon fait rougir
+`ToolDeferrabilityTests` tant que son cas n'est pas tranché.
+
+### IToolInvoker — le point d'application UNIQUE
+
+```csharp
+// Orion.Core/Interfaces/Tools/IToolInvoker.cs
+Task<ApiResponse<ToolResult>> InvokeAsync(string toolName, JsonObject input,
+                                          ToolInvocationContext context, CancellationToken ct = default);
+```
+
+**Jamais `tool.ExecuteAsync` en direct.** C'est ici, et nulle part ailleurs, que se décide :
+
+| Situation | Issue |
+|---|---|
+| outil sans daemon | s'exécute |
+| daemon requis + PC éteint + différable | mis en file — ORION promet et tiendra |
+| daemon requis + PC éteint + non différable | **refus honnête**, jamais un faux succès |
+| destructif (PC allumé compris) | confirmation exigée avant exécution |
+
+C'est aussi le seul endroit où la carte HUD est construite : la produire ailleurs voudrait dire la
+reconstruire à chaque nouveau chemin d'appel.
+
 ### IDaemonClient
+
 ```csharp
 public interface IDaemonClient
 {
-    Task<ApiResponse<DaemonResponse>> SendActionAsync(DaemonAction action, CancellationToken ct = default);
+    Task<ApiResponse<DaemonResponse>> SendActionAsync(DaemonActionRequest action, CancellationToken ct = default);
     bool IsConnected { get; }
 }
 ```
+
+Contrat backend ↔ daemon = **JSON sur WebSocket, pas de DLL partagée** : chaque côté définit ses
+propres types. Les noms d'action ne coïncident pas toujours avec les noms d'outil (cf.
+[docs/tools.md](docs/tools.md)).
 
 ### Règle de retour par couche — IMMUABLE
 ```
@@ -605,58 +693,98 @@ INSERT INTO user_profile (key, value) VALUES
 
 ## 8. Définition Tool — Exemple Complet
 
-### tools/definitions/get_shiftstar_stats.json
+⚠️ **Réécrit le 2026-08-27.** L'exemple précédent (`get_shiftstar_stats`) portait sur un outil qui
+**n'a jamais existé**. Celui-ci est un outil réel du dépôt.
+
+### tools/definitions/list_files.json
 ```json
 {
-  "name": "get_shiftstar_stats",
-  "description": "Récupère les statistiques ShiftStar depuis Supabase. Utilisé pour répondre aux questions sur les utilisateurs actifs, votes, établissements.",
+  "name": "list_files",
+  "description": "Liste les fichiers et dossiers d'un répertoire sur le PC Windows.",
   "input_schema": {
     "type": "object",
     "properties": {
-      "metric": {
-        "type": "string",
-        "enum": ["active_users", "total_votes", "establishments", "recent_activity"],
-        "description": "La métrique à récupérer"
-      },
-      "period": {
-        "type": "string",
-        "enum": ["today", "week", "month", "all"],
-        "default": "all"
-      }
+      "path":      { "type": "string",  "description": "Chemin du répertoire à lister" },
+      "pattern":   { "type": "string",  "description": "Filtre glob optionnel, ex: *.cs" },
+      "recursive": { "type": "boolean", "description": "Lister récursivement (défaut: false)" }
     },
-    "required": ["metric"]
+    "required": ["path"]
   }
 }
 ```
 
-### Implémentation GetShiftStarStatsTool.cs
+### Orion.Business/Tools/System/ListFilesTool.cs
+
 ```csharp
-public class GetShiftStarStatsTool : ITool
+public class ListFilesTool : ITool
 {
-    public string Name => "get_shiftstar_stats";
-    public string Description => "Récupère les statistiques ShiftStar depuis Supabase.";
-    public JsonObject InputSchema => LoadSchema("get_shiftstar_stats");
+    private readonly IDaemonClient _daemon;
+    public ListFilesTool(IDaemonClient daemon) => _daemon = daemon;
 
-    private readonly IShiftStarRepository _repo;
+    public string Name => "list_files";
+    public string Description => "Liste les fichiers et dossiers d'un répertoire sur le PC Windows";
 
-    public async Task<ToolResult> ExecuteAsync(JsonObject input, CancellationToken ct)
+    // LES TROIS DÉCISIONS, explicites :
+    public bool RequiresDaemon => true;    // passe par le PC
+    public bool IsDestructive  => false;   // lecture seule
+    public bool IsDeferrable   => false;   // « qu'y a-t-il dans ce dossier ? » ne vaut plus rien demain
+
+    public JsonObject InputSchema => new() { /* … miroir du JSON ci-dessus … */ };
+
+    public async Task<ApiResponse<ToolResult>> ExecuteAsync(JsonObject input, CancellationToken ct = default)
     {
-        var metric = input["metric"]?.ToString() ?? "active_users";
-        var period = input["period"]?.ToString() ?? "all";
+        var path = input["path"]?.GetValue<string>();
+        if (string.IsNullOrWhiteSpace(path))
+            return ApiResponse<ToolResult>.ErrorResponse("Paramètre path requis", 400);
 
-        var data = metric switch
+        var result = await _daemon.SendActionAsync(new DaemonActionRequest
         {
-            "active_users"    => await _repo.GetActiveUsersAsync(period, ct),
-            "total_votes"     => await _repo.GetTotalVotesAsync(period, ct),
-            "establishments"  => await _repo.GetEstablishmentsAsync(ct),
-            "recent_activity" => await _repo.GetRecentActivityAsync(ct),
-            _ => throw new ArgumentException($"Metric inconnue: {metric}")
-        };
+            RequestId = Guid.NewGuid().ToString("N"),
+            Action    = "list_files",              // nom côté DAEMON, pas forcément celui de l'outil
+            Payload   = new { path, pattern, recursive }
+        }, ct);
 
-        return ToolResult.Success(data);
+        if (!result.Success)
+            return ApiResponse<ToolResult>.ErrorResponse(result.Message ?? "Daemon error", result.StatusCode);
+
+        return ApiResponse<ToolResult>.SuccessResponse(
+            ToolResult.SuccessResult(JsonSerializer.Serialize(result.Data?.Data), Name));
     }
 }
 ```
+
+Noter ce que l'outil **ne fait pas** : il ne garde pas de `if (!_daemon.IsConnected)`. Ce garde
+était recopié dans les treize outils système ; il vit désormais dans `IToolInvoker`, une fois.
+
+### Enregistrement — DEUX lignes, pas une
+
+```csharp
+// Program.cs
+builder.Services.AddScoped<ListFilesTool>();                                    // le type concret
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<ListFilesTool>()); // ← la découverte
+```
+
+`ToolRegistry` reçoit un `IEnumerable<ITool>` par injection. **Sans la seconde ligne, l'outil
+existe, compile, et reste invisible au modèle** — sans qu'aucun test n'échoue.
+
+### Côté daemon
+
+```csharp
+// daemon/Orion.Daemon.Actions/ListFilesAction.cs
+public class ListFilesAction : IAction
+{
+    public string Name => "list_files";
+    public Task<DaemonResponse> ExecuteAsync(JsonElement payload, string correlationId) { … }
+}
+```
+
+Puis **ajouter le nom** à `DaemonActionValidator._allowedActions` — sinon l'endpoint direct
+`/api/daemon/action` refuse l'action.
+
+⚠️ **Et trancher le PÉRIMÈTRE** (RULE-18). `ListFilesAction` fait aujourd'hui
+`Path.GetFullPath(path)` et rien d'autre : il liste **n'importe quel** répertoire de la machine.
+C'est un constat ouvert de l'audit — voir [docs/security.md](docs/security.md) C1. Ne pas
+reproduire ce motif dans une nouvelle action.
 
 ---
 
@@ -812,12 +940,25 @@ playwright install chromium   # installe le browser Chromium
 ```
 
 ### Sécurité browsing
-```
-- Pas d'accès aux sites authentifiés sans credentials explicites
-- Whitelist de domaines sensibles (banking, etc.) → refus automatique
-- Timeout strict : 30s max par navigation
-- Pas de téléchargement automatique de fichiers
-```
+
+⚠️ **Corrigé le 2026-08-27.** Ce bloc décrivait des contrôles comme s'ils étaient en place. Voici
+l'état RÉEL, vérifié dans le code.
+
+| Contrôle | État |
+|---|---|
+| Timeout strict 30 s par navigation | ✅ en place (`WebFetchTool`, `WebBrowseTool`) |
+| Filtrage de domaines sensibles | ❌ **INEXISTANT** — `InternetOptions.BlockedDomains` est déclaré et **n'est lu par personne** |
+| Restriction de schéma / d'hôte | ❌ **INEXISTANTE** — seul `Uri.TryCreate(..., Absolute, …)` est vérifié |
+| Pas d'accès aux sites authentifiés | ⚠️ non implémenté comme règle : aucun credential n'est joint, mais rien ne l'empêche |
+| Pas de téléchargement automatique | ⚠️ non vérifié |
+
+Conséquence : `web_fetch` atteint le loopback (`http://127.0.0.1:5107/api/…`, l'API elle-même) et
+les adresses de métadonnées d'instance (`169.254.169.254`). C'est le constat **E2** de
+[docs/security.md](docs/security.md).
+
+**Ces deux outils sont aussi la porte d'entrée de l'injection de prompt** (RULE-17) : ce qu'ils
+rapportent entre dans le contexte du modèle et peut le détourner. Le garde-fou correspondant n'est
+pas ici — il est dans `IToolInvoker`.
 
 ---
 
@@ -827,10 +968,11 @@ Raison   : PWA pure, même stack ShiftStar, pas de SSR nécessaire
 Alternatives écartées : Next.js (SSR inutile), SvelteKit (nouvelle techno)
 Date     : Avril 2026
 
-ADR-002 : Ollama local + fallback Claude API
+ADR-002 : Ollama local + fallback Claude API   ⛔ SUPERSÉDÉ par ADR-011
 Raison   : Gratuit au quotidien (domicile), Claude quand mobile
 Alternatives écartées : Claude API seul (payant), OpenRouter (dépendance)
 Date     : Avril 2026
+Note     : il n'existe plus aucun client Anthropic dans le dépôt.
 
 ADR-003 : Daemon .NET service Windows plutôt que PowerShell/Extension/Tauri
 Raison   : Stack .NET unifiée, service Windows auto au boot,
@@ -853,7 +995,7 @@ Raison   : Flux unidirectionnel suffit (serveur → client),
 Alternatives écartées : WebSocket (bidirectionnel inutile pour du streaming texte)
 Date     : Avril 2026
 
-ADR-006 : Daemon initie la connexion vers Render (pas l'inverse)
+ADR-006 : Daemon initie la connexion vers le backend (pas l'inverse)
 Raison   : Évite problèmes firewall et IP dynamique côté Windows,
            le daemon sort vers Render comme un navigateur sort vers un site,
            même principe que WebRTC signaling dans ShadowCat
@@ -886,6 +1028,70 @@ Raison   : Détection 21 points par main via caméra, 30fps, tourne dans le brow
            Permet : pointer, pinch, glisser éléments 3D, paume ouverte = écoute
 Alternatives écartées : TensorFlow.js handpose (moins précis), équipement physique
 Date     : Avril 2026
+
+ADR-011 : Cascade explicite NVIDIA NIM -> Ollama local  (remplace ADR-002)
+Raison   : qualité en tête, survie hors-ligne en dernier. L'ORDRE DU TABLEAU
+           EST LA POLITIQUE — pas de scoring implicite, pas de heuristique
+           cachée : on lit Program.cs et on sait ce qui répondra.
+           Même motif réutilisé pour la transcription (Voxtral -> Whisper local).
+Alternatives écartées : routeur à score (illisible), fournisseur unique (pas
+           de mode hors-ligne)
+Date     : 2026-08 (J3)
+
+ADR-012 : Le modèle servi est ÉLU AU DÉMARRAGE par ProbeAsync, en l'APPELANT
+Raison   : `ollama list` affiche les modèles :cloud en cache local même
+           retirés ou verrouillés par abonnement. Vérifié le 2026-08-20 :
+           7 modèles listés, 7 inutilisables. Faire confiance à la config
+           produit une panne INVISIBLE — bascule silencieuse en dégradé.
+Date     : 2026-08-20
+
+ADR-013 : Embeddings via fournisseur compatible OpenAI, Ollama RETIRÉ du
+           chemin de production
+Raison   : Ollama n'existe pas sur le VPS : la mémoire y serait morte en
+           silence. mistral-embed, 1024 dims — mesuré en APPELANT les API
+           (le catalogue ment), et indexable (pgvector plafonne à 2000).
+Conséquence : un embedding NE BASCULE PAS à chaud. Modèle et dimension sont
+           stockés À CÔTÉ de chaque vecteur et vérifiés au démarrage.
+Date     : 2026-08-25 (J6b)
+
+ADR-014 : IToolInvoker — point d'application UNIQUE de l'exécution d'outil
+Raison   : le garde « daemon absent » était recopié dans les 13 outils
+           système : 13 endroits où l'oublier. Un point unique peut décider
+           d'exécuter, différer ou refuser — et refuser FRANCHEMENT plutôt
+           que de rendre un « Daemon non connecté » sec qui fait paraître
+           ORION cassé alors qu'il fonctionne.
+Date     : 2026-08-21 (J6a)
+
+ADR-015 : Le garde-fou des actions destructives vit dans le CODE
+Raison   : il n'était qu'une phrase du prompt système — donc une SUGGESTION.
+           Un modèle qui décide d'agir agit. ORION lit le web : une page peut
+           le détourner, et la requête résultante est parfaitement
+           AUTHENTIFIÉE — aucun contrôle d'accès ne peut l'arrêter. Seule une
+           règle placée APRÈS la décision du modèle le peut.
+Conséquence : toute action IsDestructive passe par la file de confirmation,
+           PC allumé compris.
+Date     : 2026-08-26
+
+ADR-016 : Authentification fermée par défaut, et fail-closed
+Raison   : l'API était TOTALEMENT ouverte (UseAuthorization commentée). Une
+           liste de routes à protéger se périme au premier oubli ; une
+           FallbackPolicy refuse ce qu'on a oublié de déclarer. De même, un
+           secret absent doit REFUSER — c'est le défaut exact qui rendait le
+           WebSocket daemon librement accessible quand la variable
+           d'environnement manquait.
+Corollaire : billet de flux à audience distincte (60 s) pour SSE/WebSocket,
+           parce qu'une URL finit dans les journaux — constaté en clair dans
+           access.log le 2026-08-26.
+Date     : 2026-08-26
+
+ADR-017 : Le PÉRIMÈTRE d'un outil s'applique dans le code qui agit
+Raison   : audit du 2026-08-27. DaemonOptions et InternetOptions.BlockedDomains
+           donnaient l'ILLUSION d'un garde-fou : injectés, jamais lus. C'est
+           pire qu'une absence — ça ne se voit pas à la lecture.
+Règle    : périmètre vide = rien n'autorisé. Comparaison sur le chemin
+           NORMALISÉ, sinon ..\..\ contourne le contrôle.
+Statut   : ⚠️ RÈGLE POSÉE, CONSTATS OUVERTS — voir docs/security.md
+Date     : 2026-08-27
 ```
 
 ---
@@ -893,11 +1099,13 @@ Date     : Avril 2026
 ## 12. Ordre de Build Recommandé
 
 ```
-Phase 1 — Core MVP ✅
-  [x] Setup .NET solution + Supabase tables
-  [x] ILLMClient + OllamaClient + AnthropicClient + LLMRouter
-  [x] ConversationAgent + MemoryAgent + RAG
-  [x] Tools ShiftStar
+Phase 1 — Core MVP ✅   (⚠️ historique : plusieurs briques ont été REMPLACÉES depuis)
+  [x] Setup .NET solution + tables PostgreSQL/pgvector
+  [~] ILLMClient + LLMRouter          → remplacés par IAgentLoop + LLMCascade (ADR-011)
+  [~] AnthropicClient                 → SUPPRIMÉ, n'existe plus dans le dépôt
+  [~] MemoryAgent                     → devenu MemoryService (jamais un agent)
+  [~] Tools ShiftStar                 → JAMAIS implémentés
+  [x] ConversationAgent + RAG
   [x] ChatController + SSE streaming
   [x] Frontend : entité animée + SlideInput + overlays
 

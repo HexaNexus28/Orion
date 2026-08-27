@@ -72,9 +72,9 @@ public class MemoryConsolidatorTests
     public async Task Les_faits_distilles_sont_ranges_dans_leur_emplacement()
     {
         var consolidateur = Build(
-            "decisions|1.5|Yawo heberge le backend ORION sur un VPS IONOS\n" +
+            "decisions|1.5|Alex heberge le backend ORION sur un serveur dedie\n" +
             "refs|1.0|La base ORION est le projet Supabase niwciampfbwppjpufbnz",
-            Episode("Yawo a parle de son hebergement"));
+            Episode("Alex a parle de son hebergement"));
 
         var rapport = await consolidateur.ConsolidateAsync();
 

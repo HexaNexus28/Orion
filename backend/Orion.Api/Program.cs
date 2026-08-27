@@ -47,12 +47,7 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "ORION API",
         Version = "v1",
-        Description = "API pour l'assistant IA personnel ORION",
-        Contact = new OpenApiContact
-        {
-            Name = "Yawo Zoglo",
-            Email = "contact@example.com"
-        }
+        Description = "API pour l'assistant IA personnel ORION"
     });
 });
 

@@ -216,7 +216,7 @@ public class PromptBuilder
             sb.AppendLine("- de bavardage, de politesse, ou d'un état passager (« j'ai faim », « il pleut »)");
             sb.AppendLine();
             sb.AppendLine("Formule chaque souvenir de façon AUTONOME : il sera relu hors de cette conversation.");
-            sb.AppendLine("Écris « Yawo héberge son infrastructure sur un VPS IONOS », pas « il l'héberge là-bas ».");
+            sb.AppendLine("Écris « Alex héberge son infrastructure sur un serveur dédié », pas « il l'héberge là-bas ».");
             sb.AppendLine("Un souvenir par fait — n'empile pas trois idées dans une phrase.");
             sb.AppendLine();
         }
