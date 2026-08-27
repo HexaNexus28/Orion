@@ -320,6 +320,10 @@ logger.LogInformation(" Memory tools registered (memory_save, memory_update, mem
 
 // ========== SYSTEM TOOLS (Daemon) ==========
 builder.Services.AddScoped<GetSystemStatusTool>();
+
+// Ce sur quoi l utilisateur travaille MAINTENANT — fichier et projet ouverts. Premier widget
+// PERMANENT du HUD : il reste a l ecran et se rafraichit, au lieu d apparaitre puis disparaitre.
+builder.Services.AddScoped<GetWorkContextTool>();
 builder.Services.AddScoped<GitStatusTool>();
 builder.Services.AddScoped<OpenAppTool>();
 builder.Services.AddScoped<OpenBrowserUrlTool>();
@@ -335,6 +339,7 @@ builder.Services.AddScoped<CaptureScreenTool>();
 
 // Register system tools as ITool for ToolRegistry auto-discovery
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<GetSystemStatusTool>());
+builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<GetWorkContextTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<GitStatusTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<OpenAppTool>());
 builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<OpenBrowserUrlTool>());

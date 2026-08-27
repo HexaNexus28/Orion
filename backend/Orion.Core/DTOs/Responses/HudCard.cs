@@ -25,6 +25,25 @@ public enum HudCardKind
 /// </summary>
 public enum HudCardState { Neutral, Ok, Warn, Critical }
 
+/// <summary>
+/// Duree de vie a l ecran. C est ce qui separe un widget d une notification.
+///
+/// Sans cette distinction, tout se valait : une carte produite par un outil et un panneau
+/// permanent occupaient le meme espace et disparaissaient ensemble au message suivant. Un HUD
+/// n est pas un flux — certaines choses doivent RESTER.
+/// </summary>
+public enum HudCardLifetime
+{
+    /// <summary>Widget permanent : contexte de travail, depots, echeances. Se rafraichit, ne disparait pas.</summary>
+    Pinned,
+
+    /// <summary>Le tour en cours : outil qui tourne, sources consultees. S efface ensuite.</summary>
+    Live,
+
+    /// <summary>Signal ponctuel qui demande l attention, puis s efface.</summary>
+    Event,
+}
+
 /// <summary>Une ligne dans une carte Status, List ou Sources.</summary>
 public class HudCardItem
 {
@@ -63,6 +82,9 @@ public class HudCard
     public HudCardState State { get; set; } = HudCardState.Neutral;
 
     public List<HudCardItem>? Items { get; set; }
+
+    /// <summary>Par defaut Live : une carte ne devient permanente que si elle le declare.</summary>
+    public HudCardLifetime Lifetime { get; set; } = HudCardLifetime.Live;
 
     public DateTime ProducedAt { get; set; } = DateTime.UtcNow;
 }

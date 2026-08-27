@@ -59,6 +59,10 @@ public static class ServiceCollectionExtensions
         services.AddSingleton<IAction, OpenBrowserUrlAction>();
         services.AddSingleton<IAction, LaunchClaudeAction>();
         services.AddSingleton<IAction, GetSystemStatusAction>();
+
+        // Ce sur quoi l utilisateur travaille MAINTENANT — application et titre de fenetre.
+        // system_status dit quelle machine ; celle-ci dit quel travail.
+        services.AddSingleton<IAction, GetWorkContextAction>();
         services.AddSingleton<IAction>(sp =>
         {
             var options = sp.GetRequiredService<DaemonOptions>();

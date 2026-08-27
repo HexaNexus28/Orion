@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using Orion.Daemon.Core.Interfaces;
 using Orion.Daemon.Core.Proactive;
@@ -69,7 +70,8 @@ public class ProcessWatcher : IWatcher
             if (!string.IsNullOrEmpty(nom) && !string.Equals(nom, _dernierNom, StringComparison.OrdinalIgnoreCase))
             {
                 _dernierNom = nom;
-                _logger.LogDebug("[ProcessWatcher] Premier plan : {App}", nom);
+                _logger.LogDebug("[ProcessWatcher] Premier plan : {App} — {Titre}",
+                    nom, TitreFenetreActive() ?? "(sans titre)");
             }
         }
         catch (Exception ex)
@@ -101,8 +103,33 @@ public class ProcessWatcher : IWatcher
         }
     }
 
+    /// <summary>
+    /// Titre de la fenetre active — « useVAD.ts - ShiftCore - Visual Studio Code ».
+    ///
+    /// POURQUOI CA COMPTE. Le nom du processus seul dit « Code » : ORION sait que tu codes, pas
+    /// SUR QUOI. Avec le titre il connait le fichier et le projet, donc il peut lire le diff,
+    /// lancer les tests du bon depot, proposer le bon commit. C est la difference entre un
+    /// indicateur d activite et un assistant qui travaille avec toi.
+    ///
+    /// 512 caracteres : les titres reels depassent rarement 120, la marge evite une troncature
+    /// silencieuse sur un chemin long.
+    /// </summary>
+    private static string? TitreFenetreActive()
+    {
+        var fenetre = GetForegroundWindow();
+        if (fenetre == IntPtr.Zero) return null;
+
+        var tampon = new StringBuilder(512);
+        var longueur = GetWindowText(fenetre, tampon, tampon.Capacity);
+
+        return longueur > 0 ? tampon.ToString() : null;
+    }
+
     [DllImport("user32.dll")]
     private static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern int GetWindowText(IntPtr hWnd, StringBuilder texte, int taille);
 
     [DllImport("user32.dll")]
     private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
