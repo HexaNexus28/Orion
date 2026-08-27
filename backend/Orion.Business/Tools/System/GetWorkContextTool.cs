@@ -115,6 +115,13 @@ public class GetWorkContextTool : ITool
                 Value = file ?? application ?? "inconnu",
                 State = HudCardState.Ok,
                 Items = items.Count > 0 ? items : null,
+
+                // Le seul geste honnete ici : relire. Un widget permanent doit pouvoir se
+                // mettre a jour sans qu on ait a formuler une phrase a voix haute.
+                Actions = new List<HudCardAction>
+                {
+                    new() { Label = "Rafraichir", Tool = "get_work_context" },
+                },
             };
         }
         catch (JsonException)

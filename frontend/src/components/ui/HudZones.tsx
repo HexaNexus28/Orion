@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type { HudCard, HudCardState } from '../../types/dto/agentDto';
+import type { HudCard, HudCardAction, HudCardState } from '../../types/dto/agentDto';
+import { toolService } from '../../services/toolService';
 import { useHudCards } from '../../context/HudCardsContext';
 
 /**
@@ -78,6 +79,14 @@ const Card: React.FC<{ card: HudCard; onDismiss?: (id: string) => void }> = ({ c
           </p>
         )}
 
+        {card.actions && card.actions.length > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {card.actions.map(action => (
+              <ActionButton key={action.tool + action.label} action={action} accent={accent} />
+            ))}
+          </div>
+        )}
+
         {card.items && card.items.length > 0 && (
           <ul className="mt-1.5 space-y-0.5">
             {card.items.slice(0, 6).map((item, k) => (
@@ -102,6 +111,56 @@ const Card: React.FC<{ card: HudCard; onDismiss?: (id: string) => void }> = ({ c
         )}
       </div>
     </motion.div>
+  );
+};
+
+/**
+ * Un geste proposé par une carte.
+ *
+ * L'état affiché suit ce qui s'est RÉELLEMENT passé. Un outil irréversible ne s'exécute pas :
+ * il part en file d'attente de confirmation (garde-fou côté serveur). Afficher « fait » dans ce
+ * cas serait mentir — le bouton dit « en attente », et pourquoi.
+ */
+const ActionButton: React.FC<{ action: HudCardAction; accent: string }> = ({ action, accent }) => {
+  const [state, setState] = useState<'idle' | 'running' | 'done' | 'queued' | 'failed'>('idle');
+
+  const run = async () => {
+    if (state === 'running') return;
+    setState('running');
+    try {
+      const response = await toolService.invoke(action.tool, action.arguments);
+
+      // Le serveur signale une mise en attente par `deferred` dans la charge utile : c'est le
+      // garde-fou qui a parlé, pas un échec.
+      const payload = JSON.stringify(response?.data ?? {});
+      setState(payload.includes('"deferred":true') ? 'queued' : 'done');
+    } catch {
+      setState('failed');
+    }
+    setTimeout(() => setState('idle'), 3000);
+  };
+
+  const label =
+    state === 'running' ? '…'
+    : state === 'done'  ? '✓'
+    : state === 'queued' ? 'à confirmer'
+    : state === 'failed' ? 'échec'
+    : action.label;
+
+  return (
+    <button
+      onClick={run}
+      disabled={state === 'running'}
+      className="rounded px-2 py-0.5 text-[9px] uppercase tracking-wider transition-opacity
+                 disabled:opacity-40 hover:opacity-100"
+      style={{
+        color: state === 'failed' ? '#ef4444' : accent,
+        border: `1px solid ${state === 'failed' ? '#ef4444' : accent}44`,
+        opacity: 0.75,
+      }}
+    >
+      {label}
+    </button>
   );
 };
 

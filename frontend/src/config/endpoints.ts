@@ -60,6 +60,12 @@ export const ENDPOINTS = {
     cancel: (id: string) => `/api/deferred-actions/${id}/cancel`,
   },
 
+  // ToolsController — gestes proposés par les cartes du HUD
+  tools: {
+    list: '/api/tools',
+    invoke: (name: string) => `/api/tools/${name}`,
+  },
+
   // ProactiveNotificationController - notifications temps réel daemon → frontend
   notifications: {
     stream: '/api/proactivenotification/stream',  // SSE - Server-Sent Events

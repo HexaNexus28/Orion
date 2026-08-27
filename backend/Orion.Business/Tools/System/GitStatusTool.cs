@@ -101,7 +101,19 @@ public class GitStatusTool : ITool
                 Value = branche,
                 Unit = changements.Count > 0 ? $"{changements.Count} modif." : "propre",
                 State = changements.Count > 0 ? HudCardState.Warn : HudCardState.Ok,
-                Items = items.Count > 0 ? items : null
+                Items = items.Count > 0 ? items : null,
+
+                // Le chemin vient de la carte elle-meme : sans lui, « rafraichir » relirait le
+                // depot par defaut et afficherait l etat d un AUTRE projet sous le meme titre.
+                Actions = new List<HudCardAction>
+                {
+                    new()
+                    {
+                        Label = "Rafraichir",
+                        Tool = "git_status",
+                        Arguments = JsonSerializer.Serialize(new { path = chemin }),
+                    },
+                }
             };
         }
         catch (JsonException)

@@ -41,6 +41,18 @@ export type HudCardState = 'neutral' | 'ok' | 'warn' | 'critical';
  */
 export type HudCardLifetime = 'pinned' | 'live' | 'event';
 
+/**
+ * Un geste proposé sur une carte. UNE ACTION EST UN APPEL D'OUTIL, rien d'autre — elle emprunte
+ * le chemin du modèle, donc le même garde-fou : un outil irréversible part en file d'attente au
+ * lieu de s'exécuter.
+ */
+export interface HudCardAction {
+  label: string;
+  tool: string;
+  /** Arguments JSON sérialisés, tels que le backend les a préparés. */
+  arguments?: string;
+}
+
 export interface HudCardItem {
   label: string;
   value?: string;
@@ -68,6 +80,8 @@ export interface HudCard {
   items?: HudCardItem[];
   /** Absent = 'live' : une carte ne devient permanente que si elle le déclare. */
   lifetime?: HudCardLifetime;
+  /** Absent = carte en lecture seule. */
+  actions?: HudCardAction[];
   producedAt?: string;
 }
 

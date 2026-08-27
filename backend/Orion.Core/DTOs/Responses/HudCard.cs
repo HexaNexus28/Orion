@@ -44,6 +44,29 @@ public enum HudCardLifetime
     Event,
 }
 
+/// <summary>
+/// Un geste proposé sur une carte : « je corrige ? », « je commit ? ».
+///
+/// UNE ACTION EST UN APPEL D OUTIL, rien d autre. Pas un second mécanisme à sécuriser : elle
+/// emprunte le chemin du modèle — même authentification, même ToolInvoker, donc même garde-fou
+/// de confirmation sur les outils irréversibles. Un bouton « commit » sur une carte se retrouve
+/// dans la file d attente exactement comme si le modèle l avait demandé.
+///
+/// C est ce qui fait passer le HUD du tableau de bord au cockpit : il n affiche plus un état,
+/// il propose le geste suivant.
+/// </summary>
+public class HudCardAction
+{
+    /// <summary>Ce que lit l utilisateur : « Corriger », « Commit », « Relancer les tests ».</summary>
+    public string Label { get; set; } = string.Empty;
+
+    /// <summary>Nom de l outil à appeler, tel qu il est enregistré dans le registre.</summary>
+    public string Tool { get; set; } = string.Empty;
+
+    /// <summary>Arguments JSON, sérialisés. Vide = aucun argument.</summary>
+    public string? Arguments { get; set; }
+}
+
 /// <summary>Une ligne dans une carte Status, List ou Sources.</summary>
 public class HudCardItem
 {
@@ -82,6 +105,9 @@ public class HudCard
     public HudCardState State { get; set; } = HudCardState.Neutral;
 
     public List<HudCardItem>? Items { get; set; }
+
+    /// <summary>Gestes proposés. Absent = la carte est en lecture seule.</summary>
+    public List<HudCardAction>? Actions { get; set; }
 
     /// <summary>Par defaut Live : une carte ne devient permanente que si elle le declare.</summary>
     public HudCardLifetime Lifetime { get; set; } = HudCardLifetime.Live;
