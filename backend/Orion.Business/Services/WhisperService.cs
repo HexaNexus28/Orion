@@ -144,7 +144,16 @@ public class WhisperService : IWhisperService, IDisposable
     {
         {
             using var processor = _whisperFactory!.CreateBuilder()
-                .WithLanguage(language ?? "auto")
+                // Nombre de fils EXPLICITE. Sans lui, Whisper.net en choisit un par defaut qui
+                // ignore la limite du conteneur : trop peu, on laisse des coeurs inutilises ;
+                // trop, les fils se disputent un quota CPU deja plafonne et la latence empire.
+                // ProcessorCount reflete la limite cgroup depuis .NET 6, donc il fait foi.
+                .WithThreads(Math.Max(1, Environment.ProcessorCount))
+
+                // « auto » fait payer une detection de langue AVANT de transcrire. L interface
+                // envoie deja « fr » : ne pas s en servir, c est acheter deux fois le meme
+                // travail. Le repli reste le francais, langue de l utilisateur.
+                .WithLanguage(language ?? "fr")
                 .Build();
 
             // Whisper attend du audio WAV 16kHz mono

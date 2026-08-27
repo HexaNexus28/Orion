@@ -380,7 +380,46 @@ builder.Services.AddHttpClient<IEmbeddingService, OpenAiCompatibleEmbeddingServi
 logger.LogInformation(" Embedding Service registered (fournisseur compatible OpenAI — Ollama retire du chemin de production)");
 
 // ========== VOICE SERVICE (Phase 4 - Whisper STT) ==========
-builder.Services.AddSingleton<IWhisperService, WhisperService>();
+// ── Transcription : distant en tete, local en repli ────────────────────────────────────────
+//
+// Whisper small en local mettait 5,0 s pour 4,6 s de parole, meme apres avoir quadruple les
+// ressources du conteneur. Voxtral (Mistral) fait 0,35 s et transcrit MIEUX — mesure du
+// 2026-08-27 sur le meme audio. La cle est celle qui sert deja aux embeddings : aucun compte
+// de plus, quotas hors d atteinte (3600 s d audio par minute).
+//
+// Le local reste enregistre DERRIERE : si Mistral tombe ou change ses conditions, la voix
+// continue de fonctionner en degrade au lieu de s arreter. Meme motif que LLMCascade.
+builder.Services.Configure<TranscriptionOptions>(
+    builder.Configuration.GetSection(TranscriptionOptions.SectionName));
+
+// La cle retombe sur celle des embeddings : meme fournisseur, meme compte. Dupliquer le secret
+// dans le coffre creerait deux valeurs a faire tourner ensemble — une seule finirait par l etre.
+builder.Services.PostConfigure<TranscriptionOptions>(o =>
+{
+    if (string.IsNullOrWhiteSpace(o.ApiKey))
+        o.ApiKey = builder.Configuration["Embedding:ApiKey"] ?? string.Empty;
+});
+
+var transcriptionOptions = builder.Configuration.GetSection(TranscriptionOptions.SectionName)
+    .Get<TranscriptionOptions>() ?? new TranscriptionOptions();
+
+builder.Services.AddHttpClient(VoxtralTranscriptionService.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri(transcriptionOptions.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(transcriptionOptions.TimeoutSeconds);
+});
+
+builder.Services.AddSingleton<WhisperService>();
+builder.Services.AddSingleton<VoxtralTranscriptionService>();
+
+// L ORDRE de ce tableau EST la politique de repli. Rien d autre ne la decide.
+builder.Services.AddSingleton<IWhisperService>(sp => new TranscriptionCascade(
+    new IWhisperService[]
+    {
+        sp.GetRequiredService<VoxtralTranscriptionService>(),
+        sp.GetRequiredService<WhisperService>(),
+    },
+    sp.GetRequiredService<ILogger<TranscriptionCascade>>()));
 builder.Services.AddScoped<IVoiceNotificationService, VoiceNotificationService>();
 logger.LogInformation(" Voice Service registered (Whisper STT + TTS notification)");
 
