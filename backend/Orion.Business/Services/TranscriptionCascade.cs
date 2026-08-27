@@ -16,61 +16,61 @@ namespace Orion.Business.Services;
 /// </summary>
 public class TranscriptionCascade : IWhisperService
 {
-    private readonly IReadOnlyList<IWhisperService> _fournisseurs;
+    private readonly IReadOnlyList<IWhisperService> _providers;
     private readonly ILogger<TranscriptionCascade> _logger;
 
-    public TranscriptionCascade(IEnumerable<IWhisperService> fournisseurs, ILogger<TranscriptionCascade> logger)
+    public TranscriptionCascade(IEnumerable<IWhisperService> providers, ILogger<TranscriptionCascade> logger)
     {
-        _fournisseurs = fournisseurs.ToList();
+        _providers = providers.ToList();
         _logger = logger;
     }
 
     /// <summary>Pret si AU MOINS un fournisseur l est — c est tout l interet du repli.</summary>
-    public bool IsReady => _fournisseurs.Any(f => f.IsReady);
+    public bool IsReady => _providers.Any(f => f.IsReady);
 
     public IReadOnlyList<string> SupportedLanguages =>
-        _fournisseurs.SelectMany(f => f.SupportedLanguages).Distinct().ToList();
+        _providers.SelectMany(f => f.SupportedLanguages).Distinct().ToList();
 
     public async Task<ApiResponse<string>> TranscribeAsync(Stream audioStream, string? language = null)
     {
         // Materialise UNE fois : un flux ne se relit pas, et le repli doit pouvoir retranscrire
         // exactement le meme audio. Sans ca le second fournisseur recevrait un flux vide.
-        using var memoire = new MemoryStream();
-        await audioStream.CopyToAsync(memoire);
-        return await TranscribeAsync(memoire.ToArray(), language);
+        using var buffer = new MemoryStream();
+        await audioStream.CopyToAsync(buffer);
+        return await TranscribeAsync(buffer.ToArray(), language);
     }
 
     public async Task<ApiResponse<string>> TranscribeAsync(byte[] audioData, string? language = null)
     {
-        ApiResponse<string>? dernierEchec = null;
+        ApiResponse<string>? lastFailure = null;
 
-        foreach (var fournisseur in _fournisseurs)
+        foreach (var provider in _providers)
         {
-            var nom = fournisseur.GetType().Name;
+            var providerName = provider.GetType().Name;
 
-            if (!fournisseur.IsReady)
+            if (!provider.IsReady)
             {
-                _logger.LogDebug("[Transcription] {Nom} non pret — suivant", nom);
+                _logger.LogDebug("[Transcription] {Provider} non pret — suivant", providerName);
                 continue;
             }
 
-            var resultat = await fournisseur.TranscribeAsync(audioData, language);
+            var result = await provider.TranscribeAsync(audioData, language);
 
             // Un succes VIDE n est pas un echec : c est du silence ou du bruit ambiant, et
             // reessayer ailleurs ne produirait pas de parole. Repartir en repli ferait payer
             // cinq secondes de Whisper pour confirmer qu il n y a rien a dire.
-            if (resultat.Success)
+            if (result.Success)
             {
-                if (fournisseur != _fournisseurs[0])
-                    _logger.LogWarning("[Transcription] REPLI utilise : {Nom}", nom);
-                return resultat;
+                if (provider != _providers[0])
+                    _logger.LogWarning("[Transcription] REPLI utilise : {Provider}", providerName);
+                return result;
             }
 
-            dernierEchec = resultat;
-            _logger.LogWarning("[Transcription] {Nom} a echoue ({Code}) — fournisseur suivant",
-                nom, resultat.StatusCode);
+            lastFailure = result;
+            _logger.LogWarning("[Transcription] {Provider} a echoue ({Code}) — provider suivant",
+                providerName, result.StatusCode);
         }
 
-        return dernierEchec ?? ApiResponse<string>.ErrorResponse("Aucun service de transcription disponible", 503);
+        return lastFailure ?? ApiResponse<string>.ErrorResponse("Aucun service de transcription disponible", 503);
     }
 }

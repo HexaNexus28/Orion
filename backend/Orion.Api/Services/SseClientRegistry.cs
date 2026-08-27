@@ -63,18 +63,18 @@ public class SseClientRegistry
     /// </summary>
     public async Task<int> BroadcastAsync(string eventName, object data)
     {
-        var morts = new List<string>();
+        var dead = new List<string>();
 
         foreach (var (clientId, response) in _clients)
         {
             try { await SendAsync(response, eventName, data); }
-            catch { morts.Add(clientId); }
+            catch { dead.Add(clientId); }
         }
 
-        foreach (var id in morts) _clients.TryRemove(id, out _);
+        foreach (var id in dead) _clients.TryRemove(id, out _);
 
-        if (morts.Count > 0)
-            _logger.LogDebug("[SSE] {Morts} connexion(s) fermee(s) retiree(s)", morts.Count);
+        if (dead.Count > 0)
+            _logger.LogDebug("[SSE] {Dead} connexion(s) fermee(s) retiree(s)", dead.Count);
 
         return _clients.Count;
     }

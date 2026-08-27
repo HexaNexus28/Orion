@@ -204,7 +204,7 @@ const App: React.FC = () => {
   //
   // Google Assistant ne fait pas autrement dans un navigateur : le mot-clé « OK Google » est
   // détecté par une couche NATIVE, dont une PWA ne dispose pas.
-  const [micArme, setMicArme] = useState(false);
+  const [micArmed, setMicArme] = useState(false);
 
   const maxAmpRef = useRef(0);
   const chunksRef = useRef(0);
@@ -228,7 +228,7 @@ const App: React.FC = () => {
    * Le geste qui arme le micro. À appeler depuis un vrai événement utilisateur — c’est ce
    * contexte d’exécution qui autorise le navigateur à démarrer l’audio.
    */
-  const armerMicro = useCallback(() => {
+  const armMicrophone = useCallback(() => {
     unlockSpeech();      // débloque aussi la synthèse vocale, soumise à la même règle
     setMicArme(true);
     setVoiceError(null);
@@ -402,13 +402,13 @@ const App: React.FC = () => {
   useEffect(() => {
     // `micArme` est la garde qui manquait : tant qu’aucun geste n’a eu lieu, on ne tente même
     // pas la capture. Une fois armé, l’écoute continue reprend seule après chaque tour.
-    if (!micArme || isInputVisible) {
+    if (!micArmed || isInputVisible) {
       stopPassiveListeningRef.current?.();
       return;
     }
     void startPassiveListeningRef.current?.();
     return () => { stopPassiveListeningRef.current?.(); };
-  }, [micArme, isInputVisible]);
+  }, [micArmed, isInputVisible]);
 
   // ── VAD → trigger voice turn ─────────────────────────────────────────────────
   // Quand MicVAD détecte la fin de parole (isSpeaking passe false → true → false)
@@ -482,9 +482,9 @@ const App: React.FC = () => {
           Tant qu’aucun geste n’a eu lieu, le navigateur REFUSE la capture audio — en silence.
           Plutôt que de tenter et d’échouer sans rien dire, on demande explicitement le geste.
           C’est aussi ce qui débloque la synthèse vocale, soumise à la même règle. */}
-      {!micArme && (
+      {!micArmed && (
         <button
-          onClick={armerMicro}
+          onClick={armMicrophone}
           className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4
                      bg-orion-darker/80 backdrop-blur-sm"
         >
@@ -507,7 +507,7 @@ const App: React.FC = () => {
           Le message existait déjà, mais discret : « Écoute passive active » s’affichait juste
           après un échec, et l’interface donnait tous les signes du bon fonctionnement pendant
           que rien ne marchait. Une panne qui se déguise en succès coûte des heures. */}
-      {voiceError && micArme && (
+      {voiceError && micArmed && (
         <div className="absolute inset-x-0 top-0 z-50 flex justify-center p-4">
           <button
             onClick={() => { setVoiceError(null); void startPassiveListeningRef.current?.(); }}

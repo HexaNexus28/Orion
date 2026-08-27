@@ -16,35 +16,35 @@
  */
 
 /** Nom enregistré du processeur, partagé entre la chaîne et l’instanciation. */
-export const NOM_PROCESSEUR = 'orion-vad';
+export const PROCESSOR_NAME = 'orion-vad';
 
 const SOURCE = `
 class OrionVad extends AudioWorkletProcessor {
   constructor(options) {
     super();
-    this.taille = options.processorOptions.taille;
-    this.buffer = new Float32Array(this.taille);
-    this.remplissage = 0;
+    this.size = options.processorOptions.size;
+    this.buffer = new Float32Array(this.size);
+    this.filled = 0;
   }
 
   process(inputs) {
-    const entree = inputs[0];
-    if (!entree || !entree[0]) return true;
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
 
-    const donnees = entree[0];
-    for (let i = 0; i < donnees.length; i++) {
-      this.buffer[this.remplissage++] = donnees[i];
+    const samples = input[0];
+    for (let i = 0; i < samples.length; i++) {
+      this.buffer[this.filled++] = samples[i];
 
-      if (this.remplissage === this.taille) {
-        const bloc = this.buffer.slice(0);
+      if (this.filled === this.size) {
+        const block = this.buffer.slice(0);
 
-        let somme = 0;
-        for (let k = 0; k < bloc.length; k++) somme += bloc[k] * bloc[k];
+        let sum = 0;
+        for (let k = 0; k < block.length; k++) sum += block[k] * block[k];
 
         // Le buffer est TRANSFÉRÉ, pas copié : à 16 kHz cela fait ~8 messages par seconde,
         // et une copie par message chargerait le ramasse-miettes pour rien.
-        this.port.postMessage({ rms: Math.sqrt(somme / bloc.length), bloc }, [bloc.buffer]);
-        this.remplissage = 0;
+        this.port.postMessage({ rms: Math.sqrt(sum / block.length), block }, [block.buffer]);
+        this.filled = 0;
       }
     }
     return true;
@@ -53,12 +53,12 @@ class OrionVad extends AudioWorkletProcessor {
 registerProcessor('orion-vad', OrionVad);
 `;
 
-let urlModule: string | null = null;
+let moduleUrl: string | null = null;
 
 /** URL du module worklet, créée une seule fois pour toute la session. */
-export function urlWorklet(): string {
-  if (!urlModule) {
-    urlModule = URL.createObjectURL(new Blob([SOURCE], { type: 'application/javascript' }));
+export function workletUrl(): string {
+  if (!moduleUrl) {
+    moduleUrl = URL.createObjectURL(new Blob([SOURCE], { type: 'application/javascript' }));
   }
-  return urlModule;
+  return moduleUrl;
 }

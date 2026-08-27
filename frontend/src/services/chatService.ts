@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { assertSessionValide, fetchAuthHeaders } from './authService';
+import { assertValidSession, fetchAuthHeaders } from './authService';
 import { API_BASE, ENDPOINTS } from '../config/endpoints';
 import type { ApiResponse } from '../types/api/apiResponse';
 import type { ChatRequest, ChatResponse } from '../types/dto/chatDto';
@@ -61,7 +61,7 @@ export const chatService = {
     // affiche "Stream failed: 401" indefiniment alors qu il suffirait de se reconnecter.
     // 403 compte AUSSI : un jeton emis avant l ajout du role owner est refuse ainsi, et le
     // front n appelle aucune route reservee au daemon.
-    assertSessionValide(response);
+    assertValidSession(response);
 
     if (!response.ok || !response.body) {
       throw new Error(`Stream failed: ${response.status}`);

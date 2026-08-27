@@ -40,8 +40,8 @@ import { authService } from './authService';
 async function buildWsUrl(): Promise<string> {
   const base = API_BASE.replace(/^http/, 'ws') + ENDPOINTS.voiceWS;
   // BILLET, pas le jeton de session : ce qui part dans une URL doit expirer en une minute.
-  const billet = await authService.getStreamTicket();
-  return `${base}?access_token=${encodeURIComponent(billet)}`;
+  const ticket = await authService.getStreamTicket();
+  return `${base}?access_token=${encodeURIComponent(ticket)}`;
 }
 
 /** Message JSON reçu du backend sur /ws/voice. */

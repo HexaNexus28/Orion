@@ -66,7 +66,7 @@ public class AuthController : ControllerBase
         _logger.LogInformation("[Auth] Session ouverte jusqu'au {Expires:yyyy-MM-dd}", expires);
 
         return Ok(ApiResponse<LoginResponse>.SuccessResponse(
-            new LoginResponse(Emettre(OrionAuth.Audience, expires), expires)));
+            new LoginResponse(IssueToken(OrionAuth.Audience, expires), expires)));
     }
 
     /// <summary>
@@ -86,7 +86,7 @@ public class AuthController : ControllerBase
     /// </summary>
     [Authorize(Policy = OrionAuth.OwnerPolicy)]
     [HttpPost("stream-ticket")]
-    public IActionResult DemanderBilletDeFlux()
+    public IActionResult RequestStreamTicket()
     {
         if (!_options.IsConfigured)
         {
@@ -97,7 +97,7 @@ public class AuthController : ControllerBase
         var expires = DateTime.UtcNow.AddSeconds(OrionAuth.StreamTicketLifetimeSeconds);
 
         return Ok(ApiResponse<LoginResponse>.SuccessResponse(
-            new LoginResponse(Emettre(OrionAuth.StreamAudience, expires), expires)));
+            new LoginResponse(IssueToken(OrionAuth.StreamAudience, expires), expires)));
     }
 
     /// <summary>
@@ -105,7 +105,7 @@ public class AuthController : ControllerBase
     /// les emettre a deux endroits garantirait qu ils finissent par diverger sur le reste
     /// (role, issuer, algorithme) sans que rien ne le signale.
     /// </summary>
-    private string Emettre(string audience, DateTime expires)
+    private string IssueToken(string audience, DateTime expires)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.JwtSecret));
 

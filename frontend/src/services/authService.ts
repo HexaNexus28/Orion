@@ -118,7 +118,7 @@ export function fetchAuthHeaders(extra: Record<string, string> = {}): Record<str
  * 403 compte AUSSI : un jeton emis avant l ajout du role `owner` est refuse ainsi, et le front
  * n appelle aucune route reservee au daemon — un 403 ne peut donc venir que de la session.
  */
-export function assertSessionValide(response: Response): void {
+export function assertValidSession(response: Response): void {
   if (response.status === 401 || response.status === 403) {
     authService.logout();
     window.dispatchEvent(new CustomEvent("orion:unauthenticated"));

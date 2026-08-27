@@ -1,5 +1,5 @@
 // Voice API Service - Uses apiClient and endpoints.ts (Pattern ORION)
-import { assertSessionValide, fetchAuthHeaders } from './authService';
+import { assertValidSession, fetchAuthHeaders } from './authService';
 import { API_BASE, ENDPOINTS } from '../config/endpoints';
 import { apiClient } from './api';
 import type { ApiResponse } from '../types';
@@ -229,7 +229,7 @@ export const converseStream = async (
     body: formData,
   });
 
-  assertSessionValide(response);
+  assertValidSession(response);
 
   if (!response.ok) {
     throw new Error(`Converse failed: ${response.status}`);

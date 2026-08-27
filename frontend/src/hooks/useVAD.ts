@@ -1,6 +1,6 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import { encodeWav } from '../services/voiceApi';
-import { NOM_PROCESSEUR, urlWorklet } from '../audio/vadWorklet';
+import { PROCESSOR_NAME, workletUrl } from '../audio/vadWorklet';
 
 interface UseVADOptions {
   onSpeechStart?: () => void;
@@ -128,10 +128,10 @@ export const useVAD = (options: UseVADOptions = {}) => {
       // Périphériques visibles : « aucun micro » et « micro refusé » sont deux pannes
       // différentes qui produisaient jusqu’ici le même message inutile.
       try {
-        const peripheriques = await navigator.mediaDevices.enumerateDevices();
-        const micros = peripheriques.filter(d => d.kind === 'audioinput');
-        console.log('[VAD] Micros détectés :', micros.length);
-        if (micros.length === 0) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const mics = devices.filter(d => d.kind === 'audioinput');
+        console.log('[VAD] Micros détectés :', mics.length);
+        if (mics.length === 0) {
           onError?.("Aucun microphone détecté sur cet appareil.");
           return;
         }
@@ -172,13 +172,13 @@ export const useVAD = (options: UseVADOptions = {}) => {
         console.warn('[VAD] AudioContext suspendu — attente d’un geste utilisateur');
         onError?.('Touche l’écran pour activer le micro.');
 
-        const reprendre = () => {
+        const resumeOnGesture = () => {
           void ctx.resume().then(() => {
             console.log('[VAD] AudioContext repris après geste');
             onError?.('');   // message efface : le micro fonctionne
           });
         };
-        document.addEventListener('pointerdown', reprendre, { once: true });
+        document.addEventListener('pointerdown', resumeOnGesture, { once: true });
       }
 
       audioCtxRef.current = ctx;
@@ -191,21 +191,21 @@ export const useVAD = (options: UseVADOptions = {}) => {
         console.warn(`[VAD] Fréquence réelle ${ctx.sampleRate} Hz au lieu de ${SAMPLE_RATE} Hz`);
       }
 
-      await ctx.audioWorklet.addModule(urlWorklet());
+      await ctx.audioWorklet.addModule(workletUrl());
 
       const source = ctx.createMediaStreamSource(stream);
-      const processor = new AudioWorkletNode(ctx, NOM_PROCESSEUR, {
+      const processor = new AudioWorkletNode(ctx, PROCESSOR_NAME, {
         numberOfInputs: 1,
         numberOfOutputs: 1,
-        processorOptions: { taille: BUFFER_SIZE },
+        processorOptions: { size: BUFFER_SIZE },
       });
       const mute = ctx.createGain();
       mute.gain.value = 0;
 
-      processor.port.onmessage = (event: MessageEvent<{ rms: number; bloc: Float32Array }>) => {
+      processor.port.onmessage = (event: MessageEvent<{ rms: number; block: Float32Array }>) => {
         if (!listeningRef.current) return;
 
-        const { rms, bloc: data } = event.data;
+        const { rms, block: data } = event.data;
 
         onAmplitude?.(Math.min(1, rms / 0.1));
 
@@ -270,17 +270,17 @@ export const useVAD = (options: UseVADOptions = {}) => {
     } catch (err) {
       // getUserMedia distingue precisement les causes, contrairement a l API de permissions.
       // Les confondre sous un seul message envoyait chercher au mauvais endroit.
-      const nom = err instanceof DOMException ? err.name : 'Erreur';
+      const errorName = err instanceof DOMException ? err.name : 'Erreur';
       const msg =
-        nom === 'NotAllowedError'  ? 'Micro bloqué par le navigateur — clique le cadenas à gauche de l’URL, mets Microphone sur « Autoriser », puis recharge.'
-      : nom === 'NotFoundError'    ? 'Aucun microphone trouvé — vérifie qu’il est branché et activé dans Windows.'
-      : nom === 'NotReadableError' ? 'Micro occupé par une autre application — ferme Teams, Discord ou un onglet qui l’utilise.'
-      : nom === 'SecurityError'    ? 'Capture audio interdite dans ce contexte (connexion non sécurisée ?).'
+        errorName === 'NotAllowedError'  ? 'Micro bloqué par le navigateur — clique le cadenas à gauche de l’URL, mets Microphone sur « Autoriser », puis recharge.'
+      : errorName === 'NotFoundError'    ? 'Aucun microphone trouvé — vérifie qu’il est branché et activé dans Windows.'
+      : errorName === 'NotReadableError' ? 'Micro occupé par une autre application — ferme Teams, Discord ou un onglet qui l’utilise.'
+      : errorName === 'SecurityError'    ? 'Capture audio interdite dans ce contexte (connexion non sécurisée ?).'
       : (err instanceof Error ? err.message : 'Accès microphone impossible');
 
       // L etat declare par l API est journalise A COTE de l erreur reelle : quand les deux
       // divergent (declare 'denied', getUserMedia reussit), c est l API qui se trompe.
-      console.error('[VAD] Erreur démarrage —', nom, '| permission déclarée :', etatPermission, err);
+      console.error('[VAD] Erreur démarrage —', errorName, '| permission déclarée :', etatPermission, err);
       onError?.(msg);
       throw err;   // l’appelant DOIT savoir que ça a échoué — cf. « Écoute passive active » mensonger
     }

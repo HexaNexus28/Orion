@@ -16,16 +16,16 @@ public class VoxtralTranscriptionService : IWhisperService
 {
     public const string HttpClientName = "Voxtral";
 
-    private readonly IHttpClientFactory _fabrique;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly TranscriptionOptions _options;
     private readonly ILogger<VoxtralTranscriptionService> _logger;
 
     public VoxtralTranscriptionService(
-        IHttpClientFactory fabrique,
+        IHttpClientFactory httpFactory,
         IOptions<TranscriptionOptions> options,
         ILogger<VoxtralTranscriptionService> logger)
     {
-        _fabrique = fabrique;
+        _httpFactory = httpFactory;
         _options = options.Value;
         _logger = logger;
     }
@@ -38,9 +38,9 @@ public class VoxtralTranscriptionService : IWhisperService
 
     public async Task<ApiResponse<string>> TranscribeAsync(Stream audioStream, string? language = null)
     {
-        using var memoire = new MemoryStream();
-        await audioStream.CopyToAsync(memoire);
-        return await TranscribeAsync(memoire.ToArray(), language);
+        using var buffer = new MemoryStream();
+        await audioStream.CopyToAsync(buffer);
+        return await TranscribeAsync(buffer.ToArray(), language);
     }
 
     public async Task<ApiResponse<string>> TranscribeAsync(byte[] audioData, string? language = null)
@@ -53,39 +53,39 @@ public class VoxtralTranscriptionService : IWhisperService
 
         try
         {
-            var client = _fabrique.CreateClient(HttpClientName);
+            var client = _httpFactory.CreateClient(HttpClientName);
 
-            using var contenu = new MultipartFormDataContent();
-            var fichier = new ByteArrayContent(audioData);
-            fichier.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
-            contenu.Add(fichier, "file", "audio.wav");
-            contenu.Add(new StringContent(_options.Model), "model");
+            using var form = new MultipartFormDataContent();
+            var filePart = new ByteArrayContent(audioData);
+            filePart.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+            form.Add(filePart, "file", "audio.wav");
+            form.Add(new StringContent(_options.Model), "model");
 
             // La langue est transmise quand on la connait : la faire deviner coute un temps de
             // detection pour un resultat qu on avait deja.
             if (!string.IsNullOrWhiteSpace(language) && language != "auto")
-                contenu.Add(new StringContent(language), "language");
+                form.Add(new StringContent(language), "language");
 
-            var debut = DateTime.UtcNow;
-            using var reponse = await client.PostAsync("audio/transcriptions", contenu);
-            var corps = await reponse.Content.ReadAsStringAsync();
+            var startedAt = DateTime.UtcNow;
+            using var response = await client.PostAsync("audio/transcriptions", form);
+            var body = await response.Content.ReadAsStringAsync();
 
-            if (!reponse.IsSuccessStatusCode)
+            if (!response.IsSuccessStatusCode)
             {
                 // Journalise en AVERTISSEMENT, pas en erreur : la cascade a un repli, ce n est
                 // pas encore une panne. Le code compte — 429 (quota) se traite autrement qu un 500.
-                _logger.LogWarning("[Voxtral] {Code} — {Corps}", (int)reponse.StatusCode,
-                    corps.Length > 200 ? corps[..200] : corps);
-                return ApiResponse<string>.ErrorResponse($"Voxtral {(int)reponse.StatusCode}", (int)reponse.StatusCode);
+                _logger.LogWarning("[Voxtral] {Code} — {Body}", (int)response.StatusCode,
+                    body.Length > 200 ? body[..200] : body);
+                return ApiResponse<string>.ErrorResponse($"Voxtral {(int)response.StatusCode}", (int)response.StatusCode);
             }
 
-            using var doc = JsonDocument.Parse(corps);
-            var texte = doc.RootElement.TryGetProperty("text", out var t) ? t.GetString() ?? string.Empty : string.Empty;
+            using var doc = JsonDocument.Parse(body);
+            var text = doc.RootElement.TryGetProperty("text", out var t) ? t.GetString() ?? string.Empty : string.Empty;
 
-            _logger.LogInformation("[Voxtral] Transcrit en {Duree:F2} s — {Taille} octets",
-                (DateTime.UtcNow - debut).TotalSeconds, audioData.Length);
+            _logger.LogInformation("[Voxtral] Transcrit en {Seconds:F2} s — {Bytes} octets",
+                (DateTime.UtcNow - startedAt).TotalSeconds, audioData.Length);
 
-            return ApiResponse<string>.SuccessResponse(texte.Trim());
+            return ApiResponse<string>.SuccessResponse(text.Trim());
         }
         catch (TaskCanceledException)
         {

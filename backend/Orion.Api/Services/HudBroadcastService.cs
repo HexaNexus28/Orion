@@ -27,7 +27,7 @@ public class HudBroadcastService : BackgroundService
     /// 60 s. Assez pour que la duree de fonctionnement bouge visiblement, assez peu pour ne pas
     /// solliciter le PC en continu — chaque tour reveille le daemon par WebSocket.
     /// </summary>
-    private static readonly TimeSpan Periode = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan Interval = TimeSpan.FromSeconds(60);
 
     public HudBroadcastService(
         IServiceScopeFactory scopeFactory,
@@ -47,7 +47,7 @@ public class HudBroadcastService : BackgroundService
         {
             try
             {
-                await DiffuserEtatDuPosteAsync(stoppingToken);
+                await BroadcastHostStatusAsync(stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -60,11 +60,11 @@ public class HudBroadcastService : BackgroundService
                 _logger.LogWarning(ex, "[HUD] Diffusion de l etat du poste echouee");
             }
 
-            await Task.Delay(Periode, stoppingToken);
+            await Task.Delay(Interval, stoppingToken);
         }
     }
 
-    private async Task DiffuserEtatDuPosteAsync(CancellationToken ct)
+    private async Task BroadcastHostStatusAsync(CancellationToken ct)
     {
         // Deux raisons de ne rien faire, et aucune n est une erreur : PC eteint, ou personne
         // devant l ecran. Interroger le poste pour zero spectateur serait du reveil gratuit.
@@ -76,11 +76,11 @@ public class HudBroadcastService : BackgroundService
         // InvokeNowAsync et non InvokeAsync : un sondage d affichage ne doit JAMAIS partir dans
         // la file des actions differees. Une carte en retard de douze heures ne vaut rien, et
         // elle encombrerait une file reservee a ce qui compte vraiment.
-        var reponse = await invoker.InvokeNowAsync("get_system_status", new JsonObject(), ct);
+        var response = await invoker.InvokeNowAsync("get_system_status", new JsonObject(), ct);
 
-        var carte = reponse.Data?.Card;
-        if (carte is null) return;
+        var card = response.Data?.Card;
+        if (card is null) return;
 
-        await _sse.BroadcastAsync("card", carte);
+        await _sse.BroadcastAsync("card", card);
     }
 }
