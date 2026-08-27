@@ -73,6 +73,20 @@ Thumbs.db
 # LARGE MODELS / BINARIES (if stored in public/ or src/)
 # -----------------------------------------------------------------------------
 *.onnx
+
+# EXCEPTION : le modele de detection de parole DOIT etre versionne.
+#
+# Les 81 Mo de moteur ONNX (public/vad/ort-wasm-*) sont commites, mais les 2,3 Mo de modele
+# qui les rendent utiles etaient exclus par la regle ci-dessus. Consequence constatee le
+# 2026-08-27 : le fichier existait en local, jamais dans l image, et le navigateur recevait un
+# 401 sur /vad/silero_vad_v5.onnx. Le moteur signalait « aucun graphe dans le protobuf » et
+# l interface affichait « aucun microphone trouve » — trois couches entre la cause et le
+# symptome.
+#
+# Meme famille de piege que appsettings.json et les icones PWA : present en local, absent du
+# depot, donc absent de la production.
+!frontend/public/vad/*.onnx
+!public/vad/*.onnx
 *.bin
 # `models/` tout court excluait AUSSI src/types/models/ — trois fichiers TypeScript SOURCES.
 # Le front etait donc inconstructible depuis un clone propre, et personne ne l a vu parce qu on
