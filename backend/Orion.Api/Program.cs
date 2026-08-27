@@ -3,6 +3,7 @@ using Microsoft.IdentityModel.JsonWebTokens;
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.StaticFiles;
 using Microsoft.IdentityModel.Tokens;
 ﻿using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
@@ -480,7 +481,23 @@ app.UseMiddleware<ErrorHandlingMiddleware>();
 // si elle exigeait une session l'utilisateur n'aurait jamais l'ecran pour en ouvrir une.
 // C'est l'API qui est protegee, pas le HTML qui permet de s'y connecter.
 app.UseDefaultFiles();
-app.UseStaticFiles();
+
+// Types MIME EXPLICITES pour ce que la PWA embarque.
+//
+// UseStaticFiles ne sert QUE les extensions qu il connait. Une extension inconnue n est pas
+// refusee : elle est IGNOREE. La requete continue vers le routage, ne trouve aucun point
+// d entree, et la politique fermee par defaut repond 401 — un code qui envoie chercher du cote
+// de l authentification alors que le probleme est une table de types MIME.
+//
+// Constate le 2026-08-27 : /vad/silero_vad_v5.onnx renvoyait 401 pendant que le worklet .js
+// voisin renvoyait 200. Le moteur ONNX recevait un corps vide et signalait « aucun graphe dans
+// le protobuf » — une erreur qui ne pointait vers rien de vrai. Le detecteur de parole ne
+// pouvait donc PAS demarrer, et l interface parlait d un micro absent.
+var contentTypes = new FileExtensionContentTypeProvider();
+contentTypes.Mappings[".onnx"] = "application/octet-stream";   // modele Silero
+contentTypes.Mappings[".bin"] = "application/octet-stream";    // poids de modele
+
+app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes });
 
 // WebSocket — daemon + voix.
 //

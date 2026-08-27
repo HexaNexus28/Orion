@@ -125,6 +125,18 @@ export const useVAD = (options: UseVADOptions = {}) => {
       // MicVAD appelle getUserMedia en interne : mêmes causes, mêmes distinctions. Les confondre
       // sous un seul message envoyait chercher au mauvais endroit.
       const errorName = err instanceof DOMException ? err.name : 'Erreur';
+
+      // Un echec de CHARGEMENT DU MODELE ne doit pas se presenter comme un probleme de micro.
+      // Le 2026-08-27, /vad/silero_vad_v5.onnx renvoyait 401 (type MIME inconnu cote serveur)
+      // et l'interface parlait d'un micro absent : des heures passees a verifier des reglages
+      // Edge et Windows pour une table de types MIME. Une panne doit dire ce qui a echoue.
+      const brut = err instanceof Error ? err.message : '';
+      if (/onnx|protobuf|session|model|graph/i.test(brut)) {
+        const msgModele = 'Le detecteur de parole n a pas pu charger son modele — ce n est PAS un probleme de micro. Recharge la page ; si ca persiste, le fichier /vad/silero_vad_v5.onnx n est pas servi correctement.';
+        console.error('[VAD] Chargement du modele impossible —', brut);
+        cbRef.current.onError?.(msgModele);
+        throw err;
+      }
       const msg =
         errorName === 'NotAllowedError'
           ? "Micro bloqué par le navigateur — clique le cadenas à gauche de l'URL, mets Microphone sur « Autoriser », puis recharge."
