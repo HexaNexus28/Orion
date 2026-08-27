@@ -19,6 +19,12 @@ import type { HudCard } from '../types/dto/agentDto';
  */
 interface HudCardsValue {
   cards: HudCard[];
+
+  /** Widgets permanents — colonne de gauche. Se rafraîchissent, ne disparaissent pas. */
+  pinned: HudCard[];
+
+  /** Le tour en cours et les signaux — colonne de droite. S'effacent. */
+  transient: HudCard[];
   /** Ajoute la carte, ou remplace celle qui porte le même identifiant. */
   upsertCard: (card: HudCard) => void;
   dismissCard: (id: string) => void;
@@ -49,9 +55,14 @@ export const HudCardsProvider = ({ children }: { children: ReactNode }) => {
 
   const clearCards = useCallback(() => setCards([]), []);
 
+  // Dérivé, jamais stocké en double : une seule source de vérité, deux lectures. Maintenir
+  // deux tableaux séparés reviendrait à les désynchroniser au premier oubli.
+  const pinned = useMemo(() => cards.filter(c => c.lifetime === 'pinned'), [cards]);
+  const transient = useMemo(() => cards.filter(c => c.lifetime !== 'pinned'), [cards]);
+
   const value = useMemo(
-    () => ({ cards, upsertCard, dismissCard, clearCards }),
-    [cards, upsertCard, dismissCard, clearCards]
+    () => ({ cards, pinned, transient, upsertCard, dismissCard, clearCards }),
+    [cards, pinned, transient, upsertCard, dismissCard, clearCards]
   );
 
   return <HudCardsContext.Provider value={value}>{children}</HudCardsContext.Provider>;

@@ -33,6 +33,14 @@ export type HudCardKind = 'metric' | 'status' | 'list' | 'sources';
  */
 export type HudCardState = 'neutral' | 'ok' | 'warn' | 'critical';
 
+/**
+ * Durée de vie à l'écran — ce qui sépare un widget d'une notification.
+ *
+ * Sans cette distinction tout se valait : un panneau permanent et une carte d'outil occupaient
+ * le même espace et disparaissaient ensemble au message suivant. Un HUD n'est pas un flux.
+ */
+export type HudCardLifetime = 'pinned' | 'live' | 'event';
+
 export interface HudCardItem {
   label: string;
   value?: string;
@@ -58,6 +66,8 @@ export interface HudCard {
   unit?: string;
   state: HudCardState;
   items?: HudCardItem[];
+  /** Absent = 'live' : une carte ne devient permanente que si elle le déclare. */
+  lifetime?: HudCardLifetime;
   producedAt?: string;
 }
 
