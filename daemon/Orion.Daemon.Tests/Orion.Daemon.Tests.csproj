@@ -19,6 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Orion.Daemon.Core\Orion.Daemon.Core.csproj" />
+    <!--
+      Les ACTIONS, pas seulement le garde qu'elles utilisent. La faille C1 de l'audit du
+      2026-08-27 n'etait pas un PathScope defectueux : c'etait un PathScope jamais appele.
+      Des tests portant sur Core seul seraient restes verts pendant toute la duree de la faille.
+    -->
+    <ProjectReference Include="..\Orion.Daemon.Actions\Orion.Daemon.Actions.csproj" />
   </ItemGroup>
 
 </Project>
