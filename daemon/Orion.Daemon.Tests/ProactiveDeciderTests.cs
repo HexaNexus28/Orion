@@ -17,10 +17,10 @@ public class ProactiveDeciderTests
 
     private static ProactiveOptions Options(int parHeure = 3, int cooldown = 15) => new()
     {
-        InterruptionsParHeure = parHeure,
+        InterruptionsPerHour = parHeure,
         CooldownMinutes = cooldown,
-        SeuilInterruption = 55,
-        SeuilCritique = 75
+        InterruptionThreshold = 55,
+        CriticalThreshold = 75
     };
 
     private static PatternDetectedEventArgs Signal(string pattern, int? severite = null)
@@ -38,7 +38,33 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Un_incident_interrompt()
+    public void Decide_HighCpuBarelyOverThreshold_GoesToBriefing()
+    {
+        // LE bug du 2026-09-01 : SystemWatcher ecrivait `cpu_percent`, le decideur lit
+        // `severity`. Le contrat n'etait relie nulle part, le score restait fige a 60 — au-dessus
+        // du seuil de 55 — et un CPU a 90,1 % interrompait aussi fort qu'un CPU sature.
+        var decideur = new ProactiveDecider(Options());
+
+        var decision = decideur.Decider(Signal("high_cpu", severite: 1), T0);
+
+        Assert.Equal(ProactiveAction.Differer, decision.Action);
+        Assert.True(decision.Score < 55, $"score attendu sous le seuil, obtenu {decision.Score}");
+    }
+
+    [Fact]
+    public void Decide_HighCpuSaturated_Interrupts()
+    {
+        // La contrepartie, sans laquelle le test precedent serait satisfait par un watcher muet.
+        var decideur = new ProactiveDecider(Options());
+
+        var decision = decideur.Decider(Signal("high_cpu", severite: 100), T0);
+
+        Assert.Equal(ProactiveAction.Parler, decision.Action);
+        Assert.True(decision.Score > 55, $"score attendu au-dessus du seuil, obtenu {decision.Score}");
+    }
+
+    [Fact]
+    public void Decide_Incident_Interrupts()
     {
         var decideur = new ProactiveDecider(Options());
 
@@ -49,7 +75,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Un_rappel_d_hygiene_de_vie_n_interrompt_PAS()
+    public void Decide_WellbeingReminder_DoesNotInterrupt()
     {
         // « C'est l'heure de manger » est vrai, mais ne vaut pas qu'on coupe une session de
         // travail. Ça attend le briefing.
@@ -61,7 +87,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Le_meme_signal_ne_se_repete_pas_dans_le_cooldown()
+    public void Decide_SameSignalWithinCooldown_Suppressed()
     {
         var decideur = new ProactiveDecider(Options(cooldown: 15));
 
@@ -74,7 +100,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Passe_le_cooldown_le_signal_repasse()
+    public void Decide_AfterCooldown_SignalPassesAgain()
     {
         var decideur = new ProactiveDecider(Options(cooldown: 15));
         Appliquer(decideur, Signal("vps_down"), T0);
@@ -85,7 +111,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Le_budget_d_attention_borne_les_interruptions()
+    public void Decide_AttentionBudget_CapsInterruptions()
     {
         // Ce qui sépare un collègue d'un spammeur de notifications.
         var decideur = new ProactiveDecider(Options(parHeure: 2));
@@ -101,7 +127,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Un_incident_CRITIQUE_passe_meme_budget_epuise()
+    public void Decide_CriticalIncident_PassesEvenWhenBudgetSpent()
     {
         // Perdre une alerte de service mort pour cause de quota serait absurde.
         var decideur = new ProactiveDecider(Options(parHeure: 1));
@@ -114,7 +140,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Le_budget_se_libere_avec_le_temps()
+    public void Decide_OverTime_BudgetFreesUp()
     {
         var decideur = new ProactiveDecider(Options(parHeure: 1));
         Appliquer(decideur, Signal("high_ram"), T0);
@@ -126,7 +152,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Ce_qui_est_differe_se_retrouve_dans_le_briefing()
+    public void Decide_DeferredSignal_AppearsInBriefing()
     {
         var decideur = new ProactiveDecider(Options());
         Appliquer(decideur, Signal("meal_time"), T0);
@@ -140,7 +166,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Drainer_vide_la_file()
+    public void Drain_Called_EmptiesQueue()
     {
         var decideur = new ProactiveDecider(Options());
         Appliquer(decideur, Signal("meal_time"), T0);
@@ -150,7 +176,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Un_signal_differe_plusieurs_fois_ne_s_accumule_pas()
+    public void Decide_SignalDeferredRepeatedly_DoesNotPileUp()
     {
         // Sinon le briefing répète dix fois « c'est l'heure de manger ».
         var decideur = new ProactiveDecider(Options());
@@ -162,7 +188,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void La_severite_mesuree_module_le_score_sans_renverser_le_classement()
+    public void Decide_MeasuredSeverity_ShiftsScoreKeepsRanking()
     {
         var decideur = new ProactiveDecider(Options());
 
@@ -177,7 +203,7 @@ public class ProactiveDeciderTests
     // ── Apprentissage : ORION cesse de dire ce qu'on ignore ─────────────────────
 
     [Fact]
-    public void Une_penalite_apprise_fait_taire_un_signal_qui_passait()
+    public void Decide_LearnedPenalty_SilencesPassingSignal()
     {
         var decideur = new ProactiveDecider(Options());
         Assert.Equal(ProactiveAction.Parler, decideur.Decider(Signal("high_cpu"), T0).Action);
@@ -189,7 +215,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Une_penalite_forte_fait_descendre_un_signal_CRITIQUE_sous_le_seuil()
+    public void Decide_StrongPenalty_DropsCriticalBelowThreshold()
     {
         // Un utilisateur qui refuse obstinement doit pouvoir faire taire meme une alerte forte.
         var decideur = new ProactiveDecider(Options());
@@ -201,7 +227,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Une_penalite_ne_touche_QUE_le_pattern_concerne()
+    public void Decide_Penalty_AffectsOnlyItsPattern()
     {
         var decideur = new ProactiveDecider(Options());
         decideur.AppliquerPenalites(new Dictionary<string, int> { ["high_cpu"] = 50 });
@@ -210,7 +236,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Sans_penalite_apprise_le_comportement_est_inchange()
+    public void Decide_NoLearnedPenalty_BehaviourUnchanged()
     {
         var decideur = new ProactiveDecider(Options());
         decideur.AppliquerPenalites(new Dictionary<string, int>());
@@ -219,7 +245,7 @@ public class ProactiveDeciderTests
     }
 
     [Fact]
-    public void Un_pattern_inconnu_recoit_une_urgence_moyenne_et_ne_casse_rien()
+    public void Decide_UnknownPattern_GetsMediumUrgency()
     {
         var decideur = new ProactiveDecider(Options());
 
