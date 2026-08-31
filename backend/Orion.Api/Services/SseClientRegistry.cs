@@ -5,16 +5,8 @@ using System.Text.Json.Serialization;
 namespace Orion.Api.Services;
 
 /// <summary>
-/// Les clients SSE connectes, et la diffusion vers eux.
-///
-/// POURQUOI CE SERVICE EXISTE. La liste vivait dans un champ `private static` de
-/// ProactiveNotificationController, avec la boucle de diffusion recopiee a trois endroits du
-/// meme fichier. Tant que seul ce controleur diffusait, ca tenait. Des qu'un service
-/// d'arriere-plan doit pousser quelque chose — les cartes permanentes du HUD — il faudrait soit
-/// atteindre un champ statique prive depuis l'exterieur, soit tenir une seconde liste. Les deux
-/// sont des impasses.
-///
-/// Singleton : la liste doit survivre aux requetes, un flux SSE vit des heures.
+/// Les clients SSE connectes, et la diffusion vers eux. Singleton : un flux SSE vit des heures,
+/// la liste doit survivre aux requetes et rester atteignable par les services d'arriere-plan.
 /// </summary>
 public class SseClientRegistry
 {
@@ -25,13 +17,8 @@ public class SseClientRegistry
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
 
-        // Enums en TEXTE, comme dans ChatController. Constate en production le 2026-08-26 : la
-        // meme carte partait en "state":"ok" par le flux de chat et en "state":1 par ce flux-ci.
-        // Le front lisait alors une valeur inconnue et retombait sur la couleur neutre — un
-        // panneau permanent affiche en gris au lieu de vert, SANS la moindre erreur.
-        //
-        // Deux endroits qui serialisent la meme chose finissent toujours par diverger : c est
-        // arrive ici entre l ecriture du contrat et sa verification, le meme jour.
+        // Enums en TEXTE, comme ChatController. Diverger ici envoie "state":1 au lieu de
+        // "state":"ok" : le front retombe sur la couleur neutre, SANS erreur visible.
         Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) }
     };
 

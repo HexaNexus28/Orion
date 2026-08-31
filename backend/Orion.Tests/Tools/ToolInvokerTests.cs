@@ -56,7 +56,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task PC_allume_l_outil_s_execute_normalement()
+    public async Task Invoke_PcOn_ToolRunsNormally()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(true);
         var outil = new OutilFactice("open_app", requiresDaemon: true, deferrable: true);
@@ -70,7 +70,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task PC_eteint_un_outil_differable_est_mis_en_file_et_non_execute()
+    public async Task Invoke_PcOffDeferrableTool_QueuedNotExecuted()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(false);
         var outil = new OutilFactice("git_commit", requiresDaemon: true, deferrable: true, destructive: true);
@@ -91,7 +91,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Le_caractere_destructif_est_fige_dans_la_ligne_pas_relu_plus_tard()
+    public async Task Invoke_QueuedAction_FreezesDestructivenessInRow()
     {
         // Une action déjà en file doit garder le régime sous lequel elle a été demandée,
         // même si le drapeau de l'outil change ensuite dans le code.
@@ -104,7 +104,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task PC_eteint_une_lecture_est_refusee_franchement_et_n_encombre_pas_la_file()
+    public async Task Invoke_PcOffReadTool_RefusedPlainlyNotQueued()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(false);
         var outil = new OutilFactice("list_files", requiresDaemon: true, deferrable: false);
@@ -118,7 +118,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Un_outil_sans_daemon_marche_meme_PC_eteint()
+    public async Task Invoke_ToolWithoutDaemon_RunsEvenPcOff()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(false);
         var outil = new OutilFactice("memory_save", requiresDaemon: false);
@@ -130,7 +130,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Un_outil_inconnu_rend_404_sans_rien_enfiler()
+    public async Task Invoke_UnknownTool_Returns404WithoutQueueing()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(false);
 
@@ -141,7 +141,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task InvokeNow_execute_meme_si_le_daemon_est_declare_absent()
+    public async Task InvokeNow_DaemonReportedAbsent_StillRuns()
     {
         // Chemin du drain : à ce moment le daemon vient de revenir. Re-différer ferait tourner
         // l'action en rond jusqu'à son expiration.
@@ -156,7 +156,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Un_outil_qui_leve_rend_un_echec_au_lieu_de_casser_la_boucle()
+    public async Task Invoke_ToolThrows_ReturnsFailureKeepsLoop()
     {
         _daemon.SetupGet(d => d.IsConnected).Returns(true);
         var outil = new OutilFactice("open_app", requiresDaemon: true, deferrable: true) { Explose = true };
@@ -205,7 +205,7 @@ public class ToolInvokerTests : IDisposable
     // requete qui en resulte est parfaitement AUTHENTIFIEE. Aucun controle d acces ne l arrete.
 
     [Fact]
-    public async Task Outil_destructif_PC_ALLUME_ne_s_execute_PAS_sans_confirmation()
+    public async Task Invoke_DestructiveToolPcOn_RequiresConfirmation()
     {
         _daemon.Setup(d => d.IsConnected).Returns(true);   // le PC repond
         var outil = new OutilFactice("run_script", requiresDaemon: true, deferrable: true, destructive: true);
@@ -222,7 +222,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Outil_NON_destructif_PC_allume_s_execute_normalement()
+    public async Task Invoke_NonDestructiveToolPcOn_RunsNormally()
     {
         // Le garde-fou ne doit pas transformer ORION en machine a confirmations : lire un
         // fichier ou lister un dossier reste immediat.
@@ -236,7 +236,7 @@ public class ToolInvokerTests : IDisposable
     }
 
     [Fact]
-    public async Task Le_message_ne_pretend_PAS_que_le_PC_est_eteint_quand_il_tourne()
+    public async Task Invoke_PcOn_MessageDoesNotClaimPcIsOff()
     {
         // Dire « ton PC est eteint » alors qu il tourne enverrait chercher un probleme qui
         // n existe pas. Les deux raisons de mettre en file doivent se distinguer.

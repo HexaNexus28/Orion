@@ -54,7 +54,7 @@ public class LLMCascadeTests
     };
 
     [Fact]
-    public async Task Le_premier_fournisseur_vivant_est_elu()
+    public async Task Elect_FirstLiveProvider_Wins()
     {
         var nim = new FakeClient(LLMProvider.Nim, "nemotron", alive: true);
         var local = new FakeClient(LLMProvider.Ollama, "llama3.2:3b", alive: true);
@@ -70,7 +70,7 @@ public class LLMCascadeTests
     }
 
     [Fact]
-    public async Task Un_fournisseur_mort_fait_basculer_sur_le_suivant()
+    public async Task Elect_DeadProvider_FallsThroughToNext()
     {
         var nim = new FakeClient(LLMProvider.Nim, "nemotron", alive: false);
         var local = new FakeClient(LLMProvider.Ollama, "llama3.2:3b", alive: true);
@@ -84,7 +84,7 @@ public class LLMCascadeTests
     }
 
     [Fact]
-    public async Task Le_tour_part_vers_le_fournisseur_elu_uniquement()
+    public async Task Send_Turn_GoesOnlyToElectedProvider()
     {
         var nim = new FakeClient(LLMProvider.Nim, "nemotron", alive: false);
         var local = new FakeClient(LLMProvider.Ollama, "llama3.2:3b", alive: true);
@@ -100,7 +100,7 @@ public class LLMCascadeTests
     }
 
     [Fact]
-    public async Task Aucun_fournisseur_vivant_la_sonde_echoue_franchement()
+    public async Task Probe_NoLiveProvider_FailsPlainly()
     {
         var cascade = Build(
             new FakeClient(LLMProvider.Nim, "nemotron", alive: false),
@@ -112,7 +112,7 @@ public class LLMCascadeTests
     }
 
     [Fact]
-    public async Task Sans_fournisseur_elu_un_tour_leve_au_lieu_de_faire_semblant()
+    public async Task Send_NoElectedProvider_ThrowsNotPretends()
     {
         // Régression du silence : un LLM absent doit CASSER visiblement, pas répondre du vide.
         var cascade = Build(new FakeClient(LLMProvider.Nim, "nemotron", alive: false));
@@ -125,7 +125,7 @@ public class LLMCascadeTests
     }
 
     [Fact]
-    public void Une_cascade_vide_est_refusee_a_la_construction()
+    public void Ctor_EmptyCascade_Refused()
     {
         Assert.Throws<InvalidOperationException>(() => Build());
     }

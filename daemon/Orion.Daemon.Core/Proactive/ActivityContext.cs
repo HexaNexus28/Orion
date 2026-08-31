@@ -52,12 +52,12 @@ public class ActivityContext : IActivityContext
 
             // Signal trop vieux : le watcher est peut-être arrêté. On ne prétend pas savoir.
             // Mieux vaut interrompre à tort que suspendre les alertes sur une donnée périmée.
-            var fraicheur = TimeSpan.FromMinutes(Math.Max(2, _options.FraicheurActiviteMinutes));
+            var fraicheur = TimeSpan.FromMinutes(Math.Max(2, _options.ActivityFreshnessMinutes));
             if (maintenant - _dernierSignal > fraicheur) return ActivityState.Inconnu;
 
             var duree = maintenant - _depuis;
             var concentre = AppsDeTravail.Contains(_application)
-                            && duree >= TimeSpan.FromMinutes(Math.Max(1, _options.ConcentrationApresMinutes));
+                            && duree >= TimeSpan.FromMinutes(Math.Max(1, _options.FocusAfterMinutes));
 
             return new ActivityState(_application, duree, concentre);
         }

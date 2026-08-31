@@ -32,7 +32,7 @@ public class TranscriptionCascadeTests
         => new(f, NullLogger<TranscriptionCascade>.Instance);
 
     [Fact]
-    public async Task Le_premier_fournisseur_qui_reussit_arrete_la_cascade()
+    public async Task Transcribe_FirstProviderSucceeds_StopsCascade()
     {
         var distant = new FakeTranscriber(ApiResponse<string>.SuccessResponse("bonjour"));
         var local = new FakeTranscriber(ApiResponse<string>.SuccessResponse("bonjour aussi"));
@@ -45,7 +45,7 @@ public class TranscriptionCascadeTests
     }
 
     [Fact]
-    public async Task Un_echec_distant_declenche_le_repli_local()
+    public async Task Transcribe_RemoteFails_FallsBackToLocal()
     {
         var distant = new FakeTranscriber(ApiResponse<string>.ErrorResponse("429 quota", 429));
         var local = new FakeTranscriber(ApiResponse<string>.SuccessResponse("transcrit en local"));
@@ -58,7 +58,7 @@ public class TranscriptionCascadeTests
     }
 
     [Fact]
-    public async Task Un_fournisseur_NON_pret_est_saute_sans_etre_appele()
+    public async Task Transcribe_ProviderNotReady_SkippedWithoutCall()
     {
         var distant = new FakeTranscriber(ApiResponse<string>.SuccessResponse("jamais"), pret: false);
         var local = new FakeTranscriber(ApiResponse<string>.SuccessResponse("local"));
@@ -70,7 +70,7 @@ public class TranscriptionCascadeTests
     }
 
     [Fact]
-    public async Task Une_transcription_VIDE_est_un_succes_et_ne_declenche_PAS_le_repli()
+    public async Task Transcribe_EmptyResult_IsSuccessNoFallback()
     {
         // Du silence ou du bruit ambiant : reessayer ailleurs ne fera pas apparaitre de parole.
         // Repartir en repli ferait payer 5 s de Whisper pour confirmer qu il n y a rien a dire.
@@ -84,7 +84,7 @@ public class TranscriptionCascadeTests
     }
 
     [Fact]
-    public async Task Tous_en_echec_rend_le_dernier_echec_et_non_un_succes_vide()
+    public async Task Transcribe_AllFail_ReturnsLastFailure()
     {
         var distant = new FakeTranscriber(ApiResponse<string>.ErrorResponse("502", 502));
         var local = new FakeTranscriber(ApiResponse<string>.ErrorResponse("modele absent", 503));

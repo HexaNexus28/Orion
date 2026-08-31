@@ -23,70 +23,70 @@ public class PathScopeTests
     // ── Le défaut est le refus ───────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Sans_racine_configuree_tout_est_refuse()
+    public void Resolve_NoConfiguredRoot_RefusesEverything()
     {
         var perimetre = new PathScope(Array.Empty<string>());
 
-        Assert.False(perimetre.EstConfigure);
-        Assert.Null(perimetre.Resoudre(Racine("projets"), out var raison));
+        Assert.False(perimetre.IsConfigured);
+        Assert.Null(perimetre.Resolve(Racine("projets"), out var raison));
         Assert.Contains("AllowedRoots", raison);
     }
 
     [Fact]
-    public void Une_liste_nulle_vaut_une_liste_vide_donc_refus()
+    public void Resolve_NullRootList_RefusesLikeEmpty()
     {
-        Assert.Null(new PathScope(null).Resoudre(Racine("projets"), out _));
+        Assert.Null(new PathScope(null).Resolve(Racine("projets"), out _));
     }
 
     // ── Le cas passant ───────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Un_fichier_sous_une_racine_autorisee_passe()
+    public void Resolve_FileUnderAllowedRoot_Passes()
     {
         var attendu = Path.Combine(Racine("projets"), "orion", "README.md");
 
-        var resolu = Perimetre().Resoudre(attendu, out var raison);
+        var resolu = Perimetre().Resolve(attendu, out var raison);
 
         Assert.Equal(attendu, resolu);
         Assert.Empty(raison);
     }
 
     [Fact]
-    public void La_racine_elle_meme_est_autorisee()
+    public void Resolve_RootItself_Passes()
     {
-        Assert.NotNull(Perimetre().Resoudre(Racine("projets"), out _));
+        Assert.NotNull(Perimetre().Resolve(Racine("projets"), out _));
     }
 
     // ── Les contournements ───────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void La_remontee_par_deux_points_ne_sort_pas_du_perimetre()
+    public void Resolve_DotDotTraversal_StaysInScope()
     {
         // Le cœur du sujet : comparer la CHAÎNE D'ENTRÉE laisserait passer ce chemin, qui
         // commence bien par une racine autorisée mais désigne autre chose une fois normalisé.
         var evasion = Path.Combine(Racine("projets"), "..", "..", "secrets.txt");
 
-        Assert.Null(Perimetre().Resoudre(evasion, out var raison));
+        Assert.Null(Perimetre().Resolve(evasion, out var raison));
         Assert.Contains("hors périmètre", raison);
     }
 
     [Fact]
-    public void Une_racine_voisine_au_nom_plus_long_nest_pas_incluse()
+    public void Resolve_SiblingRootWithLongerName_Refused()
     {
         // « /tmp/orion-tests/projets » ne doit PAS autoriser « /tmp/orion-tests/projets-prives ».
         // Un StartsWith nu se fait avoir ici ; la comparaison par segment non.
         var voisin = Racine("projets-prives") + Path.DirectorySeparatorChar + "notes.md";
 
-        Assert.Null(Perimetre().Resoudre(voisin, out var raison));
+        Assert.Null(Perimetre().Resolve(voisin, out var raison));
         Assert.Contains("hors périmètre", raison);
     }
 
     [Fact]
-    public void Un_chemin_vide_est_refuse()
+    public void Resolve_EmptyPath_Refused()
     {
-        Assert.Null(Perimetre().Resoudre("", out _));
-        Assert.Null(Perimetre().Resoudre("   ", out _));
-        Assert.Null(Perimetre().Resoudre(null, out _));
+        Assert.Null(Perimetre().Resolve("", out _));
+        Assert.Null(Perimetre().Resolve("   ", out _));
+        Assert.Null(Perimetre().Resolve(null, out _));
     }
 
     // ── Les noms sensibles, même sous une racine autorisée ───────────────────────────────────
@@ -97,11 +97,11 @@ public class PathScopeTests
     [InlineData(".git")]
     [InlineData("secrets.json")]
     [InlineData("appsettings.Production.json")]
-    public void Un_emplacement_sensible_est_refuse_sous_une_racine_autorisee(string nom)
+    public void Resolve_SensitiveNameUnderAllowedRoot_Refused(string nom)
     {
         var chemin = Path.Combine(Racine("projets"), nom, "peu-importe");
 
-        Assert.Null(Perimetre().Resoudre(chemin, out var raison));
+        Assert.Null(Perimetre().Resolve(chemin, out var raison));
         Assert.Contains("sensible", raison);
     }
 
@@ -109,36 +109,36 @@ public class PathScopeTests
     [InlineData(".env")]
     [InlineData(".env.local")]
     [InlineData(".env.production")]
-    public void Toutes_les_variantes_de_env_sont_refusees(string nom)
+    public void Resolve_AnyDotEnvVariant_Refused(string nom)
     {
         // Les lister une par une garantirait d'en oublier une : c'est le préfixe qui tient.
         var chemin = Path.Combine(Racine("projets"), "orion", nom);
 
-        Assert.Null(Perimetre().Resoudre(chemin, out var raison));
+        Assert.Null(Perimetre().Resolve(chemin, out var raison));
         Assert.Contains("sensible", raison);
     }
 
     [Fact]
-    public void Un_nom_sensible_enfoui_est_refuse_aussi()
+    public void Resolve_BuriedSensitiveName_Refused()
     {
         // Ce n'est pas le DERNIER segment qui est sensible ici : le contrôle doit regarder
         // toute la descente, sinon `projet/.ssh/id_rsa` passe.
         var chemin = Path.Combine(Racine("projets"), "orion", ".ssh", "id_rsa");
 
-        Assert.Null(Perimetre().Resoudre(chemin, out _));
+        Assert.Null(Perimetre().Resolve(chemin, out _));
     }
 
     [Fact]
-    public void La_casse_ne_permet_pas_de_contourner_un_nom_sensible()
+    public void Resolve_DifferentCasing_StillRefused()
     {
         // Windows est insensible à la casse : « .SSH » et « .ssh » désignent le même dossier.
         var chemin = Path.Combine(Racine("projets"), ".SSH", "id_rsa");
 
-        Assert.Null(Perimetre().Resoudre(chemin, out _));
+        Assert.Null(Perimetre().Resolve(chemin, out _));
     }
 
     [Fact]
-    public void Un_nom_sensible_present_dans_la_RACINE_ne_bloque_pas_tout()
+    public void Resolve_SensitiveNameInRootItself_DoesNotBlockAll()
     {
         // Le filtre ne s'applique qu'AU-DESSOUS de la racine : si l'utilisateur autorise
         // explicitement un dossier dont le nom est sensible, c'est son choix, et tout ce qu'il
@@ -146,46 +146,46 @@ public class PathScopeTests
         var perimetre = new PathScope(new[] { Path.Combine(Racine("coffre"), ".ssh") });
         var chemin = Path.Combine(Racine("coffre"), ".ssh", "config");
 
-        Assert.NotNull(perimetre.Resoudre(chemin, out _));
+        Assert.NotNull(perimetre.Resolve(chemin, out _));
     }
 
     // ── Racines multiples ────────────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Plusieurs_racines_sont_acceptees_independamment()
+    public void Resolve_MultipleRoots_EachAcceptedIndependently()
     {
         var perimetre = new PathScope(new[] { Racine("depots"), Racine("documents") });
 
-        Assert.NotNull(perimetre.Resoudre(Path.Combine(Racine("depots"), "a.txt"), out _));
-        Assert.NotNull(perimetre.Resoudre(Path.Combine(Racine("documents"), "b.txt"), out _));
-        Assert.Null(perimetre.Resoudre(Path.Combine(Racine("autre"), "c.txt"), out _));
+        Assert.NotNull(perimetre.Resolve(Path.Combine(Racine("depots"), "a.txt"), out _));
+        Assert.NotNull(perimetre.Resolve(Path.Combine(Racine("documents"), "b.txt"), out _));
+        Assert.Null(perimetre.Resolve(Path.Combine(Racine("autre"), "c.txt"), out _));
     }
 
     [Fact]
-    public void Une_racine_vide_dans_la_liste_est_ignoree_et_nautorise_rien()
+    public void Resolve_EmptyRootEntry_IgnoredAndAllowsNothing()
     {
         // Une entrée blanche ne doit surtout pas se normaliser en répertoire courant et
         // ouvrir un périmètre que personne n'a déclaré.
         var perimetre = new PathScope(new[] { "", "   ", Racine("projets") });
 
-        Assert.NotNull(perimetre.Resoudre(Path.Combine(Racine("projets"), "a.txt"), out _));
-        Assert.Null(perimetre.Resoudre(Path.Combine(Racine("ailleurs"), "b.txt"), out _));
+        Assert.NotNull(perimetre.Resolve(Path.Combine(Racine("projets"), "a.txt"), out _));
+        Assert.Null(perimetre.Resolve(Path.Combine(Racine("ailleurs"), "b.txt"), out _));
     }
 
     [Fact]
-    public void Une_liste_de_noms_refuses_explicite_remplace_le_defaut()
+    public void Ctor_ExplicitDeniedNames_ReplacesDefaults()
     {
         var perimetre = new PathScope(new[] { Racine("projets") }, new[] { "interdit" });
 
-        Assert.Null(perimetre.Resoudre(Path.Combine(Racine("projets"), "interdit", "x"), out _));
+        Assert.Null(perimetre.Resolve(Path.Combine(Racine("projets"), "interdit", "x"), out _));
         // « secrets.json » n'est plus dans la liste : le choix explicite prime.
-        Assert.NotNull(perimetre.Resoudre(Path.Combine(Racine("projets"), "secrets.json"), out _));
+        Assert.NotNull(perimetre.Resolve(Path.Combine(Racine("projets"), "secrets.json"), out _));
     }
 
     // ── Racine de volume : le cas où l'arithmétique naïve se trompe ──────────────────────────
 
     [Fact]
-    public void Une_racine_de_volume_reste_franchissable()
+    public void Resolve_VolumeRoot_StaysTraversable()
     {
         // « C:\ » (ou « / ») porte déjà son séparateur. Lui en ajouter un second produit un
         // préfixe que plus aucun chemin ne satisfait : le périmètre se fermerait TOTALEMENT,
@@ -193,12 +193,12 @@ public class PathScopeTests
         var volume = Path.GetPathRoot(Path.GetTempPath())!;
         var perimetre = new PathScope(new[] { volume });
 
-        Assert.NotNull(perimetre.Resoudre(Path.Combine(Path.GetTempPath(), "a.txt"), out var raison));
+        Assert.NotNull(perimetre.Resolve(Path.Combine(Path.GetTempPath(), "a.txt"), out var raison));
         Assert.Empty(raison);
     }
 
     [Fact]
-    public void Sous_une_racine_de_volume_les_noms_sensibles_restent_refuses()
+    public void Resolve_SensitiveNameUnderVolumeRoot_Refused()
     {
         // Le pendant du test précédent : en découpant les segments par arithmétique sur les
         // longueurs, « .ssh » perd son premier caractère et devient « ssh » — le filtre ne
@@ -206,14 +206,14 @@ public class PathScopeTests
         var volume = Path.GetPathRoot(Path.GetTempPath())!;
         var perimetre = new PathScope(new[] { volume });
 
-        Assert.Null(perimetre.Resoudre(Path.Combine(volume, ".ssh", "id_rsa"), out var raison));
+        Assert.Null(perimetre.Resolve(Path.Combine(volume, ".ssh", "id_rsa"), out var raison));
         Assert.Contains("sensible", raison);
     }
 
     // ── Périmètre d'écriture (C2) ────────────────────────────────────────────────────────────
 
     [Fact]
-    public void Le_perimetre_decriture_peut_etre_plus_etroit_que_celui_de_lecture()
+    public void WriteScope_NarrowerThanReadScope_Enforced()
     {
         // Lire un dépôt et pouvoir y écrire ne sont pas la même permission : c'est la raison
         // d'être d'AllowedWriteRoots. Ici, ORION lit deux dossiers mais n'écrit que dans un.
@@ -222,19 +222,19 @@ public class PathScopeTests
 
         var cible = Path.Combine(Racine("depots"), "orion", "fichier.txt");
 
-        Assert.NotNull(lecture.Resoudre(cible, out _));
-        Assert.Null(ecriture.Resoudre(cible, out _));
+        Assert.NotNull(lecture.Resolve(cible, out _));
+        Assert.Null(ecriture.Resolve(cible, out _));
     }
 
-    // ── EstVisible, utilisé par le listing ───────────────────────────────────────────────────
+    // ── IsVisible, utilisé par le listing ───────────────────────────────────────────────────
 
     [Fact]
-    public void EstVisible_suit_exactement_les_memes_regles()
+    public void IsVisible_SameRulesAsResolve()
     {
         var perimetre = Perimetre();
 
-        Assert.True(perimetre.EstVisible(Path.Combine(Racine("projets"), "orion", "README.md")));
-        Assert.False(perimetre.EstVisible(Path.Combine(Racine("projets"), ".env")));
-        Assert.False(perimetre.EstVisible(Path.Combine(Racine("ailleurs"), "x.txt")));
+        Assert.True(perimetre.IsVisible(Path.Combine(Racine("projets"), "orion", "README.md")));
+        Assert.False(perimetre.IsVisible(Path.Combine(Racine("projets"), ".env")));
+        Assert.False(perimetre.IsVisible(Path.Combine(Racine("ailleurs"), "x.txt")));
     }
 }

@@ -64,7 +64,7 @@ public class PromptBuilderTests
             voiceMode);
 
     [Fact]
-    public void Les_outils_sont_listes_avec_leur_description()
+    public void Build_RegisteredTools_ListedWithDescription()
     {
         // Régression §1.7 : la liste était toujours vide, la section ne s'affichait jamais.
         var prompt = Build();
@@ -75,7 +75,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Le_prompt_dit_explicitement_quand_NE_PAS_utiliser_d_outil()
+    public void Build_Always_StatesWhenNotToUseATool()
     {
         // Sans cette consigne, un petit modèle sur-déclenche : llama3.2:3b appelait open_app
         // pour « dis bonjour ».
@@ -87,7 +87,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Le_prompt_enseigne_le_chainage()
+    public void Build_Always_TeachesToolChaining()
     {
         var prompt = Build();
 
@@ -96,7 +96,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Les_outils_destructifs_sont_nommes_et_encadres()
+    public void Build_DestructiveTools_NamedAndFenced()
     {
         var prompt = Build();
 
@@ -107,7 +107,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Sans_outil_destructif_la_section_prudence_disparait()
+    public void Build_NoDestructiveTool_OmitsCautionSection()
     {
         var prompt = Build(tools: new List<ITool> { new FakeTool("web_search", "Cherche") });
 
@@ -115,7 +115,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Daemon_hors_ligne_le_prompt_previent_au_lieu_de_laisser_echouer()
+    public void Build_DaemonOffline_WarnsInsteadOfFailing()
     {
         var prompt = Build(daemonConnected: false);
 
@@ -130,7 +130,7 @@ public class PromptBuilderTests
     /// l'utilisateur en profite jamais.
     /// </summary>
     [Fact]
-    public void Daemon_hors_ligne_le_prompt_dit_que_differer_n_est_pas_echouer()
+    public void Build_DaemonOffline_SaysDeferringIsNotFailing()
     {
         var prompt = Build(daemonConnected: false);
 
@@ -145,7 +145,7 @@ public class PromptBuilderTests
     /// l'état d'hier soir n'est pas rendre service, et encombrerait la file pour rien.
     /// </summary>
     [Fact]
-    public void Daemon_hors_ligne_les_lectures_ne_sont_pas_annoncees_comme_differables()
+    public void Build_DaemonOffline_ReadsNotAnnouncedDeferrable()
     {
         var prompt = Build(daemonConnected: false);
 
@@ -154,7 +154,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Daemon_connecte_pas_d_avertissement_parasite()
+    public void Build_DaemonOnline_NoSpuriousWarning()
     {
         var prompt = Build(daemonConnected: true);
 
@@ -163,7 +163,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Aucun_outil_enregistre_le_prompt_le_dit_honnetement()
+    public void Build_NoRegisteredTool_SaysSoHonestly()
     {
         var prompt = Build(tools: new List<ITool>());
 
@@ -172,7 +172,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Mode_voix_interdit_le_markdown_et_reclame_des_phrases_courtes()
+    public void Build_VoiceMode_ForbidsMarkdownWantsShortSentences()
     {
         var prompt = Build(voiceMode: true);
 
@@ -184,7 +184,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Mode_texte_autorise_le_formatage()
+    public void Build_TextMode_AllowsFormatting()
     {
         var prompt = Build(voiceMode: false);
 
@@ -193,7 +193,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Le_profil_et_les_souvenirs_sont_injectes()
+    public void Build_ProfileAndMemories_Injected()
     {
         var prompt = Build(
             profile: new Dictionary<string, string> { ["name"] = "Alex", ["role"] = "Fondateur" },
@@ -206,7 +206,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Sans_souvenir_la_section_memoire_disparait()
+    public void Build_NoMemory_OmitsMemorySection()
     {
         var prompt = Build(memories: new List<MemoryVector>());
 
@@ -214,7 +214,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void La_doctrine_de_memoire_dit_quand_retenir_ET_quand_s_abstenir()
+    public void Build_MemoryDoctrine_SaysWhenToKeepAndAbstain()
     {
         var prompt = Build(tools: new List<ITool>
         {
@@ -231,7 +231,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Sans_outil_memoire_la_doctrine_disparait()
+    public void Build_NoMemoryTool_OmitsDoctrine()
     {
         var prompt = Build(tools: new List<ITool> { new FakeTool("web_search", "Cherche") });
 
@@ -239,7 +239,7 @@ public class PromptBuilderTests
     }
 
     [Fact]
-    public void Le_prompt_interdit_d_inventer_des_arguments_et_de_mentir()
+    public void Build_Always_ForbidsInventingArgumentsAndLying()
     {
         var prompt = Build();
 

@@ -100,7 +100,7 @@ public class ProactiveDecider : IProactiveDecider
             //    Perdre une alerte de service mort pour cause de quota serait absurde.
             //    Le score a DEJA subi la penalite apprise : un utilisateur qui refuse
             //    obstinement un signal peut donc le faire descendre sous ce seuil.
-            if (score >= _options.SeuilCritique)
+            if (score >= _options.CriticalThreshold)
                 return ProactiveDecision.Parler(score, "incident critique");
 
             // 3. Sous le seuil d'interruption : vrai, mais ça attendra le briefing.
@@ -109,8 +109,8 @@ public class ProactiveDecider : IProactiveDecider
             //    critiques sont déjà passés à l'étape 2, ils ne sont donc jamais bloqués ici.
             var etat = _activite.Etat(maintenant);
             var seuil = etat.TravailConcentre
-                ? _options.SeuilInterruption + _options.MalusConcentration
-                : _options.SeuilInterruption;
+                ? _options.InterruptionThreshold + _options.FocusPenalty
+                : _options.InterruptionThreshold;
 
             if (score < seuil)
             {
@@ -121,10 +121,10 @@ public class ProactiveDecider : IProactiveDecider
 
             // 4. Budget d'attention — ce qui sépare un collègue d'un spammeur de notifications.
             var depuisUneHeure = _interruptions.Count(i => maintenant - i < TimeSpan.FromHours(1));
-            if (depuisUneHeure >= _options.InterruptionsParHeure)
+            if (depuisUneHeure >= _options.InterruptionsPerHour)
             {
                 return ProactiveDecision.Differer(score,
-                    $"budget d'attention epuise ({depuisUneHeure}/{_options.InterruptionsParHeure} cette heure)");
+                    $"budget d'attention epuise ({depuisUneHeure}/{_options.InterruptionsPerHour} cette heure)");
             }
 
             return ProactiveDecision.Parler(score, "au-dessus du seuil, budget disponible");

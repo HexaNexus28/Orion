@@ -22,7 +22,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void GetStatus_expose_le_fournisseur_ET_le_modele_actif()
+    public void GetStatus_Elected_ExposesProviderAndModel()
     {
         // Le modèle fait partie du contrat : c'est l'information qui manquait quand ORION
         // tournait sur un repli dégradé sans que rien ne le signale.
@@ -37,7 +37,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void GetStatus_signale_hors_ligne_quand_aucun_fournisseur_n_est_elu()
+    public void GetStatus_NoProviderElected_ReportsOffline()
     {
         var service = new LLMService(Client(LLMProvider.None, "aucun").Object);
 
@@ -49,7 +49,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void HealthService_reporte_le_modele_dans_le_health_check()
+    public void HealthCheck_Elected_ReportsModel()
     {
         var llm = new Mock<Orion.Core.Interfaces.Services.ILLMService>();
         llm.Setup(s => s.GetStatus()).Returns(ApiResponse<LLMStatusDto>.SuccessResponse(new LLMStatusDto
@@ -67,7 +67,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void HealthService_dit_None_quand_le_LLM_est_absent()
+    public void HealthCheck_NoLlm_ReportsNone()
     {
         var llm = new Mock<Orion.Core.Interfaces.Services.ILLMService>();
         llm.Setup(s => s.GetStatus()).Returns(ApiResponse<LLMStatusDto>.SuccessResponse(new LLMStatusDto
@@ -83,7 +83,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void Le_metier_ne_depend_jamais_du_transport_directement()
+    public void Contract_Business_DoesNotDependOnTransport()
     {
         // Garde-fou d'architecture : HealthService doit se construire avec un ILLMService,
         // pas avec un client LLM. Si quelqu'un recâble le raccourci, ceci ne compile plus.
@@ -95,7 +95,7 @@ public class LLMServiceTests
     }
 
     [Fact]
-    public void Le_contrat_du_service_reste_minimal()
+    public void Contract_Service_StaysMinimal()
     {
         // Zéro code mort : le service n'expose que ce qui a un appelant réel.
         var methods = typeof(Orion.Core.Interfaces.Services.ILLMService).GetMethods();

@@ -28,7 +28,7 @@ public class ToolSchemaTests
         var args = new List<object?>();
         foreach (var parameter in constructor.GetParameters())
         {
-            var dependance = Resoudre(parameter.ParameterType);
+            var dependance = Resolve(parameter.ParameterType);
             if (dependance is null) return null;
             args.Add(dependance);
         }
@@ -51,9 +51,9 @@ public class ToolSchemaTests
     /// qui le lit. Dans les deux cas l'ancienne version renvoyait `null`, et l'outil DISPARAISSAIT
     /// silencieusement du balayage — une couverture qui rétrécit sans que rien ne rougisse.
     /// C'est exactement le genre de perte que ce fichier existe pour empêcher, d'où le garde
-    /// <see cref="Aucun_outil_nest_silencieusement_absent_du_balayage"/>.
+    /// <see cref="Registry_Scan_MissesNoTool"/>.
     /// </summary>
-    private static object? Resoudre(Type type)
+    private static object? Resolve(Type type)
     {
         // IOptions<T> : rendre une vraie valeur par défaut, jamais un bouchon dont .Value est nul.
         if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IOptions<>))
@@ -82,7 +82,7 @@ public class ToolSchemaTests
             var args = new List<object?>();
             foreach (var parametre in constructeur.GetParameters())
             {
-                var dependance = Resoudre(parametre.ParameterType);
+                var dependance = Resolve(parametre.ParameterType);
                 if (dependance is null) return null;
                 args.Add(dependance);
             }
@@ -98,7 +98,7 @@ public class ToolSchemaTests
     /// schéma — et le test resterait vert.
     /// </summary>
     [Fact]
-    public void Aucun_outil_nest_silencieusement_absent_du_balayage()
+    public void Registry_Scan_MissesNoTool()
     {
         var decouverts = typeof(ToolRegistry).Assembly
             .GetTypes()
@@ -119,7 +119,7 @@ public class ToolSchemaTests
 
         Assert.True(manquants.Count == 0,
             "Ces outils n'ont pas pu être instanciés et échappent donc à toute vérification "
-            + $"de schéma : {string.Join(", ", manquants)}. Ajouter leur dépendance à Resoudre().");
+            + $"de schéma : {string.Join(", ", manquants)}. Ajouter leur dépendance à Resolve().");
     }
 
     public static TheoryData<string, ITool> TousLesOutils()
@@ -142,7 +142,7 @@ public class ToolSchemaTests
 
     [Theory]
     [MemberData(nameof(TousLesOutils))]
-    public void Le_schema_est_un_objet_JSON_Schema_valide(string name, ITool tool)
+    public void Schema_Emitted_IsValidJsonSchemaObject(string name, ITool tool)
     {
         var schema = tool.InputSchema;
 
@@ -168,7 +168,7 @@ public class ToolSchemaTests
 
     [Theory]
     [MemberData(nameof(TousLesOutils))]
-    public void Les_champs_requis_existent_dans_les_proprietes(string name, ITool tool)
+    public void Schema_RequiredFields_ExistInProperties(string name, ITool tool)
     {
         var schema = tool.InputSchema;
         if (schema["required"] is not JsonArray required) return;
@@ -186,7 +186,7 @@ public class ToolSchemaTests
 
     [Theory]
     [MemberData(nameof(TousLesOutils))]
-    public void Le_nom_et_la_description_permettent_au_modele_de_choisir(string name, ITool tool)
+    public void Schema_NameAndDescription_LetModelChoose(string name, ITool tool)
     {
         Assert.Matches("^[a-z][a-z0-9_]*$", tool.Name);
         Assert.False(string.IsNullOrWhiteSpace(tool.Description),

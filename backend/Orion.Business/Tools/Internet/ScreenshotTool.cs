@@ -9,7 +9,7 @@ namespace Orion.Business.Tools.Internet;
 
 public class ScreenshotTool : ITool
 {
-    private readonly UrlScope _perimetre;
+    private readonly UrlScope _scope;
     private readonly ILogger<ScreenshotTool> _logger;
     private IPlaywright? _playwright;
     private IBrowser? _browser;
@@ -47,7 +47,7 @@ public class ScreenshotTool : ITool
 
     public ScreenshotTool(UrlScope perimetre, ILogger<ScreenshotTool> logger)
     {
-        _perimetre = perimetre;
+        _scope = perimetre;
         _logger = logger;
     }
 
@@ -70,10 +70,10 @@ public class ScreenshotTool : ITool
         //
         // C'était aussi un TROISIÈME contrôle d'URL, plus faible que les deux autres. Il vit
         // désormais à un seul endroit, comme le reste (constat E2).
-        var (cible, raison) = await _perimetre.VerifierAsync(url, ct);
+        var (cible, raison) = await _scope.ValidateAsync(url, ct);
         if (cible is null)
         {
-            _logger.LogWarning("[screenshot_page] URL refusée : {Raison}", raison);
+            _logger.LogWarning("[screenshot_page] URL refusée : {Reason}", raison);
             return ApiResponse<ToolResult>.ForbiddenResponse(raison);
         }
 

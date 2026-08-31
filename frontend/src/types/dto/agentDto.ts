@@ -23,29 +23,15 @@ export interface AgentEvent {
 
 // ── HUD ────────────────────────────────────────────────────────────────────
 // Miroir de Orion.Core/DTOs/Responses/HudCard.cs — garder les deux alignés.
+// Le raisonnement (gravité vs couleur, durées de vie, actions = appels d'outil) est documenté
+// une seule fois, côté C#.
 
-/** Forme de la carte : détermine le composant de rendu. */
 export type HudCardKind = 'metric' | 'status' | 'list' | 'sources';
 
-/**
- * Gravité, PAS une couleur. Le backend dit ce qui se passe, le front décide de
- * l'apparence — sinon changer le thème obligerait à modifier des outils métier.
- */
 export type HudCardState = 'neutral' | 'ok' | 'warn' | 'critical';
 
-/**
- * Durée de vie à l'écran — ce qui sépare un widget d'une notification.
- *
- * Sans cette distinction tout se valait : un panneau permanent et une carte d'outil occupaient
- * le même espace et disparaissaient ensemble au message suivant. Un HUD n'est pas un flux.
- */
 export type HudCardLifetime = 'pinned' | 'live' | 'event';
 
-/**
- * Un geste proposé sur une carte. UNE ACTION EST UN APPEL D'OUTIL, rien d'autre — elle emprunte
- * le chemin du modèle, donc le même garde-fou : un outil irréversible part en file d'attente au
- * lieu de s'exécuter.
- */
 export interface HudCardAction {
   label: string;
   tool: string;
@@ -61,12 +47,6 @@ export interface HudCardItem {
 }
 
 /**
- * Carte produite par un OUTIL à partir de son résultat réel.
- *
- * Remplace parseHoloCards(), qui fabriquait des cartes par expression régulière sur la prose :
- * toute statistique en gras en devenait une, par accident, et rien n'apparaissait quand ça
- * comptait. Une carte est désormais la conséquence d'une action réellement exécutée.
- *
  * `id` est STABLE et porte le sujet (`git.ShiftStar`) : rappeler le même outil MET À JOUR la
  * carte au lieu d'en empiler une seconde.
  */

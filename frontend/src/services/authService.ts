@@ -2,16 +2,11 @@ import axios from 'axios';
 import { API_BASE } from '../config/endpoints';
 
 /**
- * Authentification d'ORION — mot de passe unique echange contre un jeton de session.
+ * Authentification d'ORION : mot de passe SAISI, echange contre un jeton a duree limitee. Rien
+ * de permanent ne vit cote client — un bundle navigateur est lisible par tous.
  *
- * POURQUOI PAS UN SECRET EMBARQUE. Ce bundle tourne dans un navigateur : n'importe qui
- * chargeant la page peut le lire. Un secret dedans ne protegerait rien. Le mot de passe est
- * SAISI par l'utilisateur, echange contre un jeton a duree limitee, et seul ce jeton est
- * conserve — rien de permanent ne vit cote client.
- *
- * localStorage et non sessionStorage : sur telephone, l'app est fermee et rouverte en
- * permanence. Une session par onglet obligerait a retaper le mot de passe dix fois par jour,
- * ce qui pousse a choisir un mot de passe faible — la securite theorique se paie en securite reelle.
+ * localStorage et non sessionStorage : sur telephone l'app est fermee sans cesse, et retaper le
+ * mot de passe dix fois par jour pousse a en choisir un faible.
  */
 const TOKEN_KEY = 'orion.token';
 const EXPIRY_KEY = 'orion.token.expiresAt';
@@ -58,18 +53,11 @@ export const authService = {
   },
 
   /**
-   * Billet de flux — jeton de 60 secondes, seul autorise a voyager dans une URL.
+   * Billet de flux — 60 s, seul jeton autorise dans une URL (SSE et WebSocket navigateur ne
+   * portent pas d en-tete, et une URL finit dans les journaux).
    *
-   * SSE et WebSocket de navigateur ne peuvent porter aucun en-tete : leur jeton doit passer
-   * par l URL. Or une URL finit dans les journaux du serveur, ceux du CDN, l historique et le
-   * Referer. Y mettre le jeton de session — valable 30 jours — revenait a le publier ; il a
-   * ete retrouve en clair dans access.log le 2026-08-26.
-   *
-   * A demander JUSTE AVANT d ouvrir le flux, et a redemander a CHAQUE reconnexion : un billet
-   * expire ne rouvre rien.
-   *
-   * Instance axios NUE, comme login() : passer par apiClient ferait boucler l intercepteur
-   * si le serveur repondait 401.
+   * A redemander a CHAQUE reconnexion : un billet expire ne rouvre rien.
+   * Axios NU comme login() : apiClient ferait boucler l intercepteur sur un 401.
    */
   async getStreamTicket(): Promise<string> {
     const token = authService.getToken();
@@ -94,12 +82,9 @@ export const authService = {
 };
 
 /**
- * En-tetes d authentification pour un appel fetch().
- *
- * fetch() est OBLIGATOIRE partout ou l on lit un ReadableStream (chat en flux, voix binaire) :
- * axios ne sait pas le faire. Mais ces appels echappent donc a l intercepteur d apiClient, et
- * chaque site d appel doit poser le jeton LUI-MEME. Le centraliser ici evite qu un nouvel appel
- * parte sans Authorization — c est exactement ce qui avait rendu le chat muet sur telephone.
+ * En-tetes d authentification pour fetch(), obligatoire des qu on lit un ReadableStream. Ces
+ * appels echappent a l intercepteur d apiClient : centraliser ici evite qu un nouveau site
+ * d appel parte sans Authorization.
  */
 export function fetchAuthHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const headers: Record<string, string> = { ...extra };
@@ -109,14 +94,11 @@ export function fetchAuthHeaders(extra: Record<string, string> = {}): Record<str
 }
 
 /**
- * Garde de session pour une reponse fetch(). Leve si la session est invalide.
+ * Garde de session pour une reponse fetch() — l equivalent de l intercepteur d apiClient pour
+ * les appels qui ne passent pas par lui.
  *
- * Meme role que l intercepteur d apiClient, pour les appels qui ne passent pas par lui. Sans
- * lui, un jeton perime laisse l interface afficher "Stream failed: 401" indefiniment, sans
- * jamais proposer de se reconnecter.
- *
- * 403 compte AUSSI : un jeton emis avant l ajout du role `owner` est refuse ainsi, et le front
- * n appelle aucune route reservee au daemon — un 403 ne peut donc venir que de la session.
+ * 403 compte AUSSI : le front n appelle aucune route reservee au daemon, un 403 ne peut donc
+ * venir que de la session.
  */
 export function assertValidSession(response: Response): void {
   if (response.status === 401 || response.status === 403) {

@@ -20,7 +20,7 @@ public class WebFetchTool : ITool
     private const int MaxRedirections = 5;
 
     private readonly HttpClient _httpClient;
-    private readonly UrlScope _perimetre;
+    private readonly UrlScope _scope;
     private readonly ILogger<WebFetchTool> _logger;
 
     public string Name => "web_fetch";
@@ -40,7 +40,7 @@ public class WebFetchTool : ITool
     public WebFetchTool(HttpClient httpClient, UrlScope perimetre, ILogger<WebFetchTool> logger)
     {
         _httpClient = httpClient;
-        _perimetre = perimetre;
+        _scope = perimetre;
         _logger = logger;
     }
 
@@ -54,10 +54,10 @@ public class WebFetchTool : ITool
 
         // Le périmètre AVANT la requête : schéma, domaines bloqués, et surtout résolution DNS
         // — un nom parfaitement public peut pointer sur 127.0.0.1.
-        var (uri, raison) = await _perimetre.VerifierAsync(url, ct);
+        var (uri, raison) = await _scope.ValidateAsync(url, ct);
         if (uri is null)
         {
-            _logger.LogWarning("[web_fetch] URL refusée : {Raison}", raison);
+            _logger.LogWarning("[web_fetch] URL refusée : {Reason}", raison);
             return ApiResponse<ToolResult>.ErrorResponse(raison, 400);
         }
 
@@ -120,7 +120,7 @@ public class WebFetchTool : ITool
             var suivante = emplacement.IsAbsoluteUri ? emplacement : new Uri(uri, emplacement);
             reponse.Dispose();
 
-            var (validee, raison) = await _perimetre.VerifierAsync(suivante.ToString(), ct);
+            var (validee, raison) = await _scope.ValidateAsync(suivante.ToString(), ct);
             if (validee is null)
                 throw new InvalidOperationException($"Redirection refusée vers {suivante} — {raison}");
 

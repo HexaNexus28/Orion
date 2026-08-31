@@ -8,11 +8,11 @@ namespace Orion.Daemon.Actions;
 
 public class ListFilesAction : IAction
 {
-    private readonly PathScope _perimetre;
+    private readonly PathScope _scope;
 
     public ListFilesAction(DaemonOptions options)
     {
-        _perimetre = new PathScope(options.AllowedRoots, options.DeniedNames);
+        _scope = new PathScope(options.AllowedRoots, options.DeniedNames);
     }
 
     public string Name => "list_files";
@@ -21,7 +21,7 @@ public class ListFilesAction : IAction
     {
         var path = payload.TryGetProperty("path", out var p) ? p.GetString() : null;
 
-        var fullPath = _perimetre.Resoudre(path, out var raison);
+        var fullPath = _scope.Resolve(path, out var raison);
         if (fullPath is null)
             return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, raison));
 
@@ -39,12 +39,12 @@ public class ListFilesAction : IAction
             // les `.env` d'un dépôt, renseigne l'attaquant même sans en lire le contenu. Le
             // récursif rendrait l'omission d'autant plus visible.
             var files = Directory.GetFiles(fullPath, pattern, searchOption)
-                .Where(_perimetre.EstVisible)
+                .Where(_scope.IsVisible)
                 .Select(f => new FileInfo(f))
                 .Select(f => new { name = f.Name, path = f.FullName, size = f.Length, isDirectory = false, modified = f.LastWriteTimeUtc });
 
             var dirs = Directory.GetDirectories(fullPath, "*", searchOption)
-                .Where(_perimetre.EstVisible)
+                .Where(_scope.IsVisible)
                 .Select(d => new DirectoryInfo(d))
                 .Select(d => new { name = d.Name, path = d.FullName, size = 0L, isDirectory = true, modified = d.LastWriteTimeUtc });
 

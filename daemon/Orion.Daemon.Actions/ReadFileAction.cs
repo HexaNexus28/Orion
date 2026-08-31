@@ -8,13 +8,13 @@ namespace Orion.Daemon.Actions;
 
 public class ReadFileAction : IAction
 {
-    private readonly PathScope _perimetre;
+    private readonly PathScope _scope;
 
     public ReadFileAction(DaemonOptions options)
     {
         // `options` était injecté ici sans JAMAIS être lu : le garde-fou avait l'air
         // configurable, il n'existait pas. Constat C1 de l'audit du 2026-08-27.
-        _perimetre = new PathScope(options.AllowedRoots, options.DeniedNames);
+        _scope = new PathScope(options.AllowedRoots, options.DeniedNames);
     }
 
     public string Name => "read_file";
@@ -26,7 +26,7 @@ public class ReadFileAction : IAction
         // Le périmètre AVANT tout accès disque — et on travaille ensuite sur le chemin qu'il
         // renvoie, jamais sur l'entrée : vérifier une chaîne puis en ouvrir une autre est le
         // motif classique du contournement.
-        var fullPath = _perimetre.Resoudre(path, out var raison);
+        var fullPath = _scope.Resolve(path, out var raison);
         if (fullPath is null)
         {
             return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, raison));

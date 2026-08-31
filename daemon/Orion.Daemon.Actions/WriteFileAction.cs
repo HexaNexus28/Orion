@@ -8,7 +8,7 @@ namespace Orion.Daemon.Actions;
 
 public class WriteFileAction : IAction
 {
-    private readonly PathScope _perimetre;
+    private readonly PathScope _scope;
 
     public WriteFileAction(DaemonOptions options)
     {
@@ -21,7 +21,7 @@ public class WriteFileAction : IAction
             ? options.AllowedWriteRoots
             : options.AllowedRoots;
 
-        _perimetre = new PathScope(racines, options.DeniedNames);
+        _scope = new PathScope(racines, options.DeniedNames);
     }
 
     public string Name => "write_file";
@@ -35,7 +35,7 @@ public class WriteFileAction : IAction
         // l'arborescence de n'importe quel chemin au passage. Cible évidente : le dossier
         // Démarrage, d'où le daemon lui-même est lancé — un fichier déposé là s'exécute à la
         // prochaine ouverture de session.
-        var fullPath = _perimetre.Resoudre(path, out var raison);
+        var fullPath = _scope.Resolve(path, out var raison);
         if (fullPath is null)
         {
             return Task.FromResult(DaemonResponse.ErrorResponse(correlationId, raison));

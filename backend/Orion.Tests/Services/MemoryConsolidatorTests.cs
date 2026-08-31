@@ -69,7 +69,7 @@ public class MemoryConsolidatorTests
     };
 
     [Fact]
-    public async Task Les_faits_distilles_sont_ranges_dans_leur_emplacement()
+    public async Task Consolidate_DistilledFacts_FiledInTheirSlot()
     {
         var consolidateur = Build(
             "decisions|1.5|Alex heberge le backend ORION sur un serveur dedie\n" +
@@ -85,7 +85,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Une_ligne_mal_formee_est_ignoree_jamais_ecrite_au_cas_ou()
+    public async Task Consolidate_MalformedLine_IgnoredNeverWritten()
     {
         var consolidateur = Build(
             "ceci n'est pas au format attendu\n" +
@@ -98,7 +98,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Un_emplacement_inconnu_est_refuse()
+    public async Task Consolidate_UnknownSlot_Refused()
     {
         // Le schéma est FERMÉ : pas de cinquième emplacement, même si le modèle en invente un.
         var consolidateur = Build(
@@ -112,7 +112,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task AUCUN_signifie_qu_il_n_y_avait_rien_a_retenir()
+    public async Task Consolidate_NoneMarker_MeansNothingWorthKeeping()
     {
         var consolidateur = Build("AUCUN", Episode("bonjour ca va"));
 
@@ -124,7 +124,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Sans_episode_aucun_appel_au_modele()
+    public async Task Consolidate_NoEpisode_ModelNotCalled()
     {
         // Ne pas payer un tour de LLM pour consolider le vide.
         var consolidateur = Build("decisions|1.0|ne devrait jamais etre demande",
@@ -138,7 +138,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task L_etat_perime_est_purge_quand_un_nouvel_etat_arrive()
+    public async Task Consolidate_NewState_PurgesStaleState()
     {
         // `state` est VOLATILE : sans purge on empile des « chantiers en cours » finis depuis
         // longtemps, et la mémoire raconte un présent qui n'existe plus.
@@ -157,7 +157,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Un_etat_recent_n_est_pas_purge()
+    public async Task Consolidate_RecentState_NotPurged()
     {
         var consolidateur = Build(
             "state|1.0|Chantier en cours : consolidation de la memoire d'ORION",
@@ -170,7 +170,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Les_episodes_relus_sont_consommes()
+    public async Task Consolidate_ReplayedEpisodes_Consumed()
     {
         // Sans consommation, chaque passe laisse le brut a cote du distille et la memoire se
         // remplit de doublons. Aucune perte : les echanges restent dans la table `messages`.
@@ -186,7 +186,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Une_distillation_en_echec_NE_consomme_PAS_les_episodes()
+    public async Task Consolidate_DistillationFails_EpisodesNotConsumed()
     {
         // Perdre la matiere premiere sur une panne serait pire que de la garder en double.
         _memoires.Setup(m => m.GetAllAsync(It.IsAny<CancellationToken>()))
@@ -206,7 +206,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task L_importance_est_bornee()
+    public async Task Consolidate_Importance_Clamped()
     {
         var consolidateur = Build(
             "rules|9.9|Une importance hors bornes doit etre ramenee dans l'intervalle\n" +
@@ -220,7 +220,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Un_fait_trop_court_pour_etre_autonome_est_rejete()
+    public async Task Consolidate_FactTooShort_Rejected()
     {
         var consolidateur = Build("rules|1.0|ok", Episode("un echange"));
 
@@ -230,7 +230,7 @@ public class MemoryConsolidatorTests
     }
 
     [Fact]
-    public async Task Les_souvenirs_deja_consolides_sont_rappeles_au_modele()
+    public async Task Consolidate_ExistingMemories_RecalledToModel()
     {
         // Sans ça, chaque passe réécrit les mêmes faits et la mémoire se duplique.
         LLMRequest? envoye = null;

@@ -1,36 +1,18 @@
 namespace Orion.Api.Authentication;
 
 /// <summary>
-/// Modele d'authentification d'ORION — une seule porte, deux appelants.
+/// Modele d'authentification d'ORION : une porte, deux appelants — le proprietaire (JWT obtenu
+/// par mot de passe) et le daemon (secret partage). Voir docs/security.md et ADR-016.
 ///
-/// HISTORIQUE. La meme question — « qui appelle ? » — recevait quatre reponses differentes :
-/// JWT sur les controleurs, secret partage compare a la main dans le middleware daemon, RIEN
-/// sur le WebSocket voix, RIEN sur les appels HTTP du daemon. Chaque trou se corrigeait par un
-/// controle de plus, ecrit a un endroit de plus. Ce fichier existe pour que cette question ait
-/// UNE reponse, a UN endroit.
-///
-/// LES DEUX APPELANTS, et rien d'autre :
-///   - le proprietaire (navigateur, n'importe quel appareil) → JWT signe, obtenu par mot de
-///     passe. Un navigateur ne peut rien garder de permanent : un secret dans le bundle serait
-///     lisible par quiconque charge la page.
-///   - le daemon (machine de confiance) → secret partage. Aucun login interactif possible sur
-///     un service Windows.
-///
-/// CE QUI DECOULE DU TRANSPORT, pas d'un choix :
-///   HTTP porte un en-tete. EventSource et WebSocket cote NAVIGATEUR n'en portent aucun —
-///   c'est une limite des navigateurs. Le daemon, lui, n'est pas un navigateur : il porte son
-///   en-tete partout, y compris sur son WebSocket. D'ou l'asymetrie ci-dessous, qui n'est pas
-///   une incoherence mais la consequence directe de qui parle par quel tuyau.
+/// L'asymetrie des transports en decoule : un navigateur ne peut porter d'en-tete ni sur SSE ni
+/// sur WebSocket, le daemon si.
 /// </summary>
 public static class OrionAuth
 {
     /// <summary>
-    /// Schema d'aiguillage, et schema PAR DEFAUT de l'application.
-    ///
-    /// Indispensable : `UseAuthentication()` n'execute QUE le schema par defaut. Declarer un
-    /// schema « Daemon » sans lui ne servirait a rien — il ne serait jamais invoque, et
-    /// `context.User` resterait vide pour le daemon. Ce selecteur regarde la requete et
-    /// delegue au bon schema. C'est la piece qui rend le modele unique au lieu d'empile.
+    /// Schema d'aiguillage, et schema PAR DEFAUT — indispensable : `UseAuthentication()`
+    /// n'execute QUE le schema par defaut, donc un schema « Daemon » declare seul ne serait
+    /// jamais invoque.
     /// </summary>
     public const string SelectorScheme = "OrionSelector";
 
@@ -43,28 +25,20 @@ public static class OrionAuth
     public const string Audience = "orion";
 
     /// <summary>
-    /// Audience des BILLETS DE FLUX — les seuls jetons autorises a voyager dans une URL.
-    ///
-    /// Une audience distincte, et pas seulement une duree courte : elle rend les deux jetons
-    /// NON INTERCHANGEABLES. Un billet ne peut pas servir d en-tete Authorization sur le reste
-    /// de l API, et un jeton de session ne peut pas etre colle dans une URL. Sans cette
-    /// separation, raccourcir la duree n empecherait rien : il suffirait d utiliser le jeton
-    /// de session la ou le billet est attendu, et la fuite par l URL reviendrait.
+    /// Audience des BILLETS DE FLUX. Distincte, et pas seulement courte : c'est elle qui rend
+    /// les deux jetons non interchangeables dans les DEUX sens. Raccourcir la duree seule ne
+    /// fermerait rien.
     /// </summary>
     public const string StreamAudience = "orion-stream";
 
-    /// <summary>
-    /// 60 secondes. Le billet ne sert qu a OUVRIR le flux ; une fois la connexion etablie,
-    /// elle vit aussi longtemps qu elle veut — l expiration ne la coupe pas. Cette duree n a
-    /// donc besoin de couvrir qu un aller-retour reseau, pas la session.
-    /// </summary>
+    /// <summary>60 s : le billet n'ouvre que la connexion, il ne la maintient pas.</summary>
     public const int StreamTicketLifetimeSeconds = 60;
 
     /// <summary>
     /// Marque, posee sur la requete, indiquant que le jeton vient de l URL et non d un en-tete.
     /// C est ce qui permet de refuser un jeton de session presente dans une URL.
     /// </summary>
-    public const string TokenVenuDeLUrl = "orion.jeton.url";
+    public const string TokenFromUrl = "orion.jeton.url";
 
     public const string OwnerRole = "owner";
     public const string DaemonRole = "daemon";
@@ -78,11 +52,8 @@ public static class OrionAuth
     /// <summary>
     /// Les SEULS chemins ou le jeton a le droit de voyager dans l'URL.
     ///
-    /// Une URL se retrouve dans les journaux d'acces du serveur, dans l'historique du
-    /// navigateur et dans l'en-tete Referer. On ne paie ce prix que la ou il n'existe aucune
-    /// alternative : SSE et WebSocket navigateur ne peuvent porter aucun en-tete. Toute autre
-    /// route qui accepterait `?access_token=` serait une fuite gratuite — d'ou cette liste
-    /// FERMEE, seul endroit a modifier si un nouveau flux de ce type apparait.
+    /// Liste FERMEE : une URL finit dans les journaux et le Referer, on ne paie ce prix que la
+    /// ou aucun en-tete n'est possible. Seul endroit a modifier pour un nouveau flux.
     /// </summary>
     public static readonly string[] QueryTokenPaths =
     {
@@ -95,11 +66,8 @@ public static class OrionAuth
 }
 
 /// <summary>
-/// Garde partage des middlewares WebSocket.
-///
-/// Un middleware n'est PAS un endpoint : la `FallbackPolicy` ne l'atteint pas. Sans ce garde,
-/// chaque WebSocket devrait reecrire son propre controle — et c'est exactement comme ca que
-/// /ws/voice s'est retrouve sans aucune verification pendant que /daemon en avait une.
+/// Garde partage des middlewares WebSocket : un middleware n'est PAS un endpoint, la
+/// `FallbackPolicy` ne l'atteint donc pas.
 /// </summary>
 public static class WebSocketAuthGuard
 {
@@ -114,9 +82,8 @@ public static class WebSocketAuthGuard
         if (authenticated && context.User.IsInRole(role))
             return true;
 
-        // 401 = « je ne sais pas qui tu es », 403 = « je sais, et tu n'as pas le droit ».
-        // La distinction compte cote client : le premier doit declencher une reconnexion,
-        // le second non — une reconnexion en boucle sur un 403 ne se resoudrait jamais.
+        // 401 declenche une reconnexion cote client, 403 non : une boucle sur un 403 ne se
+        // resoudrait jamais.
         context.Response.StatusCode = authenticated ? 403 : 401;
         logger.LogWarning("[{Canal}] Connexion refusee ({Code}) depuis {Ip}",
             canal, context.Response.StatusCode, context.Connection.RemoteIpAddress);

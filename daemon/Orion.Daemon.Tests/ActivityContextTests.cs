@@ -15,12 +15,12 @@ public class ActivityContextTests
 
     private static ProactiveOptions Options(int concentrationApres = 15, int fraicheur = 3) => new()
     {
-        ConcentrationApresMinutes = concentrationApres,
-        FraicheurActiviteMinutes = fraicheur,
-        MalusConcentration = 25,
-        SeuilInterruption = 55,
-        SeuilCritique = 75,
-        InterruptionsParHeure = 3,
+        FocusAfterMinutes = concentrationApres,
+        ActivityFreshnessMinutes = fraicheur,
+        FocusPenalty = 25,
+        InterruptionThreshold = 55,
+        CriticalThreshold = 75,
+        InterruptionsPerHour = 3,
         CooldownMinutes = 15
     };
 
@@ -35,7 +35,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Une_application_de_travail_tenue_longtemps_vaut_concentration()
+    public void Focus_WorkAppHeldLong_CountsAsFocus()
     {
         var contexte = new ActivityContext(Options(concentrationApres: 15));
         Tenir(contexte, "code", T0, 20);
@@ -48,7 +48,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Quelques_minutes_sur_une_application_de_travail_ne_suffisent_pas()
+    public void Focus_FewMinutesOnWorkApp_NotEnough()
     {
         var contexte = new ActivityContext(Options(concentrationApres: 15));
         Tenir(contexte, "code", T0, 5);
@@ -57,7 +57,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Naviguer_longtemps_n_est_PAS_de_la_concentration()
+    public void Focus_BrowsingLong_NotFocus()
     {
         // Un navigateur ouvert depuis une heure ne dit rien : c'est l'état par défaut.
         var contexte = new ActivityContext(Options());
@@ -67,7 +67,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Changer_d_application_remet_le_compteur_a_zero()
+    public void Focus_AppSwitch_ResetsCounter()
     {
         var contexte = new ActivityContext(Options(concentrationApres: 15));
         Tenir(contexte, "code", T0, 14);
@@ -79,7 +79,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Un_signal_perime_rend_l_etat_INCONNU()
+    public void Focus_StaleSignal_StateUnknown()
     {
         // Le watcher est peut-être arrêté. Suspendre les alertes sur une donnée morte serait
         // pire que d'interrompre à tort.
@@ -93,7 +93,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Sans_aucun_signal_l_etat_est_inconnu()
+    public void Focus_NoSignal_StateUnknown()
     {
         Assert.Equal(ActivityState.Inconnu, new ActivityContext(Options()).Etat(T0));
     }
@@ -103,7 +103,7 @@ public class ActivityContextTests
     private static PatternDetectedEventArgs Signal(string pattern) => new() { Pattern = pattern };
 
     [Fact]
-    public void En_session_concentree_un_signal_moyen_ne_passe_PLUS()
+    public void Threshold_DuringFocus_MediumSignalBlocked()
     {
         var options = Options();
         var contexte = new ActivityContext(options);
@@ -121,7 +121,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Un_incident_critique_traverse_la_concentration()
+    public void Threshold_DuringFocus_CriticalIncidentPasses()
     {
         // On ne laisse pas un serveur mort attendre la fin d'une session de code.
         var options = Options();
@@ -136,7 +136,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Hors_concentration_le_seuil_reste_normal()
+    public void Threshold_OutsideFocus_StaysNormal()
     {
         var options = Options();
         var contexte = new ActivityContext(options);
@@ -148,7 +148,7 @@ public class ActivityContextTests
     }
 
     [Fact]
-    public void Sans_contexte_fourni_le_decideur_reste_fonctionnel()
+    public void Decide_NoContextSupplied_DeciderStillWorks()
     {
         // Aveugle à l'activité, mais correct : l'absence de contexte ne doit rien casser.
         var decideur = new ProactiveDecider(Options());

@@ -27,7 +27,7 @@ public class WorkContextTests
     [InlineData("useVAD.ts - ShiftCore - Visual Studio Code", "Code", "useVAD.ts")]
     // Pastille de modification non enregistree.
     [InlineData("● Program.cs - Orion.Api - Visual Studio", "devenv", "Program.cs")]
-    public void Le_fichier_est_reconnu_quelle_que_soit_sa_position(string title, string app, string attendu)
+    public void WorkContext_FileAnywhereInTitle_Recognised(string title, string app, string attendu)
     {
         var card = Tool().BuildCard(ToolResult.SuccessResult(Payload(title, app)));
 
@@ -40,7 +40,7 @@ public class WorkContextTests
     // Aucun segment ne porte d extension plausible : on ne doit RIEN inventer.
     [InlineData("ORION et 29 pages de plus - Personnel - Microsoft Edge", "msedge")]
     [InlineData("Parametres", "ApplicationFrameHost")]
-    public void Sans_fichier_identifiable_on_retombe_sur_l_application(string title, string app)
+    public void WorkContext_NoIdentifiableFile_FallsBackToApp(string title, string app)
     {
         var card = Tool().BuildCard(ToolResult.SuccessResult(Payload(title, app)));
 
@@ -49,7 +49,7 @@ public class WorkContextTests
     }
 
     [Fact]
-    public void Session_verrouillee_produit_une_carte_explicite_et_non_une_absence()
+    public void WorkContext_LockedSession_ProducesExplicitCard()
     {
         var card = Tool().BuildCard(ToolResult.SuccessResult("{\"active\":false}"));
 
@@ -58,7 +58,7 @@ public class WorkContextTests
     }
 
     [Fact]
-    public void Donnee_illisible_ne_produit_AUCUNE_carte()
+    public void Card_UnreadableData_NotProduced()
     {
         Assert.Null(Tool().BuildCard(ToolResult.SuccessResult("pas du json")));
     }

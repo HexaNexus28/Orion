@@ -34,10 +34,10 @@ public sealed class UrlScope
     /// La résolution DNS est faite ICI, avant la requête : un nom public peut pointer sur
     /// 127.0.0.1, et ne contrôler que la chaîne laisserait passer exactement ce cas.
     /// </summary>
-    public async Task<Uri?> ResoudreAsync(string? url, CancellationToken ct = default)
-        => (await VerifierAsync(url, ct)).Uri;
+    public async Task<Uri?> ResolveAsync(string? url, CancellationToken ct = default)
+        => (await ValidateAsync(url, ct)).Uri;
 
-    public async Task<(Uri? Uri, string Raison)> VerifierAsync(string? url, CancellationToken ct = default)
+    public async Task<(Uri? Uri, string Reason)> ValidateAsync(string? url, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(url))
             return (null, "URL vide.");
@@ -54,13 +54,13 @@ public sealed class UrlScope
         if (string.IsNullOrWhiteSpace(hote))
             return (null, "URL sans hôte.");
 
-        if (EstDomaineBloque(hote))
+        if (IsBlockedDomain(hote))
             return (null, $"Domaine « {hote} » refusé (Internet:BlockedDomains).");
 
         // Hôte écrit directement en IP : pas de DNS à interroger, mais le même contrôle.
         if (IPAddress.TryParse(hote, out var litterale))
         {
-            return EstInterne(litterale)
+            return IsInternal(litterale)
                 ? (null, $"Adresse interne « {litterale} » refusée — ORION ne sonde pas le réseau local.")
                 : (uri, string.Empty);
         }
@@ -80,14 +80,14 @@ public sealed class UrlScope
 
         // TOUTES doivent être publiques, pas seulement la première : un nom qui résout vers un
         // mélange public/privé servirait à atteindre le privé au gré de l'ordre de résolution.
-        var interne = adresses.FirstOrDefault(EstInterne);
+        var interne = adresses.FirstOrDefault(IsInternal);
         if (interne is not null)
             return (null, $"« {hote} » résout vers l'adresse interne {interne} — refusé.");
 
         return (uri, string.Empty);
     }
 
-    private bool EstDomaineBloque(string hote)
+    private bool IsBlockedDomain(string hote)
         => (_options.BlockedDomains ?? Array.Empty<string>())
             .Where(d => !string.IsNullOrWhiteSpace(d))
             .Select(d => d.Trim().TrimStart('.'))
@@ -99,7 +99,7 @@ public sealed class UrlScope
     /// <c>169.254.169.254</c> : sur la plupart des hébergeurs, c'est le service de métadonnées
     /// d'instance, et il rend des identifiants sans demander la moindre authentification.
     /// </summary>
-    public static bool EstInterne(IPAddress ip)
+    public static bool IsInternal(IPAddress ip)
     {
         if (ip.IsIPv4MappedToIPv6)
             ip = ip.MapToIPv4();

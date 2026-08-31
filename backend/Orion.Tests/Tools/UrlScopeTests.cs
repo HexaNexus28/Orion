@@ -19,8 +19,8 @@ public class UrlScopeTests
     private static UrlScope Perimetre(params string[] domainesBloques)
         => new(Options.Create(new InternetOptions { BlockedDomains = domainesBloques }));
 
-    private static async Task<(Uri? Uri, string Raison)> Verifier(string? url, params string[] bloques)
-        => await Perimetre(bloques).VerifierAsync(url);
+    private static async Task<(Uri? Uri, string Reason)> Verifier(string? url, params string[] bloques)
+        => await Perimetre(bloques).ValidateAsync(url);
 
     // ── Schémas ──────────────────────────────────────────────────────────────────────────────
 
@@ -29,7 +29,7 @@ public class UrlScopeTests
     [InlineData("ftp://exemple.test/fichier")]
     [InlineData("gopher://exemple.test/")]
     [InlineData("data:text/html,<script>alert(1)</script>")]
-    public async Task Un_schema_hors_http_est_refuse(string url)
+    public async Task Validate_NonHttpScheme_Refused(string url)
     {
         var (uri, raison) = await Verifier(url);
 
@@ -40,7 +40,7 @@ public class UrlScopeTests
     [Theory]
     [InlineData("http://exemple.test/page")]
     [InlineData("https://exemple.test/page")]
-    public async Task Http_et_https_sont_les_seuls_acceptes(string url)
+    public async Task Validate_HttpAndHttps_OnlySchemesAccepted(string url)
     {
         // Le domaine .test ne résout nulle part : on vérifie ici que le SCHÉMA passe le filtre,
         // le refus éventuel venant alors de la résolution DNS et non du schéma.
@@ -50,7 +50,7 @@ public class UrlScopeTests
     }
 
     [Fact]
-    public async Task Une_url_vide_ou_invalide_est_refusee()
+    public async Task Validate_EmptyOrInvalidUrl_Refused()
     {
         Assert.Null((await Verifier(null)).Uri);
         Assert.Null((await Verifier("")).Uri);
@@ -70,7 +70,7 @@ public class UrlScopeTests
     [InlineData("http://192.168.1.1/")]
     [InlineData("http://[::1]:5107/")]
     [InlineData("http://0.0.0.0/")]
-    public async Task Une_adresse_interne_est_refusee(string url)
+    public async Task Validate_InternalAddress_Refused(string url)
     {
         var (uri, raison) = await Verifier(url);
 
@@ -82,7 +82,7 @@ public class UrlScopeTests
     [InlineData("8.8.8.8")]
     [InlineData("1.1.1.1")]
     [InlineData("93.184.216.34")]
-    public async Task Une_adresse_publique_passe(string ip)
+    public async Task Validate_PublicAddress_Passes(string ip)
     {
         var (uri, raison) = await Verifier($"http://{ip}/page");
 
@@ -107,11 +107,11 @@ public class UrlScopeTests
     [InlineData("100.63.255.255", false)]
     [InlineData("224.0.0.1", true)]       // multicast
     [InlineData("8.8.8.8", false)]
-    public void Les_bornes_des_plages_privees_sont_exactes(string ip, bool interne)
+    public void IsInternal_PrivateRangeBoundaries_Exact(string ip, bool interne)
     {
         // Les bornes sont l'endroit où ce genre de test attrape vraiment quelque chose :
         // 172.16/12 s'arrête à 172.31, pas à 172.16 ni à 172.255.
-        Assert.Equal(interne, UrlScope.EstInterne(IPAddress.Parse(ip)));
+        Assert.Equal(interne, UrlScope.IsInternal(IPAddress.Parse(ip)));
     }
 
     [Theory]
@@ -122,15 +122,15 @@ public class UrlScopeTests
     [InlineData("::ffff:127.0.0.1", true)] // IPv4 loopback déguisée en IPv6
     [InlineData("::ffff:169.254.169.254", true)]
     [InlineData("2001:4860:4860::8888", false)]
-    public void Les_formes_IPv6_ne_permettent_pas_de_contourner(string ip, bool interne)
+    public void IsInternal_IPv6Forms_CannotBypass(string ip, bool interne)
     {
-        Assert.Equal(interne, UrlScope.EstInterne(IPAddress.Parse(ip)));
+        Assert.Equal(interne, UrlScope.IsInternal(IPAddress.Parse(ip)));
     }
 
     // ── BlockedDomains, qui n'était lu par personne ──────────────────────────────────────────
 
     [Fact]
-    public async Task Un_domaine_bloque_est_refuse()
+    public async Task Validate_BlockedDomain_Refused()
     {
         var (uri, raison) = await Verifier("https://interdit.test/page", "interdit.test");
 
@@ -139,13 +139,13 @@ public class UrlScopeTests
     }
 
     [Fact]
-    public async Task Un_sous_domaine_dun_domaine_bloque_est_refuse_aussi()
+    public async Task Validate_SubdomainOfBlockedDomain_Refused()
     {
         Assert.Null((await Verifier("https://api.interdit.test/x", "interdit.test")).Uri);
     }
 
     [Fact]
-    public async Task Un_domaine_qui_se_TERMINE_par_le_meme_texte_nest_pas_bloque()
+    public async Task Validate_DomainMerelyEndingWithBlockedText_Allowed()
     {
         // « interdit.test » ne doit pas bloquer « pasinterdit.test » : c'est la faille du
         // Contains() qu'utilisait l'ancien garde de screenshot_page.
@@ -155,7 +155,7 @@ public class UrlScopeTests
     }
 
     [Fact]
-    public async Task Le_point_de_tete_dans_la_configuration_est_tolere()
+    public async Task Validate_LeadingDotInConfig_Tolerated()
     {
         Assert.Null((await Verifier("https://interdit.test/x", ".interdit.test")).Uri);
     }

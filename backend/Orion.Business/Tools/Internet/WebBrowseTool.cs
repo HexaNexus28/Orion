@@ -10,7 +10,7 @@ namespace Orion.Business.Tools.Internet;
 public class WebBrowseTool : ITool
 {
     private readonly ILogger<WebBrowseTool> _logger;
-    private readonly UrlScope _perimetre;
+    private readonly UrlScope _scope;
     private IPlaywright? _playwright;
     private IBrowser? _browser;
 
@@ -41,7 +41,7 @@ public class WebBrowseTool : ITool
 
     public WebBrowseTool(UrlScope perimetre, ILogger<WebBrowseTool> logger)
     {
-        _perimetre = perimetre;
+        _scope = perimetre;
         _logger = logger;
     }
 
@@ -53,10 +53,10 @@ public class WebBrowseTool : ITool
             return ApiResponse<ToolResult>.ErrorResponse("URL parameter required", 400);
         }
 
-        var (depart, raison) = await _perimetre.VerifierAsync(url, ct);
+        var (depart, raison) = await _scope.ValidateAsync(url, ct);
         if (depart is null)
         {
-            _logger.LogWarning("[web_browse] URL refusée : {Raison}", raison);
+            _logger.LogWarning("[web_browse] URL refusée : {Reason}", raison);
             return ApiResponse<ToolResult>.ErrorResponse(raison, 400);
         }
 
@@ -89,7 +89,7 @@ public class WebBrowseTool : ITool
                     return;
                 }
 
-                var (autorisee, motif) = await _perimetre.VerifierAsync(route.Request.Url);
+                var (autorisee, motif) = await _scope.ValidateAsync(route.Request.Url);
                 if (autorisee is null)
                 {
                     _logger.LogWarning("[web_browse] Navigation bloquée vers {Url} : {Motif}",
@@ -190,7 +190,7 @@ public class WebBrowseTool : ITool
                 // L'action `goto` est une SECONDE porte d'entrée : le modèle y met une URL
                 // arbitraire, distincte de celle qu'on a validée à l'ouverture. Le filtre de
                 // navigation l'attraperait, mais un refus explicite dit POURQUOI.
-                var (cible, motifRefus) = await _perimetre.VerifierAsync(value, ct);
+                var (cible, motifRefus) = await _scope.ValidateAsync(value, ct);
                 if (cible is null)
                     throw new InvalidOperationException($"Navigation refusée vers {value} — {motifRefus}");
 

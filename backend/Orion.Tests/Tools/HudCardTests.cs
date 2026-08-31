@@ -22,7 +22,7 @@ public class HudCardTests
         => new(new Mock<IDaemonClient>().Object);
 
     [Fact]
-    public void Etat_du_poste_produit_une_carte_a_partir_des_vraies_donnees()
+    public void HostStatus_RealData_ProducesCard()
     {
         var charge = "{\"machineName\":\"HexaNexus\",\"processorCount\":8,\"workingSetMb\":127,\"uptimeMinutes\":185,\"localTime\":\"2026-08-26 09:12:00\"}";
 
@@ -42,7 +42,7 @@ public class HudCardTests
     }
 
     [Fact]
-    public void Donnee_illisible_ne_produit_AUCUNE_carte()
+    public void Card_UnreadableData_NotProduced()
     {
         // Une carte vide ou fabriquee serait pire que pas de carte : le HUD doit refleter ce qui
         // s est reellement passe.
@@ -51,7 +51,7 @@ public class HudCardTests
     }
 
     [Fact]
-    public void Depot_git_modifie_passe_en_avertissement_et_porte_le_nom_du_depot()
+    public void GitRepo_Dirty_WarnsAndCarriesRepoName()
     {
         var charge = "{\"path\":\"C:\\\\Projets\\\\ShiftCore\",\"branch\":\"main\",\"changes\":[\" M a.cs\",\" M b.cs\"],\"hasChanges\":true}";
 
@@ -66,7 +66,7 @@ public class HudCardTests
     }
 
     [Fact]
-    public void Depot_propre_reste_en_etat_normal()
+    public void GitRepo_Clean_StaysNormalState()
     {
         var charge = "{\"path\":\"C:\\\\Projets\\\\Orion\",\"branch\":\"main\",\"changes\":[],\"hasChanges\":false}";
 

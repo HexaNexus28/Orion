@@ -50,7 +50,7 @@ public class DaemonToolContractTests
     }
 
     [Fact]
-    public async Task OpenAppTool_envoie_la_cle_attendue_par_le_daemon()
+    public async Task OpenAppTool_Payload_MatchesDaemonKey()
     {
         // OpenAppAction lit payload.GetProperty("application") — PAS "appName".
         var (daemon, sent) = BuildDaemon();
@@ -65,7 +65,7 @@ public class DaemonToolContractTests
     }
 
     [Fact]
-    public async Task ReadFileTool_envoie_la_cle_attendue_par_le_daemon()
+    public async Task ReadFileTool_Payload_MatchesDaemonKey()
     {
         // ReadFileAction lit payload.GetProperty("path") — PAS "filePath".
         var (daemon, sent) = BuildDaemon();
@@ -79,7 +79,7 @@ public class DaemonToolContractTests
     }
 
     [Fact]
-    public async Task WriteFileTool_envoie_path_et_content()
+    public async Task WriteFileTool_Payload_SendsPathAndContent()
     {
         var (daemon, sent) = BuildDaemon();
         var tool = new WriteFileTool(daemon.Object);

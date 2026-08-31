@@ -70,7 +70,7 @@ public class OllamaAgentClientTests
     };
 
     [Fact]
-    public async Task Le_modele_repond_reellement_a_la_sonde()
+    public async Task Probe_RealModel_Answers()
     {
         // Vérifier une ressource distante = l'APPELER. `ollama list` peut afficher un modèle
         // retiré ou verrouillé par abonnement (§1.10).
@@ -82,7 +82,7 @@ public class OllamaAgentClientTests
     }
 
     [Fact]
-    public async Task Les_tools_sont_bien_transmis_EN_STREAMING()
+    public async Task Stream_Tools_ForwardedInStreaming()
     {
         // LA régression à empêcher : si le champ `tools` disparaît du payload de streaming,
         // le modèle ne demandera jamais d'outil et ce test rougit.
@@ -101,7 +101,7 @@ public class OllamaAgentClientTests
     }
 
     [Fact]
-    public async Task Les_arguments_d_outil_sont_du_JSON_exploitable()
+    public async Task Stream_ToolArguments_AreUsableJson()
     {
         // L'endpoint OpenAI-compatible d'Ollama renvoie ici du JSON malformé en streaming ;
         // l'endpoint natif renvoie un objet propre. Ce test verrouille ce choix de transport.
@@ -120,7 +120,7 @@ public class OllamaAgentClientTests
     }
 
     [Fact]
-    public async Task Une_requete_sans_outil_streame_du_texte_token_par_token()
+    public async Task Stream_NoTool_TextTokenByToken()
     {
         // Sans outils declares, le modele ne peut que produire du texte : on verifie que les
         // tokens arrivent bien au fil de l'eau (ResponseHeadersRead) et non d'un seul bloc.

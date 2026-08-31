@@ -94,7 +94,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Un_outil_demande_est_reellement_execute()
+    public async Task Run_RequestedTool_ActuallyExecuted()
     {
         var client = new ScriptedLLMClient(
             TurnWithTool("open_app", "{\"appName\":\"notepad\"}"),
@@ -118,7 +118,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Les_outils_restent_disponibles_apres_une_execution()
+    public async Task Run_AfterExecution_ToolsStayAvailable()
     {
         // Régression §1.4 : l'ancien client relançait le modèle SANS les outils après la
         // première exécution — le chaînage multi-outils était donc impossible.
@@ -135,7 +135,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Le_resultat_de_l_outil_est_reinjecte_dans_l_historique()
+    public async Task Run_ToolResult_FedBackIntoHistory()
     {
         var client = new ScriptedLLMClient(
             TurnWithTool("web_search", "{\"query\":\"coupe du monde\"}"),
@@ -155,7 +155,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Plusieurs_outils_s_enchainent_sur_plusieurs_iterations()
+    public async Task Run_SeveralTools_ChainAcrossIterations()
     {
         var client = new ScriptedLLMClient(
             TurnWithTool("web_search", "{\"query\":\"x\"}"),
@@ -176,7 +176,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Un_outil_en_echec_est_signale_sans_casser_le_tour()
+    public async Task Run_ToolFails_ReportedWithoutBreakingTurn()
     {
         var client = new ScriptedLLMClient(
             TurnWithTool("open_app", "{}"),
@@ -191,7 +191,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Une_exception_d_outil_ne_fait_pas_tomber_la_boucle()
+    public async Task Run_ToolThrows_LoopSurvives()
     {
         var client = new ScriptedLLMClient(
             TurnWithTool("open_app", "{}"),
@@ -206,7 +206,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Le_budget_d_iterations_borne_une_boucle_infinie()
+    public async Task Run_InfiniteLoop_CappedByIterationBudget()
     {
         // Un modèle qui redemande sans fin le même outil ne doit pas tourner indéfiniment.
         var turns = Enumerable.Range(0, 10).Select(_ => TurnWithTool("open_app", "{}")).ToArray();
@@ -220,7 +220,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Budget_epuise_l_utilisateur_recoit_QUAND_MEME_une_reponse()
+    public async Task Run_BudgetSpent_UserStillGetsAnAnswer()
     {
         // Régression vécue : six outils declenches, budget epuise, et l'utilisateur recevait
         // une reponse VIDE. Le dernier tour se fait sans outils pour forcer une conclusion.
@@ -237,7 +237,7 @@ public class AgentLoopTests
     }
 
     [Fact]
-    public async Task Une_reponse_sans_outil_termine_en_une_iteration()
+    public async Task Run_NoToolNeeded_FinishesInOneIteration()
     {
         var client = new ScriptedLLMClient(new LLMTurn { Content = "Bonjour." });
 

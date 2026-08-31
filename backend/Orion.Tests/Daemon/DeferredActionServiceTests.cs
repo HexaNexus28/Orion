@@ -69,7 +69,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Au_reveil_une_action_non_destructive_part_toute_seule()
+    public async Task Drain_NonDestructiveAction_RunsOnItsOwn()
     {
         await Enfiler("open_app");
 
@@ -81,7 +81,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Au_reveil_une_action_destructive_se_redemande_et_ne_se_rejoue_pas()
+    public async Task Drain_DestructiveAction_AsksAgainNeverReplays()
     {
         await Enfiler("git_commit", destructive: true);
 
@@ -96,7 +96,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Une_action_perimee_expire_au_lieu_de_s_executer()
+    public async Task Drain_ExpiredAction_ExpiresInsteadOfRunning()
     {
         await Enfiler("open_app", expiration: DateTime.UtcNow.AddMinutes(-1));
 
@@ -111,7 +111,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Un_echec_au_reveil_est_conserve_avec_sa_raison()
+    public async Task Drain_ActionFails_KeptWithItsReason()
     {
         _invoker
             .Setup(i => i.InvokeNowAsync(It.IsAny<string>(), It.IsAny<JsonObject>(), It.IsAny<CancellationToken>()))
@@ -129,7 +129,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task La_confirmation_declenche_enfin_l_action_destructive()
+    public async Task Confirm_DestructiveAction_FinallyRuns()
     {
         var action = await Enfiler("git_commit", destructive: true, statut: DeferredActionStatus.AwaitingConfirmation);
 
@@ -143,7 +143,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task On_ne_confirme_pas_une_action_expiree()
+    public async Task Confirm_ExpiredAction_Refused()
     {
         var action = await Enfiler(
             "git_commit",
@@ -158,7 +158,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task On_ne_confirme_pas_ce_qui_ne_demandait_rien()
+    public async Task Confirm_ActionThatAskedNothing_Refused()
     {
         var action = await Enfiler("open_app", statut: DeferredActionStatus.Executed);
 
@@ -168,7 +168,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Une_action_en_attente_s_annule()
+    public async Task Cancel_PendingAction_Succeeds()
     {
         var action = await Enfiler("git_commit", destructive: true);
 
@@ -179,7 +179,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Une_action_deja_faite_ne_s_annule_plus()
+    public async Task Cancel_CompletedAction_Refused()
     {
         var action = await Enfiler("open_app", statut: DeferredActionStatus.Executed);
 
@@ -189,7 +189,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task Le_balayage_expire_sans_rien_executer_meme_si_le_PC_ne_revient_jamais()
+    public async Task Sweep_PcNeverReturns_ExpiresWithoutRunning()
     {
         await Enfiler("open_app", expiration: DateTime.UtcNow.AddHours(-1));
         await Enfiler("git_commit", destructive: true, expiration: DateTime.UtcNow.AddHours(-2));
@@ -205,7 +205,7 @@ public class DeferredActionServiceTests : IDisposable
     }
 
     [Fact]
-    public async Task La_file_rend_ce_qui_attend_et_ce_qui_est_deja_fait()
+    public async Task List_Queue_ReturnsPendingAndCompleted()
     {
         await Enfiler("open_app");
         await Enfiler("git_commit", statut: DeferredActionStatus.Executed);
