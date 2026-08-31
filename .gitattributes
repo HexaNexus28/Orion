@@ -1,0 +1,6 @@
+# Les crochets git sont des scripts POSIX executes par le bash fourni avec Git for Windows.
+# Sous `core.autocrlf=true` — le defaut sur Windows — ils seraient extraits en CRLF, et le `\r`
+# reste colle a la fin de chaque commande : le shebang echoue et l'erreur affichee ne parle ni
+# du crochet ni des fins de ligne. Le crochet serait donc mort a chaque NOUVEAU clone, sans
+# aucun rapport visible avec la cause.
+.githooks/** text eol=lf
