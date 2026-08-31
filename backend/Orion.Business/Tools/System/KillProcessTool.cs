@@ -28,7 +28,15 @@ public class KillProcessTool : ITool
         ["properties"] = new JsonObject
         {
             ["name"] = new JsonObject { ["type"] = "string", ["description"] = "Nom du processus à tuer (ex: chrome, notepad)" },
-            ["pid"] = new JsonObject { ["type"] = "integer", ["description"] = "PID du processus (alternatif au nom)" }
+            ["pid"] = new JsonObject { ["type"] = "integer", ["description"] = "PID du processus (alternatif au nom)" },
+            ["all"] = new JsonObject
+            {
+                ["type"] = "boolean",
+                ["description"] = "Un nom peut désigner PLUSIEURS processus (ex: chrome). Par défaut, "
+                                + "le daemon refuse et les énumère plutôt que de tous les tuer. "
+                                + "Mettre true seulement si l'utilisateur veut vraiment tous les terminer.",
+                ["default"] = false
+            }
         }
     };
 
@@ -37,6 +45,7 @@ public class KillProcessTool : ITool
 
         var name = input["name"]?.GetValue<string>();
         var pid = input["pid"]?.GetValue<int>();
+        var all = input["all"]?.GetValue<bool>() ?? false;
 
         if (string.IsNullOrWhiteSpace(name) && pid == null)
             return ApiResponse<ToolResult>.ErrorResponse("Paramètre name ou pid requis", 400);
@@ -45,7 +54,7 @@ public class KillProcessTool : ITool
         {
             RequestId = Guid.NewGuid().ToString("N"),
             Action = "kill_process",
-            Payload = new { name, pid }
+            Payload = new { name, pid, all }
         }, ct);
 
         if (!result.Success)

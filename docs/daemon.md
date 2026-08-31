@@ -36,10 +36,9 @@ Toute action doit être dans la **whitelist** (`DaemonActionValidator`) avant im
 une URL la traverse sans être examiné. Le **périmètre** est donc la responsabilité de l'action
 elle-même.
 
-`ReadFile` et `ListFiles` le portent depuis le 2026-08-27 via
-`Orion.Daemon.Core/Security/PathScope.cs`. `WriteFile` **ne l'a pas encore** — il reste protégé par
-la seule confirmation (constat C2 ouvert). Lire [security.md](security.md) avant d'ajouter une
-action qui touche au disque.
+`ReadFile`, `ListFiles` et `WriteFile` le portent depuis le 2026-08-27 via
+`Orion.Daemon.Core/Security/PathScope.cs`. Lire [security.md](security.md) avant d'ajouter une
+action qui touche au disque, au réseau interne ou aux processus.
 
 ## Installation
 
@@ -109,6 +108,14 @@ n'est pas une panne — c'est le défaut voulu, et le message d'erreur nomme la 
 À déclarer **étroit**. Surtout pas `C:\Users\<toi>` : le profil contient `.ssh`, les bases de
 cookies et les jetons. Une racine autorisée dit où ORION a le droit de chercher — et ce qu'il y
 lit repart dans sa réponse, donc hors de la machine.
+
+`AllowedWriteRoots` gouverne l'ÉCRITURE (`write_file`) séparément : vide, il retombe sur
+`AllowedRoots` — donc vers un ensemble plus petit ou égal, jamais vers « tout ». Écrire là où on
+lit est souvent trop large : le dossier Démarrage suffit à obtenir une persistance complète, et
+c'est justement par là que le daemon lui-même est lancé.
+
+`ScriptTimeoutSeconds` (120 s par défaut) plafonne `run_script`. Le daemon traite les commandes
+une par une : sans ce plafond, un script qui ne rend jamais la main le rend muet sur tout le reste.
 
 `DeniedNames` vide = liste par défaut (`.ssh`, `.aws`, `.git`, `id_rsa`, `.env*`,
 `appsettings.Production.json`, …), refusée **même sous une racine autorisée** : un dépôt de code

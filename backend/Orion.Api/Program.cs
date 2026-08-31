@@ -279,9 +279,18 @@ builder.Services.AddHttpClient<WebSearchTool>(client =>
 });
 builder.Services.AddHttpClient<WebFetchTool>(client =>
 {
-    client.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible; ORION/1.0)");
     client.Timeout = TimeSpan.FromSeconds(30);
-});
+})
+// AllowAutoRedirect = FALSE, volontairement. Laisser HttpClient suivre les redirections rendait
+// le perimetre reseau contournable en une ligne : une URL publique repondant 302 vers
+// 169.254.169.254 passait le controle d'entree, et c'est la DESTINATION qui etait lue.
+// WebFetchTool suit donc les sauts a la main, en revalidant chacun (constat E2).
+.ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+
+// Le perimetre reseau des outils qui vont chercher une page : schema autorise, domaines bloques,
+// et refus des adresses internes APRES resolution DNS — un nom public peut pointer sur 127.0.0.1.
+// `Internet:BlockedDomains` etait declare et lu par PERSONNE avant ce garde.
+builder.Services.AddSingleton<UrlScope>();
 builder.Services.AddScoped<WebSearchTool>();
 builder.Services.AddScoped<WebFetchTool>();
 builder.Services.AddScoped<WebBrowseTool>();

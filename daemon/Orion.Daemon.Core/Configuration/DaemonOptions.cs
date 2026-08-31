@@ -26,6 +26,27 @@ public class DaemonOptions
     public string[] AllowedRoots { get; set; } = Array.Empty<string>();
 
     /// <summary>
+    /// Les dossiers où ORION a le droit d'ÉCRIRE (`write_file`).
+    ///
+    /// VIDE = on retombe sur <see cref="AllowedRoots"/>. Le repli va vers un ensemble PLUS
+    /// PETIT ou égal, jamais vers « tout » : les deux listes vides refusent tout.
+    ///
+    /// Cette clé existe parce que lire et écrire ne sont pas la même permission. Écrire là où
+    /// on lit est souvent trop large : le dossier Démarrage suffit à obtenir une persistance
+    /// complète, et c'est justement par là que le daemon lui-même est lancé.
+    /// </summary>
+    public string[] AllowedWriteRoots { get; set; } = Array.Empty<string>();
+
+    /// <summary>
+    /// Plafond d'exécution d'un `run_script`, en secondes.
+    ///
+    /// Sans lui, un script qui ne rend jamais la main bloque l'action indéfiniment. Le daemon
+    /// traite les commandes une par une : un seul script suspendu suffit à rendre ORION muet
+    /// sur tout le reste, sans le moindre message.
+    /// </summary>
+    public int ScriptTimeoutSeconds { get; set; } = 120;
+
+    /// <summary>
     /// Noms refusés même SOUS une racine autorisée. Vide = la liste par défaut de
     /// <see cref="Orion.Daemon.Core.Security.PathScope.DefaultDeniedNames"/> s'applique — un dépôt
     /// de code légitime contient presque toujours un `.env`.

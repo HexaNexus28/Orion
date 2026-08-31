@@ -45,21 +45,27 @@
 
 ## Sécurité — chantier ouvert
 
-**J11 🚧 Périmètre des outils** — audit du 2026-08-27, [security.md](security.md).
+**J11 ✅ Périmètre des outils** (2026-08-27) — les sept constats de l'audit sont fermés.
+Voir [security.md](security.md).
 
-- **C1 ✅** (2026-08-27) — `PathScope` dans `Orion.Daemon.Core/Security`. `read_file` et
-  `list_files` portent un périmètre `AllowedRoots`, fail-closed, appliqué sur le chemin normalisé,
-  liens résolus, noms sensibles refusés même sous une racine autorisée, filtrage appliqué aussi au
-  listing. 16 tests écrits sur les contournements. `DaemonOptions` est enfin **lu**.
-  M2 corrigé au passage (triple lecture disque).
-- **C2 ⛔** — `write_file` écrit encore n'importe où. Le correctif est court : câbler
-  `WriteFileAction` sur le `PathScope` existant.
-- **E1 ⛔** — `run_script` : passer en `-EncodedCommand`, pour que la commande exécutée soit
-  exactement celle qui a été confirmée.
-- **E2 ⛔** — `web_fetch` / `web_browse` : schéma, adresses privées, et `BlockedDomains` enfin lu.
-- **M1 / M3 ⛔** — `kill_process` annonce N processus ; la doc n'enseigne plus `Bypass`.
+- **C1 + C2** — `PathScope` (`Orion.Daemon.Core/Security`) : `read_file`, `list_files` et
+  `write_file` portent un périmètre, fail-closed, appliqué sur le chemin normalisé, liens résolus,
+  noms sensibles refusés même sous une racine autorisée, filtrage appliqué aussi au listing.
+  Périmètre d'écriture distinct (`AllowedWriteRoots`) — lire et écrire ne sont pas la même
+  permission. `DaemonOptions` est enfin **lu**.
+- **E1** — `run_script` en `-EncodedCommand` : ce qui s'exécute est exactement ce qui a été
+  confirmé. Plus `-NoProfile`, `-NonInteractive`, un plafond de durée et la lecture des flux avant
+  l'attente (deux blocages possibles du daemon, hors audit initial).
+- **E2** — `UrlScope` (`Orion.Business/Tools/Internet`) : schéma fermé, adresses internes refusées
+  **après résolution DNS**, `BlockedDomains` enfin lu, redirections revalidées saut par saut,
+  navigations Playwright filtrées. Le garde ad-hoc de `screenshot_page` (une liste de sous-chaînes
+  qui bloquait « login » et laissait passer `169.254.169.254`) a disparu.
+- **M1** — `kill_process` refuse et énumère au lieu de tuer N processus pour un nom.
+- **M2** — triple lecture disque de `ReadFileAction`.
+- **M3** — la doc n'enseigne plus `-ExecutionPolicy Bypass`.
 
-Ordre : C2 → E1 → E2 → M1 → M3.
+Reste ouvert et documenté : DNS rebinding, sous-ressources de `web_browse`, et le fait que le
+périmètre vive côté daemon (donc connu du modèle seulement après l'aller-retour).
 
 ## Phases historiques
 

@@ -49,8 +49,10 @@ seul endroit où il puisse tenir face à une injection de prompt (cf. [security.
 
 ### Système — 14 outils, tous `RequiresDaemon`
 
-⚠️ `read_file` et `list_files` refusent tout tant que `Daemon:AllowedRoots` n'est pas renseigné
-côté daemon (défaut fail-closed, cf. [security.md](security.md) C1).
+⚠️ `read_file`, `list_files` et `write_file` refusent tout tant que `Daemon:AllowedRoots` n'est
+pas renseigné côté daemon (défaut fail-closed). L'écriture a son propre périmètre,
+`Daemon:AllowedWriteRoots`, qui retombe sur le premier s'il est vide — lire et écrire ne sont pas
+la même permission. Cf. [security.md](security.md).
 
 | Outil | Destructif | Différable | Rôle |
 |---|:---:|:---:|---|
@@ -61,10 +63,10 @@ côté daemon (défaut fail-closed, cf. [security.md](security.md) C1).
 | `open_app` | | ✅ | lance une application |
 | `open_browser_url` | | ✅ | ouvre une URL |
 | `read_file` | | | lit un fichier — périmètre `AllowedRoots` ✅ |
-| `write_file` | ✅ | ✅ | écrit un fichier ⚠️ **sans périmètre — C2** |
-| `run_script` | ✅ | ❌ | PowerShell arbitraire ⚠️ **échappement absent — E1** |
+| `write_file` | ✅ | ✅ | écrit un fichier — périmètre `AllowedWriteRoots` ✅ |
+| `run_script` | ✅ | ❌ | PowerShell arbitraire — `-EncodedCommand`, plafond de durée |
 | `list_files` | | | liste un répertoire — périmètre `AllowedRoots` ✅ |
-| `kill_process` | ✅ | | termine un processus ⚠️ **par nom = N processus — M1** |
+| `kill_process` | ✅ | | termine un processus — refuse et énumère si le nom est ambigu |
 | `clipboard` | ✅ | | lit / écrit le presse-papiers |
 | `type_text` | ✅ | | frappe du texte au clavier |
 | `capture_screen` | | | capture l'écran |
@@ -73,9 +75,13 @@ côté daemon (défaut fail-closed, cf. [security.md](security.md) C1).
 
 `web_search` · `web_fetch` · `web_browse` (Playwright) · `screenshot_page`
 
-⚠️ **`web_fetch` et `web_browse` sont la porte d'entrée de l'injection de prompt**, et n'ont
-aucune restriction de schéma ni d'hôte — voir [security.md](security.md) E2. Seul `web_search`
-injecte `InternetOptions` ; `BlockedDomains` n'est lu par personne.
+⚠️ **`web_fetch` et `web_browse` restent la porte d'entrée de l'injection de prompt** : ce
+qu'ils rapportent entre dans le contexte du modèle. Le garde-fou correspondant n'est pas chez eux,
+il est dans `IToolInvoker`.
+
+Côté réseau, les trois outils qui vont chercher une page (`web_fetch`, `web_browse`,
+`screenshot_page`) passent par **`UrlScope`** : schéma fermé à http/https, adresses internes
+refusées après résolution DNS, `BlockedDomains` appliqué, redirections revalidées saut par saut.
 
 ### Mémoire — 6 outils, ORION se gère lui-même
 

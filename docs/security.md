@@ -122,32 +122,28 @@ sur `PathScope` — il reste protégé par la seule confirmation.
 
 ---
 
-### C2 — CRITIQUE — Écriture du disque sans périmètre
+### C2 — ✅ CORRIGÉ le 2026-08-27 — Écriture du disque sans périmètre
 
 **Où** : `daemon/Orion.Daemon.Actions/WriteFileAction.cs` · **Outil** : `write_file`
 
-Même dette, côté écriture, avec `Directory.CreateDirectory` en prime :
+Même dette, côté écriture, avec `Directory.CreateDirectory` en prime : le chemin était normalisé
+puis écrit, **n'importe où**, en créant l'arborescence au passage. Cible évidente : le dossier
+Démarrage — or c'est précisément par là que le daemon lui-même est lancé (cf. [daemon.md](daemon.md)).
+Un fichier déposé là s'exécute à la prochaine ouverture de session : **persistance complète**.
 
-```csharp
-var fullPath = Path.GetFullPath(path);
-Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-File.WriteAllText(fullPath, content ?? "");
-```
+`IsDestructive == true` l'atténuait — mais la confirmation *affiche* un chemin, elle ne le
+**valide** pas.
 
-Écrit **n'importe où** où l'utilisateur a le droit d'écrire, en créant l'arborescence au passage.
-Cible évidente : le dossier Démarrage — or c'est précisément par là que le daemon lui-même est
-lancé (cf. [daemon.md](daemon.md)). Un fichier déposé là s'exécute à la prochaine ouverture de
-session. **Persistance complète.**
+**Correctif** : le même `PathScope`, sur `DaemonOptions.AllowedWriteRoots`.
 
-**Atténuation réelle** : `IsDestructive == true`, donc confirmation exigée. C'est ce qui le
-maintient en C2 et non au-dessus. Mais la confirmation affiche un chemin ; elle ne le *valide*
-pas, et un utilisateur qui confirme vite ne relit pas une chaîne longue.
-
-**Correctif** : même `AllowedRoots` que C1. La confirmation reste, elle ne remplace pas le périmètre.
+Écrire et lire ne sont **pas la même permission** : `AllowedWriteRoots` est donc distinct. Vide,
+il retombe sur `AllowedRoots` — c'est-à-dire vers un ensemble **plus petit ou égal**, jamais vers
+« tout ». Les deux listes vides refusent tout. La confirmation reste : elle ne remplace pas le
+périmètre, elle s'y ajoute.
 
 ---
 
-### E1 — ÉLEVÉ — `run_script` : le guillemet casse la commande
+### E1 — ✅ CORRIGÉ le 2026-08-27 — `run_script` : le guillemet cassait la commande
 
 **Où** : `daemon/Orion.Daemon.Actions/RunScriptAction.cs` · **Outil** : `run_script`
 
@@ -155,52 +151,90 @@ pas, et un utilisateur qui confirme vite ne relit pas une chaîne longue.
 Arguments = $"-ExecutionPolicy Bypass -Command \"{script}\"",
 ```
 
-`run_script` exécute du code arbitraire **par conception** — ce n'est pas le constat. Le constat
-est que **l'échappement est absent** : un `script` contenant un guillemet double termine
-l'argument, et ce qui suit est interprété par `powershell.exe` comme des options à lui. La
-commande réellement lancée cesse de correspondre à celle qui a été confirmée par l'utilisateur.
+`run_script` exécute du code arbitraire **par conception** — ce n'était pas le constat. Le constat
+était que **l'échappement était absent** : un `script` contenant un guillemet double terminait
+l'argument, et la suite était relue par `powershell.exe` comme **ses** options. La commande
+réellement lancée cessait de correspondre à celle que l'utilisateur avait confirmée.
 
-Une confirmation qui porte sur un texte différent de ce qui s'exécute n'est pas une confirmation.
+Une confirmation qui porte sur autre chose que ce qui s'exécute n'est pas une confirmation.
 
-**Correctif** : passer le script en `-EncodedCommand` (base64 UTF-16LE). Il n'y a alors plus
-aucune frontière de guillemet à casser, et ce qui s'exécute est exactement ce qui a été affiché.
+**Correctif** : `-EncodedCommand` (base64 d'UTF-16LE). Il n'y a alors plus la moindre frontière de
+guillemet à casser, et ce qui s'exécute est exactement ce qui a été affiché. S'y ajoutent :
+
+- `-NoProfile` — le profil de l'utilisateur pouvait redéfinir des commandes et changer le sens du
+  script sans que rien ne l'indique ;
+- `-NonInteractive` — un script qui pose une question restait bloqué à attendre une réponse que
+  personne ne verrait jamais ;
+- un **plafond de durée** (`Daemon:ScriptTimeoutSeconds`, 120 s par défaut) : le daemon traite les
+  commandes une par une, donc un seul script suspendu suffisait à rendre ORION muet sur tout le
+  reste, sans message. ⚠️ Ce dernier point ne figurait pas dans l'audit initial — il est apparu en
+  réécrivant la fonction ;
+- lecture des deux flux **avant** l'attente : un script qui écrit plus que la taille du tampon de
+  tube se bloquait en écriture pendant qu'on l'attendait — les deux camps s'attendaient
+  indéfiniment.
 
 ---
 
-### E2 — ÉLEVÉ — SSRF : `web_fetch` accepte n'importe quelle URI
+### E2 — ✅ CORRIGÉ le 2026-08-27 — SSRF : n'importe quelle URI était acceptée
 
-**Où** : `backend/Orion.Business/Tools/Internet/WebFetchTool.cs`, `WebBrowseTool.cs`
+**Où** : `WebFetchTool.cs`, `WebBrowseTool.cs`, `ScreenshotTool.cs`
 
 ```csharp
 if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))   // seul contrôle
 ```
 
-Absolue, et c'est tout. Ni schéma, ni hôte.
+Absolue, et c'est tout. Ni schéma, ni hôte. `InternetOptions.BlockedDomains` existait —
+`grep -rn "BlockedDomains" backend/ --include=*.cs` ne renvoyait **qu'une ligne : sa propre
+déclaration**.
 
-`InternetOptions.BlockedDomains` existe. **`grep -rn "BlockedDomains" backend/ --include=*.cs`
-renvoie une seule ligne : sa propre déclaration.** Personne ne la lit. `WebFetchTool` n'injecte
-même pas `InternetOptions`.
+`ScreenshotTool` avait bien un garde, et c'était pire : une liste de sous-chaînes
+(`banking`, `secure`, `login`, `auth`, `account`) cherchée dans l'URL en minuscules. Il refusait
+une page Wikipédia dont le titre contient « Login », et laissait passer `http://169.254.169.254/`.
+Bruyant sur le légitime, aveugle sur la menace — et c'était un **troisième** contrôle d'URL, plus
+faible que les deux autres.
 
-**Atteignable** : `http://127.0.0.1:5107/api/...` (l'API elle-même, en loopback, où le filtrage
-d'origine ne s'applique pas), `http://169.254.169.254/` (métadonnées d'instance sur un VPS
-cloud), `file:///` selon le handler. Et `web_fetch` n'étant pas destructif, il part sans
-confirmation — c'est aussi la porte d'entrée de l'injection de prompt décrite au §1.
+**Correctif** : `Orion.Business/Tools/Internet/UrlScope.cs`, **un seul** contrôle pour les trois
+outils.
 
-**Correctif** : n'autoriser que `http`/`https`, résoudre l'hôte et **refuser les adresses privées,
-loopback et link-local** (résolution incluse, sinon un nom DNS pointant sur 127.0.0.1 passe), puis
-appliquer `BlockedDomains` — ou supprimer le champ s'il ne doit pas servir. Une option morte dans
-une classe de configuration est un mensonge pour le prochain lecteur.
+| Règle | Pourquoi |
+|---|---|
+| Liste **fermée** de schémas (`http`, `https`) | une liste d'interdits oublierait toujours le prochain — `file`, `data`, `gopher`… |
+| Refus des adresses internes **après résolution DNS** | un nom parfaitement public peut pointer sur `127.0.0.1` : ne contrôler que la chaîne laisse passer exactement ce cas |
+| **Toutes** les adresses résolues doivent être publiques | sinon un nom résolvant vers un mélange sert à atteindre le privé au gré de l'ordre |
+| `BlockedDomains` enfin **lu**, par suffixe de domaine | `interdit.test` bloque `api.interdit.test` mais **pas** `pasinterdit.test` — la faille du `Contains()` |
+| **Redirections suivies à la main**, chacune revalidée | sans ça le garde se contourne en une ligne : une URL publique répondant 302 vers `169.254.169.254` passait le contrôle d'entrée, et c'est la destination qui était lue. `AllowAutoRedirect = false` dans `Program.cs` |
+| Filtre de **navigation** Playwright | même raison, côté navigateur : c'est lui qui suit les redirections |
+| L'action `goto` de `web_browse` validée aussi | c'est une seconde porte d'entrée, avec une URL distincte de celle validée à l'ouverture |
+
+Plages refusées : loopback, `10/8`, `172.16/12`, `192.168/16`, `169.254/16` (**les métadonnées
+d'instance**, qui rendent des identifiants sans authentification), `100.64/10`, `0/8`, multicast,
+et côté IPv6 lien-local, site-local et `fc00::/7` — y compris sous forme IPv4 mappée
+(`::ffff:127.0.0.1`).
+
+43 cas de test dans `backend/Orion.Tests/Tools/UrlScopeTests.cs`, dont les **bornes exactes** des
+plages privées (`172.15` non, `172.16` oui, `172.31` oui, `172.32` non) : c'est là que ce genre de
+classification se trompe.
+
+**Résiduel assumé** : entre notre résolution DNS et celle du client HTTP, un nom peut changer de
+réponse (*DNS rebinding*). Fermer ça imposerait de se connecter à l'IP validée en forçant l'en-tête
+`Host` — non fait, et donc noté ici plutôt que passé sous silence.
 
 ---
 
-### M1 — MOYEN — `kill_process` par nom tue toute la famille
+### M1 — ✅ CORRIGÉ le 2026-08-27 — `kill_process` tuait toute la famille
 
 **Où** : `daemon/Orion.Daemon.Actions/KillProcessAction.cs`
 
 `Process.GetProcessesByName(name)` puis `Kill(entireProcessTree: true)` **sur chaque résultat**.
-`kill_process("chrome")` ferme toutes les fenêtres du navigateur, pas une. L'outil est destructif
-donc confirmé, mais la confirmation annonce un nom et l'effet porte sur N processus.
-**Correctif** : annoncer le compte et les PID dans la demande de confirmation.
+`kill_process("chrome")` fermait toutes les fenêtres du navigateur, pas une — alors que la
+confirmation n'annonçait qu'un nom. L'utilisateur validait autre chose que ce qui allait se produire.
+
+**Correctif** : quand un nom correspond à plusieurs processus, l'action **refuse et les énumère**
+(nom + PID) au lieu d'agir large en silence. Le modèle peut alors viser un `pid` précis, ou
+redemander explicitement avec `all: true` — paramètre ajouté au schéma de `KillProcessTool`, avec
+une description qui dit ce qu'il déclenche. Un seul processus correspond : rien ne change.
+
+---
 
 ### M2 — ✅ CORRIGÉ le 2026-08-27 — `ReadFileAction` lisait le fichier trois fois
 
@@ -209,32 +243,43 @@ parcours disque, et trois instants différents — un fichier qui change entre l
 `truncated` incohérent. Corrigé en même temps que C1, l'action ayant été réécrite : une seule
 matérialisation, tout se calcule dessus.
 
-### M3 — MOYEN — `-ExecutionPolicy Bypass` dans la doc d'installation
+### M3 — ✅ CORRIGÉ le 2026-08-27 — `-ExecutionPolicy Bypass` dans la doc d'installation
 
 `docs/daemon.md` documente l'installation via `powershell -ExecutionPolicy Bypass -File ...`. C'est
 courant et ici assumé (script local, non élevé), mais cela entraîne l'utilisateur à contourner la
-politique par réflexe. **Correctif** : documenter `Unblock-File` comme alternative propre.
+politique par réflexe. Corrigé : `docs/daemon.md` documente désormais `Unblock-File`.
 
 ---
 
 ## 4. Tableau de bord
 
-| # | Sévérité | Constat | Confirmation ? | Périmètre ? |
-|---|---|---|---|---|
-| C1 | ✅ **Corrigé** | `read_file` / `list_files` — tout le disque | ❌ non | ✅ `PathScope` |
-| C2 | 🔴 Critique | `write_file` — tout le disque | ✅ oui | ❌ aucun |
-| E1 | 🟠 Élevé | `run_script` — échappement absent | ✅ oui | n/a |
-| E2 | 🟠 Élevé | `web_fetch` / `web_browse` — SSRF, `BlockedDomains` mort | ❌ non | ❌ aucun |
-| M1 | 🟡 Moyen | `kill_process` — tue N processus pour un nom | ✅ oui | n/a |
-| M2 | ✅ **Corrigé** | `ReadFileAction` — triple lecture disque | — | — |
-| M3 | 🟡 Moyen | `Bypass` enseigné par la doc | — | — |
+| # | Constat | État | Où vit le garde |
+|---|---|---|---|
+| C1 | `read_file` / `list_files` — tout le disque | ✅ corrigé | `PathScope` · `AllowedRoots` |
+| C2 | `write_file` — tout le disque | ✅ corrigé | `PathScope` · `AllowedWriteRoots` |
+| E1 | `run_script` — échappement absent | ✅ corrigé | `-EncodedCommand` |
+| E2 | `web_fetch` / `web_browse` / `screenshot_page` — SSRF | ✅ corrigé | `UrlScope` |
+| M1 | `kill_process` — N processus pour un nom | ✅ corrigé | refus + énumération |
+| M2 | `ReadFileAction` — triple lecture disque | ✅ corrigé | une seule matérialisation |
+| M3 | `Bypass` enseigné par la doc | ✅ corrigé | `Unblock-File` documenté |
 
-**Ordre de traitement** : C1 d'abord — c'était le seul à la fois sans périmètre **et** sans
-confirmation. ✅ Fait le 2026-08-27.
+**Les sept constats de l'audit sont fermés.** Le fil rouge du §3 l'est aussi : `DaemonOptions` et
+`InternetOptions.BlockedDomains` sont désormais **lus** — plus aucune option ne se fait passer pour
+une défense.
 
-**Reste à faire**, dans cet ordre : C2 (câbler `WriteFileAction` sur le `PathScope` existant —
-le plus court, tout est déjà écrit) → E1 (`-EncodedCommand`) → E2 (schéma + adresses privées +
-`BlockedDomains`) → M1 → M3. M2 a été corrigé en passant, `ReadFileAction` ayant été réécrite.
+### Ce qui reste ouvert, et qui n'était pas dans l'audit
+
+Signalé plutôt que tu, parce qu'un correctif ne vaut que ce que vaut sa liste de trous restants :
+
+- **DNS rebinding** — entre notre résolution et celle du client HTTP, un nom peut changer de
+  réponse. Fermer ça imposerait de se connecter à l'IP validée en forçant l'en-tête `Host`.
+- **`workingDir` de `run_script`** n'est pas soumis à un périmètre. C'est assumé : le script étant
+  arbitraire, il peut se déplacer où il veut — un contrôle là serait du théâtre.
+- **Sous-ressources de `web_browse`** (images, feuilles de style) ne sont pas filtrées : seules les
+  navigations le sont. Une sous-ressource n'est pas relue et ne repart pas vers le modèle.
+- **Périmètre côté BACKEND** : les outils `read_file` / `write_file` transmettent le chemin tel
+  quel ; le refus vient du daemon. C'est le bon endroit — c'est lui qui touche le disque — mais le
+  modèle ne sait donc qu'il a franchi une limite qu'**après** l'aller-retour.
 
 ## 5. La règle qui manquait
 

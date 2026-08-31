@@ -210,6 +210,22 @@ public class PathScopeTests
         Assert.Contains("sensible", raison);
     }
 
+    // ── Périmètre d'écriture (C2) ────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void Le_perimetre_decriture_peut_etre_plus_etroit_que_celui_de_lecture()
+    {
+        // Lire un dépôt et pouvoir y écrire ne sont pas la même permission : c'est la raison
+        // d'être d'AllowedWriteRoots. Ici, ORION lit deux dossiers mais n'écrit que dans un.
+        var lecture = new PathScope(new[] { Racine("depots"), Racine("documents") });
+        var ecriture = new PathScope(new[] { Racine("documents") });
+
+        var cible = Path.Combine(Racine("depots"), "orion", "fichier.txt");
+
+        Assert.NotNull(lecture.Resoudre(cible, out _));
+        Assert.Null(ecriture.Resoudre(cible, out _));
+    }
+
     // ── EstVisible, utilisé par le listing ───────────────────────────────────────────────────
 
     [Fact]

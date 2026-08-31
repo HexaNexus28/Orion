@@ -1,5 +1,6 @@
 using System.Reflection;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Options;
 using Moq;
 using Orion.Business.Tools;
 using Orion.Core.Interfaces.Tools;
@@ -18,7 +19,7 @@ namespace Orion.Tests.Tools;
 /// </summary>
 public class ToolSchemaTests
 {
-    /// <summary>Instancie un outil en bouchonnant chacune de ses dépendances.</summary>
+    /// <summary>Instancie un outil en résolvant chacune de ses dépendances.</summary>
     private static ITool? TryCreate(Type toolType)
     {
         var constructor = toolType.GetConstructors().FirstOrDefault();
@@ -27,16 +28,9 @@ public class ToolSchemaTests
         var args = new List<object?>();
         foreach (var parameter in constructor.GetParameters())
         {
-            try
-            {
-                var mockType = typeof(Mock<>).MakeGenericType(parameter.ParameterType);
-                var mock = (Mock)Activator.CreateInstance(mockType)!;
-                args.Add(mock.Object);
-            }
-            catch
-            {
-                return null; // dépendance non bouchonnable — hors périmètre de ce test
-            }
+            var dependance = Resoudre(parameter.ParameterType);
+            if (dependance is null) return null;
+            args.Add(dependance);
         }
 
         try
@@ -47,6 +41,83 @@ public class ToolSchemaTests
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Fabrique une dépendance, par bouchon quand c'est possible et RÉELLEMENT sinon.
+    ///
+    /// Le bouchon seul ne suffit plus : `UrlScope` est scellé, donc Moq ne sait pas le dériver,
+    /// et un `Mock&lt;IOptions&lt;T&gt;&gt;` rend un `.Value` nul qui fait exploser le constructeur
+    /// qui le lit. Dans les deux cas l'ancienne version renvoyait `null`, et l'outil DISPARAISSAIT
+    /// silencieusement du balayage — une couverture qui rétrécit sans que rien ne rougisse.
+    /// C'est exactement le genre de perte que ce fichier existe pour empêcher, d'où le garde
+    /// <see cref="Aucun_outil_nest_silencieusement_absent_du_balayage"/>.
+    /// </summary>
+    private static object? Resoudre(Type type)
+    {
+        // IOptions<T> : rendre une vraie valeur par défaut, jamais un bouchon dont .Value est nul.
+        if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(IOptions<>))
+        {
+            var contenu = type.GetGenericArguments()[0];
+            var valeur = Activator.CreateInstance(contenu);
+            return typeof(Options).GetMethod(nameof(Options.Create))!
+                .MakeGenericMethod(contenu)
+                .Invoke(null, new[] { valeur });
+        }
+
+        try
+        {
+            var mockType = typeof(Mock<>).MakeGenericType(type);
+            return ((Mock)Activator.CreateInstance(mockType)!).Object;
+        }
+        catch
+        {
+            // Type scellé ou sans constructeur dérivable : on tente l'instance RÉELLE, en
+            // résolvant ses propres dépendances de la même façon.
+            var constructeur = type.GetConstructors().FirstOrDefault();
+            if (constructeur is null) return null;
+
+            var args = new List<object?>();
+            foreach (var parametre in constructeur.GetParameters())
+            {
+                var dependance = Resoudre(parametre.ParameterType);
+                if (dependance is null) return null;
+                args.Add(dependance);
+            }
+
+            try { return constructeur.Invoke(args.ToArray()); }
+            catch { return null; }
+        }
+    }
+
+    /// <summary>
+    /// Le balayage ci-dessous ignore ce qu'il n'arrive pas à construire. Sans ce garde, ajouter
+    /// une dépendance non résoluble à un outil le retirerait de TOUTES les vérifications de
+    /// schéma — et le test resterait vert.
+    /// </summary>
+    [Fact]
+    public void Aucun_outil_nest_silencieusement_absent_du_balayage()
+    {
+        var decouverts = typeof(ToolRegistry).Assembly
+            .GetTypes()
+            .Where(t => t is { IsClass: true, IsAbstract: false } && typeof(ITool).IsAssignableFrom(t))
+            .Select(t => t.Name)
+            .OrderBy(n => n)
+            .ToList();
+
+        var construits = typeof(ToolRegistry).Assembly
+            .GetTypes()
+            .Where(t => t is { IsClass: true, IsAbstract: false } && typeof(ITool).IsAssignableFrom(t))
+            .Where(t => TryCreate(t) is not null)
+            .Select(t => t.Name)
+            .OrderBy(n => n)
+            .ToList();
+
+        var manquants = decouverts.Except(construits).ToList();
+
+        Assert.True(manquants.Count == 0,
+            "Ces outils n'ont pas pu être instanciés et échappent donc à toute vérification "
+            + $"de schéma : {string.Join(", ", manquants)}. Ajouter leur dépendance à Resoudre().");
     }
 
     public static TheoryData<string, ITool> TousLesOutils()

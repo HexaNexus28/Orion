@@ -103,8 +103,14 @@ Dépôt    : PUBLIC — aucune info personnelle, aucun secret, aucun hôte réel
 
 [RULE-18] Tout outil qui touche au disque, au réseau interne ou aux processus
           porte un PÉRIMÈTRE explicite, appliqué dans le code qui agit
-          → Côté daemon, réutiliser Orion.Daemon.Core/Security/PathScope :
-            resoudre() AVANT tout accès, et ouvrir le chemin qu'il RETOURNE
+          → Disque : Orion.Daemon.Core/Security/PathScope — Resoudre() AVANT
+            tout accès, et ouvrir le chemin qu'il RETOURNE
+          → Réseau : Orion.Business/Tools/Internet/UrlScope — VerifierAsync()
+            AVANT la requête, et suivre les redirections À LA MAIN en
+            revalidant chaque saut
+          → Ne JAMAIS réécrire un de ces contrôles à côté : screenshot_page
+            avait le sien, une liste de sous-chaînes qui bloquait « login » et
+            laissait passer 169.254.169.254
           → Comparer sur le chemin NORMALISÉ (après GetFullPath), sinon ..\..\
             contourne le contrôle
           → Périmètre vide = rien n'est autorisé, PAS "tout est autorisé"
@@ -1092,10 +1098,11 @@ Raison   : audit du 2026-08-27. DaemonOptions et InternetOptions.BlockedDomains
            pire qu'une absence — ça ne se voit pas à la lecture.
 Règle    : périmètre vide = rien n'autorisé. Comparaison sur le chemin
            NORMALISÉ, sinon ..\..\ contourne le contrôle.
-Statut   : C1 APPLIQUÉ le 2026-08-27 — PathScope dans Orion.Daemon.Core/Security,
-           utilise par read_file et list_files. DaemonOptions est enfin LU.
-           C2 (write_file), E1 (run_script), E2 (web_fetch) restent OUVERTS.
-           Voir docs/security.md
+Statut   : APPLIQUÉ le 2026-08-27, les sept constats fermes.
+           Disque  -> PathScope    (Orion.Daemon.Core/Security)
+           Reseau  -> UrlScope     (Orion.Business/Tools/Internet)
+           DaemonOptions et InternetOptions.BlockedDomains sont enfin LUS.
+           Trous residuels documentes dans docs/security.md §4.
 Date     : 2026-08-27
 ```
 
