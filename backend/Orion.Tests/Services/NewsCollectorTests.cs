@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -21,8 +22,12 @@ public class NewsCollectorTests
 
         public FakeHandler(Dictionary<string, (HttpStatusCode, byte[])> routes) => _routes = routes;
 
+        /// <summary>Nombre d'appels REELLEMENT partis : c'est ce que le cache doit faire baisser.</summary>
+        public int Calls { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
+            Calls++;
             var url = request.RequestUri!.ToString();
             if (!_routes.TryGetValue(url, out var route))
             {
@@ -67,10 +72,60 @@ public class NewsCollectorTests
     private static NewsCollector Build(NewsOptions options, Dictionary<string, (HttpStatusCode, byte[])> routes)
         => new(Options.Create(options),
                new HttpClient(new FakeHandler(routes)),
+               new MemoryCache(new MemoryCacheOptions()),   // neuf par test : aucune fuite entre eux
                Mock.Of<ILogger<NewsCollector>>());
 
     private static Dictionary<string, (HttpStatusCode, byte[])> Route(string url, string body, Encoding? enc = null)
         => new() { [url] = (HttpStatusCode.OK, (enc ?? Encoding.UTF8).GetBytes(body)) };
+
+    [Fact]
+    public async Task Collect_TwiceWithinCacheWindow_NetworkHitOnlyOnce()
+    {
+        // Le briefing est regenere a CHAQUE ouverture de l'overlay : sans cache, ouvrir deux
+        // fois interrogeait onze flux deux fois. On verifie le NOMBRE D'APPELS, pas le contenu :
+        // un cache qui ne cacherait rien rendrait exactement les memes articles.
+        var options = new NewsOptions
+        {
+            CacheMinutes = 30,
+            Feeds = [new NewsFeed { Name = "F", Url = "http://f/rss" }],
+        };
+        var handler = new FakeHandler(Route("http://f/rss", Rss20(("A", "http://a", DateTimeOffset.UtcNow))));
+        var collector = new NewsCollector(
+            Options.Create(options), new HttpClient(handler),
+            new MemoryCache(new MemoryCacheOptions()), Mock.Of<ILogger<NewsCollector>>());
+
+        await collector.CollectAsync();
+        await collector.CollectAsync();
+
+        Assert.Equal(1, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Collect_DifferentFeedSet_DoesNotReuseCache()
+    {
+        // Les requetes dynamiques changent d'un jour a l'autre. Servir la recolte precedente
+        // sous pretexte qu'elle est encore fraiche annulerait exactement ce qu'elles apportent.
+        var options = new NewsOptions
+        {
+            CacheMinutes = 30,
+            Feeds = [new NewsFeed { Name = "Fixe", Url = "http://f/rss" }],
+        };
+        var routes = new Dictionary<string, (HttpStatusCode, byte[])>
+        {
+            ["http://f/rss"] = (HttpStatusCode.OK, Encoding.UTF8.GetBytes(Rss20(("A", "http://a", DateTimeOffset.UtcNow)))),
+            ["http://d/rss"] = (HttpStatusCode.OK, Encoding.UTF8.GetBytes(Rss20(("B", "http://b", DateTimeOffset.UtcNow)))),
+        };
+        var handler = new FakeHandler(routes);
+        var collector = new NewsCollector(
+            Options.Create(options), new HttpClient(handler),
+            new MemoryCache(new MemoryCacheOptions()), Mock.Of<ILogger<NewsCollector>>());
+
+        await collector.CollectAsync();
+        var second = await collector.CollectAsync([new NewsFeed { Name = "Dyn", Url = "http://d/rss" }]);
+
+        Assert.Equal(3, handler.Calls);          // 1 au premier tour, 2 au second
+        Assert.Equal(2, second.Items.Count);
+    }
 
     [Fact]
     public async Task Collect_Rss20Feed_ItemsParsed()

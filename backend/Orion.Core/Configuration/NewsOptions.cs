@@ -52,6 +52,12 @@ public class NewsOptions
     public int TimeoutSeconds { get; set; } = 15;
 
     /// <summary>
+    /// Duree de vie de la recolte en memoire. Le briefing est regenere a CHAQUE ouverture de
+    /// l'overlay : sans cache, ouvrir deux fois interrogeait onze flux deux fois.
+    /// </summary>
+    public int CacheMinutes { get; set; } = 30;
+
+    /// <summary>
     /// Requetes composees a l'execution a partir de ce qu'ORION sait de l'utilisateur, en plus
     /// des flux fixes. Sans elles la veille est un marque-page : elle ne suit ni les projets en
     /// cours ni ce qui vient d'apparaitre.

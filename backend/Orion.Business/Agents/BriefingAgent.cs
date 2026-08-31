@@ -63,6 +63,16 @@ public class BriefingAgent : IBriefingAgent
         var dynamicFeeds = await _newsPlanner.PlanAsync(ct);
         var harvest = await _news.CollectAsync(dynamicFeeds, ct);
 
+        // Les sources partent AVEC le texte : sans elles, la garantie « rien n'est invente »
+        // existe dans le code et reste invisible pour le lecteur, donc invérifiable.
+        var sources = harvest.Items.Select(i => new BriefingSource
+        {
+            Title = i.Title,
+            Url = i.Link,
+            Source = i.Source,
+            Circle = i.Circle.ToString().ToLowerInvariant(),
+        }).ToList();
+
         var prompt = BuildBriefingPrompt(
             profileDict, recentMemories.Select(m => m.Content).ToList(), differes, harvest, now);
 
@@ -94,8 +104,11 @@ public class BriefingAgent : IBriefingAgent
             {
                 ["memoriesUsed"] = recentMemories.Count,
                 ["profileKeys"] = profileDict.Count,
-                ["model"] = _llmClient.ModelId
-            }
+                ["model"] = _llmClient.ModelId,
+                ["newsCollected"] = harvest.Items.Count,
+                ["newsFeedsFailed"] = harvest.FailedFeeds.Count
+            },
+            Sources = sources
         };
 
         _logger.LogInformation("[BriefingAgent] Briefing generated: {Preview}",

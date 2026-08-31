@@ -1,6 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useBriefing } from '../../services/briefingService';
+import type { BriefingSource } from '../../types/dto/briefingDto';
 
 interface BriefingOverlayProps {
   isOpen: boolean;
@@ -52,42 +53,37 @@ export const BriefingOverlay: React.FC<BriefingOverlayProps> = ({ isOpen, onClos
                 <div className="text-center py-8 text-orion-textDim">Chargement...</div>
               ) : briefing ? (
                 <div className="space-y-4">
-                  {briefing.shiftStarStats && (
-                    <div className="p-4 rounded-lg bg-orion-dark/50">
-                      <h3 className="text-sm font-medium text-orion-accent mb-2">ShiftStar</h3>
-                      <div className="grid grid-cols-3 gap-2 text-center">
-                        <div>
-                          <div className="text-lg font-semibold text-orion-text">{briefing.shiftStarStats.votes}</div>
-                          <div className="text-xs text-orion-textDim">Votes</div>
-                        </div>
-                        <div>
-                          <div className="text-lg font-semibold text-orion-text">{briefing.shiftStarStats.rating.toFixed(1)}</div>
-                          <div className="text-xs text-orion-textDim">Note</div>
-                        </div>
-                        <div>
-                          <div className="text-lg font-semibold text-orion-text">${briefing.shiftStarStats.mrr}</div>
-                          <div className="text-xs text-orion-textDim">MRR</div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {briefing.calendarEvents && briefing.calendarEvents.length > 0 && (
-                    <div className="p-4 rounded-lg bg-orion-dark/50">
-                      <h3 className="text-sm font-medium text-orion-accent mb-2">Agenda</h3>
-                      {briefing.calendarEvents.map((event: { time: string; title: string }, i: number) => (
-                        <div key={i} className="flex items-center gap-2 text-sm text-orion-text">
-                          <span className="text-orion-textDim">{event.time}</span>
-                          <span>{event.title}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
                   <div className="p-4 rounded-lg bg-orion-dark/50">
-                    <h3 className="text-sm font-medium text-orion-accent mb-2">Résumé</h3>
-                    <p className="text-sm text-orion-text whitespace-pre-wrap">{briefing.summary}</p>
+                    {/* `content`, pas `summary` : le serveur n'a jamais envoye de champ
+                        `summary`, et ce bloc affichait donc du vide. */}
+                    <p className="text-sm text-orion-text whitespace-pre-wrap">{briefing.content}</p>
                   </div>
+
+                  {/* Les SOURCES. Sans elles, la garantie « rien n'est invente » vit dans le
+                      code et reste invérifiable pour le lecteur. Chaque sujet doit pouvoir
+                      s'ouvrir. */}
+                  {briefing.sources && briefing.sources.length > 0 && (
+                    <div className="p-4 rounded-lg bg-orion-dark/50">
+                      <h3 className="text-sm font-medium text-orion-accent mb-2">
+                        Sources ({briefing.sources.length})
+                      </h3>
+                      <ul className="space-y-2">
+                        {briefing.sources.map((s: BriefingSource) => (
+                          <li key={s.url} className="text-xs leading-snug">
+                            <a
+                              href={s.url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-orion-text hover:text-orion-accent underline decoration-orion-accent/30"
+                            >
+                              {s.title}
+                            </a>
+                            <span className="text-orion-textDim"> — {s.source}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="text-center py-8 text-orion-textDim">

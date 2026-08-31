@@ -2,6 +2,7 @@ using System.ServiceModel.Syndication;
 using System.Xml;
 using System.Text;
 using System.Xml.Linq;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Orion.Core.Configuration;
@@ -28,12 +29,15 @@ public class NewsCollector : INewsCollector
 
     private readonly NewsOptions _options;
     private readonly HttpClient _http;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<NewsCollector> _logger;
 
-    public NewsCollector(IOptions<NewsOptions> options, HttpClient http, ILogger<NewsCollector> logger)
+    public NewsCollector(
+        IOptions<NewsOptions> options, HttpClient http, IMemoryCache cache, ILogger<NewsCollector> logger)
     {
         _options = options.Value;
         _http = http;
+        _cache = cache;
         _logger = logger;
 
         _http.Timeout = TimeSpan.FromSeconds(_options.TimeoutSeconds);
@@ -56,6 +60,16 @@ public class NewsCollector : INewsCollector
         {
             _logger.LogInformation("[News] Collecte desactivee ou aucun flux configure");
             return harvest;
+        }
+
+        // La cle porte l'ENSEMBLE des flux : les requetes dynamiques changent d'un jour a
+        // l'autre, et servir la recolte d'hier sous prétexte qu'elle est encore fraiche
+        // annulerait exactement ce qu'elles apportent.
+        var cacheKey = "news:" + string.Join("|", feeds.Select(f => f.Url).OrderBy(u => u));
+        if (_options.CacheMinutes > 0 && _cache.TryGetValue<NewsHarvest>(cacheKey, out var cached) && cached is not null)
+        {
+            _logger.LogInformation("[News] Recolte servie depuis le cache ({Count} article(s))", cached.Items.Count);
+            return cached;
         }
 
         var cutoff = DateTimeOffset.UtcNow.AddHours(-_options.FreshnessHours);
@@ -84,6 +98,11 @@ public class NewsCollector : INewsCollector
 
         _logger.LogInformation("[News] {Count} article(s) retenus, {Failed} flux en echec",
             harvest.Items.Count, harvest.FailedFeeds.Count);
+
+        if (_options.CacheMinutes > 0)
+        {
+            _cache.Set(cacheKey, harvest, TimeSpan.FromMinutes(_options.CacheMinutes));
+        }
 
         return harvest;
     }

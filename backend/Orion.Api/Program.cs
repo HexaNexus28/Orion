@@ -391,6 +391,7 @@ builder.Services.AddScoped<IHealthService, HealthService>();
 // ========== VEILLE (flux RSS/Atom) ==========
 // La liste de flux vit dans NewsOptions, PAS dans appsettings.json : ce fichier est gitignore,
 // donc absent de l image — la veille serait vide en production sans aucun message.
+builder.Services.AddMemoryCache();
 builder.Services.Configure<NewsOptions>(builder.Configuration.GetSection(NewsOptions.SectionName));
 builder.Services.AddHttpClient<INewsCollector, NewsCollector>();
 builder.Services.AddScoped<INewsQueryPlanner, LlmNewsQueryPlanner>();
