@@ -1,0 +1,45 @@
+#!/bin/sh
+#
+# ORION — signale un daemon devenu obsolete apres un `git pull`.
+#
+# POURQUOI CE CROCHET EXISTE. ORION a DEUX chaines de deploiement, et une seule est automatique :
+#
+#   backend : git push -> GitHub Actions -> ghcr.io -> ssh deploy-orion -> compose up
+#   daemon  : git pull -> ????????????????????????? -> dotnet publish -> %LOCALAPPDATA%
+#
+# Le backend se met a jour seul a chaque merge. Le daemon, lui, est compile depuis le source
+# LOCAL par scripts/install-daemon.ps1, que personne ne declenche. Resultat constate le
+# 2026-09-01 : il tournait depuis 4 jours sur du code d'AVANT l'audit de securite — les outils
+# read_file / list_files / write_file atteignaient encore tout le disque alors que le correctif
+# etait merge, teste et pousse. Rien, nulle part, ne le signalait.
+#
+# CE QU'IL NE FAIT PAS, VOLONTAIREMENT : installer. Un daemon qui applique tout seul ce qui
+# arrive sur `main` ferait de n'importe quel push sur un depot PUBLIC une execution de code sur
+# la machine. La detection s'automatise, l'application reste un geste.
+#
+# INSTALLATION (une fois par poste — .git/hooks n'est pas versionne) :
+#   git config core.hooksPath .githooks
+
+# HEAD@{1} = la position de HEAD AVANT le pull, lue dans le reflog. C'est la seule facon de
+# savoir ce que ce pull a apporte : au moment ou ce crochet tourne, le merge est deja fait.
+modifies=$(git diff --name-only HEAD@{1} HEAD 2>/dev/null)
+[ -z "$modifies" ] && exit 0
+
+daemon=$(echo "$modifies" | grep -c '^daemon/')
+[ "$daemon" -eq 0 ] && exit 0
+
+commits=$(git rev-list --count HEAD@{1}..HEAD 2>/dev/null)
+
+printf '\n\033[33m'
+printf '  Le DAEMON a change : %s fichier(s) sur %s commit(s) tires.\n' "$daemon" "$commits"
+printf '  Le binaire installe dans %%LOCALAPPDATA%%\\Orion\\daemon est donc PERIME.\n'
+printf '\n'
+printf '    powershell -File scripts/install-daemon.ps1\n'
+printf '\n'
+printf '  (le backend, lui, se deploie seul a chaque merge sur main)\n'
+printf '\033[0m\n'
+
+echo "$modifies" | grep '^daemon/' | sed 's/^/    /'
+printf '\n'
+
+exit 0

@@ -57,10 +57,37 @@ if (-not (Test-Path $confProd)) {
         ReconnectDelayMs   = 5000
         MaxReconnectDelayMs= 60000
         ReconnectMultiplier= 2
+        AllowedRoots       = @()
+        AllowedWriteRoots  = @()
     }} | ConvertTo-Json -Depth 5 | Set-Content $confProd -Encoding utf8
     Write-Host "      creee (jeton repris de la configuration de developpement)"
+    Write-Warning "      perimetre disque VIDE - a renseigner, voir l avertissement final"
 } else {
     Write-Host "      conservee (le jeton en place n est pas ecrase)"
+}
+
+# ---------------------------------------------------------------------------------------
+# LE PERIMETRE DISQUE EST FAIL-CLOSED (audit du 2026-08-27, constats C1 et C2).
+#
+# Sans "AllowedRoots", read_file / list_files / write_file refusent TOUT. C est le defaut
+# voulu, pas une panne. Mais ce script CONSERVE la configuration de production existante :
+# une machine installee avant l audit recoit le nouveau code, demarre, se connecte, parait
+# saine... et trois outils sont morts sans le moindre message.
+#
+# On ne peut pas deviner les racines a la place de l utilisateur : ce fichier decide de ce
+# qui a le droit de SORTIR de la machine. On le SIGNALE donc, plutot que de laisser une
+# panne se deguiser en succes.
+# ---------------------------------------------------------------------------------------
+$conf = Get-Content $confProd -Raw | ConvertFrom-Json
+$racines = if ($conf.Daemon.PSObject.Properties.Name -contains "AllowedRoots") { @($conf.Daemon.AllowedRoots) } else { @() }
+$perimetreAbsent = $racines.Count -eq 0
+if (-not $perimetreAbsent) {
+    Write-Host "      lecture : $($racines -join ', ')"
+    $ecriture = @($conf.Daemon.AllowedWriteRoots)
+    if ($ecriture.Count -eq 0) { $ecriture = $racines }
+    Write-Host "      ecriture : $($ecriture -join ', ')"
+    $mortes = $racines | Where-Object { -not (Test-Path $_) }
+    if ($mortes) { Write-Warning "      racines DECLAREES mais INEXISTANTES : $($mortes -join ', ')" }
 }
 # La copie de la config de developpement n a rien a faire ici : jamais lue en Production, elle
 # ne ferait que dupliquer le secret dans un fichier mort.
@@ -75,6 +102,12 @@ $p = Get-Process Orion.Daemon -ErrorAction SilentlyContinue
 if ($p) {
     Write-Host ""
     Write-Host "ORION est demarre (PID $($p.Id)), sans fenetre, et redemarrera a chaque ouverture de session." -ForegroundColor Green
+    if ($perimetreAbsent) {
+        Write-Host ""
+        Write-Host "ATTENTION : aucune racine disque n est declaree." -ForegroundColor Red
+        Write-Host "read_file, list_files et write_file REFUSERONT TOUT (fail-closed, c est voulu)." -ForegroundColor Red
+        Write-Host "Renseigner Daemon:AllowedRoots dans $confProd puis relancer ce script." -ForegroundColor Red
+    }
 } else {
     throw "Le daemon ne s est pas lance - verifier $install"
 }
