@@ -8,8 +8,14 @@ interface MemoryOverlayProps {
 }
 
 export const MemoryOverlay: React.FC<MemoryOverlayProps> = ({ isOpen, onClose }) => {
-  const { memories, loading, search } = useMemory();
+  const { memories, loading, error, search, refresh } = useMemory();
   const [query, setQuery] = useState('');
+
+  // À l'ouverture, on CHARGE. Sans ça `memories` reste à son état initial — un tableau vide —
+  // et l'écran annonçait « aucune mémoire » alors que la question n'avait jamais été posée.
+  React.useEffect(() => {
+    if (isOpen) void refresh();
+  }, [isOpen, refresh]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,7 +84,13 @@ export const MemoryOverlay: React.FC<MemoryOverlayProps> = ({ isOpen, onClose })
                       </div>
                     </div>
                   ))}
-                  {memories.length === 0 && !loading && (
+                  {/* Une panne et une base vide ne doivent pas produire le même écran. */}
+                  {error && !loading && (
+                    <div className="text-center py-8 text-red-400 text-sm">
+                      Mémoire illisible — {error}
+                    </div>
+                  )}
+                  {memories.length === 0 && !loading && !error && (
                     <div className="text-center py-8 text-orion-textDim">
                       Aucun souvenir trouvé
                     </div>

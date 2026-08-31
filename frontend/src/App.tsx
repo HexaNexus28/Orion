@@ -172,29 +172,17 @@ const App: React.FC = () => {
   }, [setAmplitude, setState]);
 
   /**
-   * ORION parlait-il quand cette prise a COMMENCÉ, et un barge-in a-t-il été déclaré ?
-   *
-   * Ces deux drapeaux séparent les deux seules choses qui peuvent commencer pendant qu'ORION
-   * répond, et qui sont acoustiquement identiques :
-   *   - son propre écho revenu par le haut-parleur → à jeter ;
-   *   - l'utilisateur qui le coupe volontairement → à garder.
-   *
-   * Le volume ne les distingue PAS : sur un téléphone haut-parleur, la voix d'ORION est souvent
-   * plus forte que celle de l'utilisateur. Le seul signal fiable est qu'un barge-in a été
-   * DÉCLARÉ — c'est-à-dire qu'`interrupt()` est parti et que le tour a été annulé.
-   *
-   * Sans ça, la QUEUE de la réponse d'ORION (encore en cours de découpage quand son tour se
-   * termine) formerait une prise parfaitement valide, passerait toutes les gardes, et il
-   * répondrait de nouveau à lui-même — le bug d'origine, plus rare et donc plus difficile à
-   * reproduire.
+   * Distingue les deux choses acoustiquement identiques qui commencent pendant qu'ORION parle :
+   * son écho (à jeter) et l'utilisateur qui le coupe (à garder). Le volume ne les sépare pas —
+   * au haut-parleur sa voix est souvent la plus forte — seul un barge-in DÉCLARÉ le fait.
    */
   const isTurnActiveRef = useRef(false);
-  const priseNeeDurantTourRef = useRef(false);
-  const bargeInDeclareRef = useRef(false);
+  const takeStartedDuringTurnRef = useRef(false);
+  const bargeInDeclaredRef = useRef(false);
 
   const handleSpeechStart = useCallback(() => {
-    priseNeeDurantTourRef.current = isTurnActiveRef.current;
-    bargeInDeclareRef.current = false;
+    takeStartedDuringTurnRef.current = isTurnActiveRef.current;
+    bargeInDeclaredRef.current = false;
     unlockSpeech();
     setVoiceError(null);
     setState('listening');
@@ -214,29 +202,11 @@ const App: React.FC = () => {
   const sendAudioRef = useRef<((pcm16: Int16Array) => void) | null>(null);
 
   /**
-   * La prise en attente d'une DÉCISION. Elle n'est PAS encore partie sur le réseau.
+   * INVARIANT : on n'envoie de l'audio que si on envoie aussi le `end_audio` qui le consomme.
+   * Une prise = un tour = un envoi. La prise attend donc ici la décision de `processVoiceTurn`.
    *
-   * L'INVARIANT QUE CETTE REF FAIT TENIR — on n'envoie de l'audio que si on envoie aussi le
-   * `end_audio` qui le consomme. Une prise = un tour = un envoi.
-   *
-   * Avant, l'émission et la décision vivaient à deux endroits qui pouvaient se contredire :
-   * `onAudioChunk` envoyait TOUTE prise sans condition, tandis que l'effet plus bas décidait,
-   * lui, s'il fallait lancer un tour. Les gardes (`!isTurnActive`, TTS en cours…) empêchaient
-   * de démarrer le tour, jamais d'ÉMETTRE. L'audio orphelin restait donc dans `_audioBuffer`
-   * côté serveur — que rien ne vide quand ORION se met à parler — et se retrouvait recollé
-   * devant la phrase suivante.
-   *
-   * Ça produisait DEUX pannes qui paraissaient sans rapport :
-   *   1. transcription fausse — Voxtral recevait un COLLAGE (bruit + écho + parole), sans
-   *      silence entre les morceaux, et fabriquait des mots avec le mélange ;
-   *   2. « ORION se répète » — le VAD tourne exprès pendant qu'il parle (pour le barge-in),
-   *      donc sa propre voix sortie du haut-parleur repartait au serveur comme si c'était
-   *      l'utilisateur. Il ne se répétait pas : il se RÉ-ÉCOUTAIT.
-   *
-   * L'annulation d'écho du navigateur ne pouvait pas l'empêcher : MicVAD demande bien
-   * `echoCancellation`, mais un navigateur ne sait annuler que ce QU'IL joue lui-même. Les
-   * réponses passent par `speechSynthesis`, donc par le moteur TTS du système : aucun signal
-   * de référence, rien à annuler.
+   * Émettre sans cette garde renvoyait au serveur l'écho d'ORION capté par le micro (le VAD
+   * tourne exprès pendant qu'il parle, pour le barge-in) : il se ré-écoutait. Voir roadmap V1.
    */
   const pendingAudioRef = useRef<Int16Array | null>(null);
 
@@ -394,7 +364,7 @@ const App: React.FC = () => {
       // Le barge-in est DÉCLARÉ : c'est ce drapeau, et lui seul, qui autorise une prise née
       // pendant qu'ORION parlait à devenir un vrai tour. Sans lui, elle est traitée comme
       // l'écho qu'elle est presque toujours.
-      bargeInDeclareRef.current = true;
+      bargeInDeclaredRef.current = true;
       interrupt();
       audioBlobRef.current = null; // Discard echo audio
     }
@@ -406,46 +376,36 @@ const App: React.FC = () => {
   const processVoiceTurn = useCallback(async () => {
     if (isProcessingVoiceRef.current || isInputVisible) return;
 
-    // On consomme la prise AVANT toute autre chose : qu'on la joue ou qu'on l'abandonne, elle
-    // ne doit pas survivre à cette décision.
-    const prise = pendingAudioRef.current;
+    // Consommée qu'on la joue ou qu'on l'abandonne : elle ne doit pas survivre à la décision.
+    const take = pendingAudioRef.current;
     pendingAudioRef.current = null;
 
-    // Aucune prise = rien à transcrire. Envoyer un `end_audio` nu déclencherait un tour sur ce
-    // que le serveur a en tampon, c'est-à-dire sur du vide ou sur du bruit. Ce chemin est aussi
-    // celui du geste « paume ouverte », qui peut très bien arriver sans qu'on ait parlé.
-    if (!prise) {
+    // Un `end_audio` nu déclencherait un tour sur le tampon serveur, donc sur du bruit. Ce
+    // chemin est aussi celui du geste « paume ouverte », qui arrive sans qu'on ait parlé.
+    if (!take) {
       console.log('[App] Tour ignoré — aucune prise en attente');
       return;
     }
 
-    // Née pendant qu'ORION parlait, sans barge-in déclaré : c'est son écho. On le jette ici,
-    // au dernier moment — c'est le seul endroit qui connaisse à la fois l'origine de la prise
-    // et l'issue du tour.
-    if (priseNeeDurantTourRef.current && !bargeInDeclareRef.current) {
-      console.log('[App] Prise écartée — écho d\'ORION (née pendant sa réponse, aucun barge-in)');
-      priseNeeDurantTourRef.current = false;
+    if (takeStartedDuringTurnRef.current && !bargeInDeclaredRef.current) {
+      console.log('[App] Prise écartée — écho d\'ORION');
+      takeStartedDuringTurnRef.current = false;
       audioBlobRef.current = null;
       return;
     }
-    priseNeeDurantTourRef.current = false;
-    bargeInDeclareRef.current = false;
+    takeStartedDuringTurnRef.current = false;
+    bargeInDeclaredRef.current = false;
 
     isProcessingVoiceRef.current = true;
     setState('thinking');
 
-    // Consommer la prise : sans ça, `audioBlobRef` reste non-nul après le tour et la condition
-    // du déclencheur redevient vraie dès que `isTurnActive` retombe (fin de réponse d'ORION).
-    // Un tour fantôme repartait alors sur le bruit ambiant accumulé côté serveur — ORION
-    // répondait à côté, comme s'il n'avait pas écouté. Le déclencheur doit être un FRONT
-    // (une prise = un tour), pas un état permanent.
+    // Le déclencheur doit être un FRONT : laissé non-nul, il repart dès que `isTurnActive`
+    // retombe et ORION répond au bruit ambiant.
     audioBlobRef.current = null;
 
-    // L'audio puis son `end_audio`, dans cet ordre, depuis un seul endroit. Le WebSocket
-    // préserve l'ordre d'émission : le serveur reçoit donc toujours la prise complète avant
-    // l'ordre qui la consomme, et son tampon ne contient jamais plus d'une phrase.
+    // L'ordre d'émission du WebSocket garantit que la prise arrive avant l'ordre qui la consomme.
     chunksRef.current += 1;
-    sendAudioRef.current?.(prise);
+    sendAudioRef.current?.(take);
     endAudio();
 
     // Release processing lock after a short delay
@@ -471,6 +431,32 @@ const App: React.FC = () => {
       setTimeout(() => setState('idle'), 3000);
     }
   }, [reset, streamMessage, setState]);
+
+  // ── Accès clavier (PC) ───────────────────────────────────────────────────────
+  // Les overlays n'étaient atteignables QUE par `handleTouchEnd` : à la souris, aucun événement
+  // tactile ne part, donc mémoire et briefing étaient inaccessibles sur ordinateur. Deux
+  // fonctionnalités entières, pas deux gestes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Jamais pendant une saisie : on volerait les touches à l'utilisateur.
+      const target = e.target as HTMLElement | null;
+      if (target && ['INPUT', 'TEXTAREA'].includes(target.tagName)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      switch (e.key.toLowerCase()) {
+        case 'm': setIsMemoryOpen(v => !v); break;
+        case 'b': setIsBriefingOpen(v => !v); break;
+        case 'escape':
+          setIsMemoryOpen(false);
+          setIsBriefingOpen(false);
+          setIsSettingsOpen(false);
+          setIsDeferredOpen(false);
+          break;
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // ── Animation loop ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -660,6 +646,28 @@ const App: React.FC = () => {
         disabled={entityState === 'thinking'}
         state={entityState}
       />
+
+      {/* Commandes visibles — un raccourci clavier ne se découvre pas, et le swipe n'existe
+          pas à la souris. Ces deux boutons sont le SEUL chemin vers la mémoire et le briefing
+          sur ordinateur. */}
+      <div className="fixed top-4 right-4 z-20 flex gap-2">
+        <button
+          type="button"
+          onClick={() => setIsMemoryOpen(true)}
+          title="Mémoire (M) — ou glisse vers le haut"
+          className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
+        >
+          Mémoire
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsBriefingOpen(true)}
+          title="Briefing (B) — ou glisse vers le bas"
+          className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
+        >
+          Briefing
+        </button>
+      </div>
 
       {/* Overlays — z-30 */}
       <MemoryOverlay isOpen={isMemoryOpen} onClose={() => setIsMemoryOpen(false)} />

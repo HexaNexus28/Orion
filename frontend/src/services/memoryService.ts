@@ -24,17 +24,10 @@ class MemoryService {
   }
 
   async getAll(): Promise<ApiResponse<MemoryVectorDto[]>> {
-    try {
-      const response = await apiClient.get<ApiResponse<MemoryVectorDto[]>>(ENDPOINTS.memory.list);
-      return response.data;
-    } catch {
-      return {
-        success: false,
-        message: 'Memory list not available',
-        statusCode: 404,
-        data: undefined,
-      };
-    }
+    // Pas de catch : une session expirée (401) et une base vide ne doivent PAS produire le même
+    // écran. L'appelant décide quoi afficher, il ne peut pas le faire sur un 404 inventé ici.
+    const response = await apiClient.get<ApiResponse<MemoryVectorDto[]>>(ENDPOINTS.memory.list);
+    return response.data;
   }
 
   async delete(id: string): Promise<ApiResponse<void>> {
@@ -79,13 +72,18 @@ export const useMemory = () => {
 
   const refresh = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const response = await memoryService.getAll();
       if (response.success && response.data) {
         setMemories(response.data);
+      } else {
+        // Sans cette branche, un echec laissait la liste vide ET l'erreur nulle : l'interface
+        // annoncait « aucune memoire » pour une panne.
+        setError(response.message || 'Chargement de la mémoire impossible');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : 'Chargement de la mémoire impossible');
     } finally {
       setLoading(false);
     }
