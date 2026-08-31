@@ -38,6 +38,20 @@ public class AuthOptions
     public int TokenLifetimeDays { get; set; } = 30;
 
     /// <summary>
+    /// Echecs de connexion toleres par fenetre glissante avant que les mots de passe errones ne
+    /// soient refuses en 429. Seuls les ECHECS comptent, et le mot de passe est verifie AVANT le
+    /// frein : un mot de passe correct ne consomme aucun credit et passe toujours, donc ce
+    /// plafond ne peut pas enfermer le proprietaire dehors. Voir Orion.Api/Authentication/LoginThrottle.
+    ///
+    /// 5 par quart d'heure = 480 essais par jour au maximum. Face a un mot de passe correct c'est
+    /// une eternite ; pour l'usage reel — une connexion tous les 30 jours — c'est invisible.
+    /// </summary>
+    public int LoginFailuresPerWindow { get; set; } = 5;
+
+    /// <summary>Duree de la fenetre glissante du frein de connexion, en minutes.</summary>
+    public int LoginWindowMinutes { get; set; } = 15;
+
+    /// <summary>
     /// FAIL-CLOSED : si la configuration est absente ou trop faible, l'API refuse TOUT au lieu
     /// de s'ouvrir. Un oubli de configuration doit fermer la porte, jamais l'ouvrir.
     /// </summary>

@@ -91,6 +91,10 @@ if (!builder.Environment.IsDevelopment())
 builder.Services.PostConfigure<AuthOptions>(o =>
     o.DaemonToken = Environment.GetEnvironmentVariable("DAEMON_WS_TOKEN") ?? o.DaemonToken);
 
+// SINGLETON, et c'est essentiel : le compteur d'echecs doit survivre d'une requete a l'autre.
+// En Scoped, chaque tentative repartirait d'une ardoise vierge et le frein ne freinerait RIEN.
+builder.Services.AddSingleton<LoginThrottle>();
+
 // UNE porte d'entree. Le schema par defaut est un SELECTEUR, pas un validateur : il regarde la
 // requete et delegue au bon schema. Sans lui, `UseAuthentication()` n'executerait que JWT et le
 // daemon n'aurait jamais d'identite, quel que soit le nombre de schemas declares.

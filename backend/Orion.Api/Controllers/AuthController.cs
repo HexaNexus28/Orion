@@ -29,11 +29,13 @@ public record LoginResponse(string Token, DateTime ExpiresAt);
 public class AuthController : ControllerBase
 {
     private readonly AuthOptions _options;
+    private readonly LoginThrottle _frein;
     private readonly ILogger<AuthController> _logger;
 
-    public AuthController(IOptions<AuthOptions> options, ILogger<AuthController> logger)
+    public AuthController(IOptions<AuthOptions> options, LoginThrottle frein, ILogger<AuthController> logger)
     {
         _options = options.Value;
+        _frein = frein;
         _logger = logger;
     }
 
@@ -55,11 +57,37 @@ public class AuthController : ControllerBase
         var provided = Encoding.UTF8.GetBytes(request.Password ?? string.Empty);
         var expected = Encoding.UTF8.GetBytes(_options.Password);
 
-        if (provided.Length != expected.Length || !CryptographicOperations.FixedTimeEquals(provided, expected))
+        var correct = provided.Length == expected.Length
+                   && CryptographicOperations.FixedTimeEquals(provided, expected);
+
+        // L'ORDRE FAIT TOUT LE DESIGN. Le frein est consulte APRES la comparaison et UNIQUEMENT
+        // sur echec. Un limiteur pose avant refuserait aussi le bon mot de passe : un attaquant
+        // saturant la fenetre enfermerait le proprietaire dehors, et l'attaque deviendrait un
+        // deni de service sur le compte qu'elle visait. Ici le devinage est plafonne, la
+        // connexion legitime ne l'est jamais.
+        if (!correct)
         {
+            if (_frein.EstBloque(out var reessayerDans))
+            {
+                // Retry-After est la SEULE facon pour un client de savoir quoi faire d'un 429.
+                // Sans lui, la PWA reessaierait en boucle sans jamais aboutir.
+                Response.Headers.RetryAfter = ((int)Math.Ceiling(reessayerDans.TotalSeconds)).ToString();
+
+                _logger.LogWarning("[Auth] Connexion refusee par le frein — reessai dans {Secondes}s",
+                    (int)reessayerDans.TotalSeconds);
+
+                return StatusCode(429, ApiResponse<LoginResponse>.ErrorResponse(
+                    $"Trop de tentatives. Reessayez dans {(int)Math.Ceiling(reessayerDans.TotalMinutes)} min.", 429));
+            }
+
+            _frein.EnregistrerEchec();
             _logger.LogWarning("[Auth] Mot de passe invalide depuis {Ip}", HttpContext.Connection.RemoteIpAddress);
             return Unauthorized(ApiResponse<LoginResponse>.ErrorResponse("Mot de passe invalide", 401));
         }
+
+        // Ardoise effacee : quelques fautes de frappe suivies d'une connexion reussie ne doivent
+        // pas laisser un quota entame pour la suite.
+        _frein.Reinitialiser();
 
         var expires = DateTime.UtcNow.AddDays(_options.TokenLifetimeDays);
 
