@@ -67,6 +67,42 @@ Voir [security.md](security.md).
 Reste ouvert et documenté : DNS rebinding, sous-ressources de `web_browse`, et le fait que le
 périmètre vive côté daemon (donc connu du modèle seulement après l'aller-retour).
 
+**J12 ✅ Frein sur `/api/auth/login`** (2026-09-01) — dernier point ouvert de l'audit d'auth. Seuls
+les **échecs** sont comptés, et le mot de passe est vérifié **avant** le frein : la devinette est
+plafonnée (5 essais / 15 min) sans que le propriétaire puisse être enfermé dehors. Un limiteur
+par IP aurait été du théâtre — sans `UseForwardedHeaders`, `RemoteIpAddress` vaut le proxy pour
+toutes les requêtes. Le débit brut reste du ressort de `limit_req` côté Nginx.
+
+**J13 ✅ Le daemon installé était en retard de 4 jours** (2026-09-01) — J11 était mergé et poussé,
+mais le binaire de la machine datait d'avant. Cause structurelle : le backend se déploie seul
+(Actions → ghcr → `deploy-orion`), le daemon est compilé depuis le source **local** par un script
+que personne ne déclenche. Corrigé sur trois plans : périmètre renseigné et daemon republié ;
+`install-daemon.ps1` annonce le périmètre appliqué et **crie** s'il est vide (il conservait la
+config existante, donc il aurait publié trois outils morts en silence) ; crochet `.githooks/post-merge`
+qui signale tout `git pull` touchant `daemon/`. Reste à faire : qu'ORION le dise lui-même —
+`WorkWatcher` compte déjà les commits non poussés, le miroir est à écrire.
+
+## Voix — chantier ouvert
+
+**V1 ✅ ORION se ré-écoutait** (2026-09-01) — deux symptômes signalés comme distincts (« mes mots
+sont mal retranscrits », « ORION se répète ») avaient **une seule** cause. Le VAD tourne
+volontairement pendant qu'ORION parle (barge-in), `onAudioChunk` émettait **sans aucune garde**, et
+rien ne vide `_audioBuffer` côté serveur quand une réponse commence. Sa propre voix, captée par le
+micro, repartait donc au serveur et se collait devant la phrase suivante : Voxtral transcrivait un
+**collage** (d'où le charabia) et le modèle répondait à ses propres mots (d'où la répétition).
+
+Les gardes existantes (`!isTurnActive`, TTS en cours) empêchaient de **démarrer un tour**, jamais
+d'**émettre** — tout l'écart est là. Fermé par un invariant unique : **une prise = un tour = un
+envoi**, l'audio partant collé au `end_audio` qui le consomme, depuis un seul endroit. Plus le
+rejet des prises nées pendant qu'ORION parlait sans barge-in déclaré, qui ferme la fenêtre
+résiduelle de la *queue* de sa réponse.
+
+L'annulation d'écho du navigateur ne pouvait pas y suffire : MicVAD demande bien
+`echoCancellation`, mais un navigateur n'annule que ce **qu'il joue lui-même** — or les réponses
+passent par `speechSynthesis`, donc par le moteur TTS du système.
+
+⏸ **À valider à la voix, en conditions réelles** : c'est le seul juge.
+
 ## Phases historiques
 
 - **Phase 1** Core MVP : ConversationAgent + RAG + entité SSE + briefing
