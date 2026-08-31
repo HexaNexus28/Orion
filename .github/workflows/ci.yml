@@ -44,8 +44,18 @@ jobs:
       - name: Build
         run: dotnet build backend/Orion.sln -c Release --no-restore
 
-      - name: Tests
-        run: dotnet test backend/Orion.sln -c Release --no-build --verbosity normal
+      # Les tests d'INTEGRATION sont exclus : ils appellent un Ollama REEL sur
+      # localhost:11434, qui n'existe evidemment pas sur un runner GitHub. Ils gardent tout
+      # leur sens en local, la ou le modele tourne — c'est meme leur raison d'etre : verifier
+      # qu'un modele repond vraiment, puisque la config, elle, ment (cf. ProbeAsync).
+      #
+      # Ce filtre EXCLUT UN ESPACE DE NOMS ENTIER : tout test place dans Orion.Tests.Integration
+      # cesse de garder quoi que ce soit en CI. Y ranger un test unitaire par erreur le rendrait
+      # silencieusement inoffensif.
+      - name: Tests (unitaires — l'integration exige un Ollama local)
+        run: >
+          dotnet test backend/Orion.sln -c Release --no-build --verbosity normal
+          --filter "FullyQualifiedName!~Orion.Tests.Integration"
 
   daemon:
     name: Daemon — build & tests
