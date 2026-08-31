@@ -56,7 +56,7 @@ public class PromptBuilderTests
         Dictionary<string, string>? profile = null,
         List<MemoryVector>? memories = null)
         => new PromptBuilder().BuildSystemPrompt(
-            profile ?? new Dictionary<string, string> { ["name"] = "Yawo" },
+            profile ?? new Dictionary<string, string> { ["name"] = "Alex" },
             memories ?? new List<MemoryVector>(),
             tools ?? Tools,
             daemonConnected,
@@ -196,10 +196,10 @@ public class PromptBuilderTests
     public void Le_profil_et_les_souvenirs_sont_injectes()
     {
         var prompt = Build(
-            profile: new Dictionary<string, string> { ["name"] = "Yawo", ["role"] = "Fondateur" },
+            profile: new Dictionary<string, string> { ["name"] = "Alex", ["role"] = "Fondateur" },
             memories: new List<MemoryVector> { new() { Content = "Prefere les reponses courtes" } });
 
-        Assert.Contains("assistant IA personnel de Yawo", prompt);
+        Assert.Contains("assistant IA personnel de Alex", prompt);
         Assert.Contains("role : Fondateur", prompt);
         Assert.Contains("CE DONT TU TE SOUVIENS", prompt);
         Assert.Contains("Prefere les reponses courtes", prompt);

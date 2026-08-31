@@ -10,7 +10,16 @@ namespace Orion.Business.Tools.Internet;
 
 public class WebFetchTool : ITool
 {
+    /// <summary>
+    /// Redirections suivies À LA MAIN, et chacune revérifiée. Les laisser au HttpClient rendait
+    /// le garde contournable en une ligne : une URL publique qui répond 302 vers
+    /// 169.254.169.254 passait le contrôle d'entrée, et c'est la destination qui était lue.
+    /// Le handler est configuré avec AllowAutoRedirect = false dans Program.cs.
+    /// </summary>
+    private const int MaxRedirections = 5;
+
     private readonly HttpClient _httpClient;
+    private readonly UrlScope _perimetre;
     private readonly ILogger<WebFetchTool> _logger;
 
     public string Name => "web_fetch";
@@ -27,9 +36,10 @@ public class WebFetchTool : ITool
         ["required"] = new JsonArray { "url" }
     };
 
-    public WebFetchTool(HttpClient httpClient, ILogger<WebFetchTool> logger)
+    public WebFetchTool(HttpClient httpClient, UrlScope perimetre, ILogger<WebFetchTool> logger)
     {
         _httpClient = httpClient;
+        _perimetre = perimetre;
         _logger = logger;
     }
 
@@ -41,32 +51,42 @@ public class WebFetchTool : ITool
             return ApiResponse<ToolResult>.ErrorResponse("URL parameter required", 400);
         }
 
-        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri))
+        // Le périmètre AVANT la requête : schéma, domaines bloqués, et surtout résolution DNS
+        // — un nom parfaitement public peut pointer sur 127.0.0.1.
+        var (uri, raison) = await _perimetre.VerifierAsync(url, ct);
+        if (uri is null)
         {
-            return ApiResponse<ToolResult>.ErrorResponse("Invalid URL format", 400);
+            _logger.LogWarning("[web_fetch] URL refusée : {Raison}", raison);
+            return ApiResponse<ToolResult>.ErrorResponse(raison, 400);
         }
 
         var maxLength = input["max_length"]?.GetValue<int>() ?? 5000;
 
         try
         {
-            _httpClient.DefaultRequestHeaders.Clear();
-            _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (compatible; ORION/1.0)");
-            _httpClient.Timeout = TimeSpan.FromSeconds(30);
-
-            var response = await _httpClient.GetAsync(uri, ct);
-            response.EnsureSuccessStatusCode();
-
-            var html = await response.Content.ReadAsStringAsync(ct);
-            var result = ExtractContent(html, uri.ToString(), maxLength);
-
-            var toolResult = new ToolResult
+            var (response, finale) = await SuivreAsync(uri, ct);
+            using (response)
             {
-                Success = true,
-                Data = JsonSerializer.SerializeToNode(result)
-            };
+                response.EnsureSuccessStatusCode();
 
-            return ApiResponse<ToolResult>.SuccessResponse(toolResult);
+                var html = await response.Content.ReadAsStringAsync(ct);
+                var result = ExtractContent(html, finale.ToString(), maxLength);
+
+                var toolResult = new ToolResult
+                {
+                    Success = true,
+                    Data = JsonSerializer.SerializeToNode(result)
+                };
+
+                return ApiResponse<ToolResult>.SuccessResponse(toolResult);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            // Levée par SuivreAsync quand une redirection sort du périmètre : ce n'est pas une
+            // panne réseau, c'est un refus, et il doit se lire comme tel.
+            _logger.LogWarning("[web_fetch] Redirection refusée pour {Url} : {Message}", url, ex.Message);
+            return ApiResponse<ToolResult>.ErrorResponse(ex.Message, 400);
         }
         catch (Exception ex)
         {
@@ -74,6 +94,43 @@ public class WebFetchTool : ITool
             return ApiResponse<ToolResult>.ErrorResponse($"Fetch failed: {ex.Message}");
         }
     }
+
+    /// <summary>
+    /// Suit les redirections en revalidant CHAQUE saut. L'en-tête User-Agent est posé par
+    /// requête plutôt que sur DefaultRequestHeaders : le client typé est partagé, et le muter
+    /// à chaque appel est une course silencieuse.
+    /// </summary>
+    private async Task<(HttpResponseMessage Response, Uri Finale)> SuivreAsync(Uri uri, CancellationToken ct)
+    {
+        for (var saut = 0; saut <= MaxRedirections; saut++)
+        {
+            using var requete = new HttpRequestMessage(HttpMethod.Get, uri);
+            requete.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (compatible; ORION/1.0)");
+
+            var reponse = await _httpClient.SendAsync(requete, HttpCompletionOption.ResponseHeadersRead, ct);
+
+            var emplacement = reponse.Headers.Location;
+            if (!EstRedirection(reponse.StatusCode) || emplacement is null)
+            {
+                return (reponse, uri);
+            }
+
+            // Location peut être relative — la résoudre contre l'URI courante avant de vérifier.
+            var suivante = emplacement.IsAbsoluteUri ? emplacement : new Uri(uri, emplacement);
+            reponse.Dispose();
+
+            var (validee, raison) = await _perimetre.VerifierAsync(suivante.ToString(), ct);
+            if (validee is null)
+                throw new InvalidOperationException($"Redirection refusée vers {suivante} — {raison}");
+
+            uri = validee;
+        }
+
+        throw new InvalidOperationException($"Trop de redirections (plus de {MaxRedirections}).");
+    }
+
+    private static bool EstRedirection(System.Net.HttpStatusCode code)
+        => (int)code is >= 300 and <= 399;
 
     private WebFetchResultDto ExtractContent(string html, string url, int maxLength)
     {

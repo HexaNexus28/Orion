@@ -10,6 +10,7 @@ namespace Orion.Business.Tools.Internet;
 public class WebBrowseTool : ITool
 {
     private readonly ILogger<WebBrowseTool> _logger;
+    private readonly UrlScope _perimetre;
     private IPlaywright? _playwright;
     private IBrowser? _browser;
 
@@ -38,8 +39,9 @@ public class WebBrowseTool : ITool
         ["required"] = new JsonArray { "url" }
     };
 
-    public WebBrowseTool(ILogger<WebBrowseTool> logger)
+    public WebBrowseTool(UrlScope perimetre, ILogger<WebBrowseTool> logger)
     {
+        _perimetre = perimetre;
         _logger = logger;
     }
 
@@ -49,6 +51,13 @@ public class WebBrowseTool : ITool
         if (string.IsNullOrWhiteSpace(url))
         {
             return ApiResponse<ToolResult>.ErrorResponse("URL parameter required", 400);
+        }
+
+        var (depart, raison) = await _perimetre.VerifierAsync(url, ct);
+        if (depart is null)
+        {
+            _logger.LogWarning("[web_browse] URL refusée : {Raison}", raison);
+            return ApiResponse<ToolResult>.ErrorResponse(raison, 400);
         }
 
         var returnHtml = input["return_html"]?.GetValue<bool>() ?? false;
@@ -63,7 +72,35 @@ public class WebBrowseTool : ITool
             });
 
             var page = await _browser.NewPageAsync();
-            await page.GotoAsync(url, new() { Timeout = 30000, WaitUntil = WaitUntilState.NetworkIdle });
+
+            // Vérifier l'URL de départ ne suffit pas : c'est le NAVIGATEUR qui suit les
+            // redirections, et une page publique qui renvoie 302 vers 169.254.169.254 nous ferait
+            // extraire le contenu de la destination. On filtre donc chaque NAVIGATION.
+            //
+            // Seulement les navigations : valider aussi les images et les feuilles de style
+            // ajouterait une résolution DNS par ressource, pour un risque bien moindre — une
+            // sous-ressource n'est pas relue et ne repart pas vers le modèle.
+            await page.RouteAsync("**/*", async route =>
+            {
+                if (!route.Request.IsNavigationRequest())
+                {
+                    await route.ContinueAsync();
+                    return;
+                }
+
+                var (autorisee, motif) = await _perimetre.VerifierAsync(route.Request.Url);
+                if (autorisee is null)
+                {
+                    _logger.LogWarning("[web_browse] Navigation bloquée vers {Url} : {Motif}",
+                        route.Request.Url, motif);
+                    await route.AbortAsync("blockedbyclient");
+                    return;
+                }
+
+                await route.ContinueAsync();
+            });
+
+            await page.GotoAsync(depart.ToString(), new() { Timeout = 30000, WaitUntil = WaitUntilState.NetworkIdle });
 
             // Execute actions if provided
             if (actionsArray != null)
@@ -149,7 +186,14 @@ public class WebBrowseTool : ITool
                 break;
 
             case "goto" when !string.IsNullOrEmpty(value):
-                await page.GotoAsync(value, new() { Timeout = 30000 });
+                // L'action `goto` est une SECONDE porte d'entrée : le modèle y met une URL
+                // arbitraire, distincte de celle qu'on a validée à l'ouverture. Le filtre de
+                // navigation l'attraperait, mais un refus explicite dit POURQUOI.
+                var (cible, motifRefus) = await _perimetre.VerifierAsync(value, ct);
+                if (cible is null)
+                    throw new InvalidOperationException($"Navigation refusée vers {value} — {motifRefus}");
+
+                await page.GotoAsync(cible.ToString(), new() { Timeout = 30000 });
                 break;
         }
     }

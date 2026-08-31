@@ -205,7 +205,7 @@ public class MemoryConsolidator : IMemoryConsolidator
 
         sb.AppendLine("FORMAT DE SORTIE — une ligne par fait, rien d'autre, aucun préambule :");
         sb.AppendLine("slot|importance|fait");
-        sb.AppendLine("Exemple : decisions|1.5|Yawo héberge le backend ORION sur un VPS IONOS, la base sur Supabase Cloud.");
+        sb.AppendLine("Exemple : decisions|1.5|Alex héberge le backend ORION sur un serveur dédié, la base sur PostgreSQL infogéré.");
         sb.AppendLine("L'importance va de 0.5 à 2.0. Si rien n'est à retenir, réponds exactement : AUCUN");
 
         return sb.ToString();

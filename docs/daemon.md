@@ -13,8 +13,11 @@ Orion.Daemon/         Workers/DaemonWorker · WebSocket (Manager + MessageHandle
                       Kokoro[KokoroSharp.CPU v0.6.6, voix ff_siwis]) · ProactiveOrchestrator
 Orion.Daemon.Core/    Entities (DaemonCommand/Response) · Interfaces (IAction, IActionRegistry) ·
                       Configuration/DaemonOptions
-Orion.Daemon.Actions/ ActionRegistry + OpenApp, OpenFileInEditor, RunScript, LaunchClaude,
-                      OpenBrowserUrl, GetSystemStatus, ReadFile, WriteFile, GitStatus, GitCommit
+Orion.Daemon.Actions/ ActionRegistry + 18 actions : OpenApp, OpenFileInEditor, RunScript,
+                      LaunchClaude, OpenBrowserUrl, GetSystemStatus, GetWorkContext, ReadFile,
+                      WriteFile, ListFiles, GitStatus, GitCommit, KillProcess, GetClipboard,
+                      SetClipboard, TypeText, CaptureScreen, ProactiveDeferred
+                      (+ Speak / Synthesize, locales au projet Orion.Daemon)
 ```
 
 ## Flux proactif
@@ -27,12 +30,27 @@ Watcher détecte pattern (ex: inactif 3h + skip_meal)
   → (ou) notification Windows native + TTS daemon, sans ouvrir l'app
 ```
 
-Toute action doit être dans la **whitelist** avant implémentation.
+Toute action doit être dans la **whitelist** (`DaemonActionValidator`) avant implémentation.
+
+⚠️ **La whitelist ne filtre que le NOM de l'action, jamais ses arguments.** Un chemin de fichier ou
+une URL la traverse sans être examiné. Le **périmètre** est donc la responsabilité de l'action
+elle-même.
+
+`ReadFile`, `ListFiles` et `WriteFile` le portent depuis le 2026-08-27 via
+`Orion.Daemon.Core/Security/PathScope.cs`. Lire [security.md](security.md) avant d'ajouter une
+action qui touche au disque, au réseau interne ou aux processus.
 
 ## Installation
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scriptsinstall-daemon.ps1
+powershell -File scripts\install-daemon.ps1
+```
+
+Si Windows bloque le script (marque « téléchargé depuis Internet »), préférer `Unblock-File` à un
+contournement global de la politique d'exécution :
+
+```powershell
+Unblock-File scripts\install-daemon.ps1
 ```
 
 A rejouer **a chaque changement du code du daemon**. Le script publie, transporte les voix,
@@ -72,15 +90,46 @@ secours repond). Le script les transporte depuis la sortie de build ; c est l et
 Pour la meme raison, le lanceur `demarrer-orion.vbs` fixe `CurrentDirectory` : ces chemins sont
 **relatifs**. Lance depuis ailleurs, ORION est muet.
 
+## Périmètre de lecture — `AllowedRoots`
+
+`read_file` et `list_files` sont **fail-closed** : sans racine déclarée, ils refusent tout. Ce
+n'est pas une panne — c'est le défaut voulu, et le message d'erreur nomme la clé à renseigner.
+
+```json
+{ "Daemon": {
+  "AllowedRoots": [
+    "C:\\chemin\\vers\\tes\\depots",
+    "C:\\Users\\<toi>\\Documents"
+  ],
+  "DeniedNames": []
+}}
+```
+
+À déclarer **étroit**. Surtout pas `C:\Users\<toi>` : le profil contient `.ssh`, les bases de
+cookies et les jetons. Une racine autorisée dit où ORION a le droit de chercher — et ce qu'il y
+lit repart dans sa réponse, donc hors de la machine.
+
+`AllowedWriteRoots` gouverne l'ÉCRITURE (`write_file`) séparément : vide, il retombe sur
+`AllowedRoots` — donc vers un ensemble plus petit ou égal, jamais vers « tout ». Écrire là où on
+lit est souvent trop large : le dossier Démarrage suffit à obtenir une persistance complète, et
+c'est justement par là que le daemon lui-même est lancé.
+
+`ScriptTimeoutSeconds` (120 s par défaut) plafonne `run_script`. Le daemon traite les commandes
+une par une : sans ce plafond, un script qui ne rend jamais la main le rend muet sur tout le reste.
+
+`DeniedNames` vide = liste par défaut (`.ssh`, `.aws`, `.git`, `id_rsa`, `.env*`,
+`appsettings.Production.json`, …), refusée **même sous une racine autorisée** : un dépôt de code
+légitime contient presque toujours un `.env`.
+
 ## Config Production
 
 `%LOCALAPPDATA%Oriondaemonappsettings.Production.json` — **hors du depot**, jamais versionne.
 
 ```json
 { "Daemon": {
-  "RenderWsUrl": "wss://orion.shift-star.app/daemon",
+  "RenderWsUrl": "wss://<ton-domaine>/daemon",
   "Token": "<identique a DAEMON_WS_TOKEN cote serveur>",
-  "MachineName": "HexaNexus",
+  "MachineName": "<nom-de-ta-machine>",
   "ReconnectDelayMs": 5000,
   "MaxReconnectDelayMs": 60000
 }}
@@ -102,6 +151,6 @@ Cote serveur, la preuve reelle :
 
 ```bash
 docker logs orion --since 2m | grep -E "Daemon connected|weights"
-#   Daemon connected from HexaNexus
+#   Daemon connected from <nom-de-ta-machine>
 #   GET /api/proactivenotification/weights - 200      <- le mode proactif fonctionne
 ```

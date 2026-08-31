@@ -1,49 +1,120 @@
 # Déploiement & Dev Local — ORION
 
-## Backend (Render)
+> ⚠️ **Réécrit le 2026-08-27.** Cette page décrivait un déploiement Render + Vercel qui n'est plus
+> celui du projet. L'hébergement est un **VPS unique derrière Nginx**, et la PWA est servie **par
+> le backend**. Les noms `RenderWsUrl` / `orion-api.onrender.com` sont des vestiges.
 
-- Service : Web Service · Runtime : Docker · Health : `GET /health`
-- WebSocket : Render free tier supporte WSS natif (`wss://orion-api.onrender.com/daemon` + `/ws/voice`)
-- Env :
-  ```
-  ASPNETCORE_ENVIRONMENT=Production
-  SUPABASE_URL=  SUPABASE_SERVICE_KEY=
-  ANTHROPIC_API_KEY=  OLLAMA_URL=
-  DAEMON_WS_TOKEN=  JWT_SECRET=
-  ```
+## Topologie réelle
 
-## Frontend (Vercel)
+```
+Navigateur ──HTTPS──►  Nginx (TLS, façade)  ──HTTP loopback──►  Backend .NET (conteneur)
+                                                                    │
+Daemon Windows ──WSS /daemon (X-Daemon-Token)──────────────────────►│  (le daemon INITIE)
+                                                                    ▼
+                                                   PostgreSQL + pgvector (Supabase Cloud)
+```
 
-- Framework : Vite · Build : `npm run build` → `dist/` · PWA : Service Worker auto (vite-plugin-pwa)
-- Env : `VITE_API_URL=https://orion-api.onrender.com` · `VITE_WS_URL=wss://orion-api.onrender.com`
+La PWA **n'est pas hébergée séparément** : le bundle construit vit dans `wwwroot` et le backend le
+sert lui-même (cf. `Dockerfile`), avant l'authentification — la coquille de l'application n'est pas
+un secret, et si elle exigeait une session, l'utilisateur n'aurait jamais l'écran pour en ouvrir une.
+
+## Configuration — d'où viennent les valeurs
+
+⚠️ **`appsettings.json` et `appsettings.Development.json` sont gitignorés, donc ABSENTS de l'image.**
+En production, tout arrive par **variables d'environnement**, posées par Ansible. Le double
+souligné correspond à l'imbrication .NET : `Auth__JwtSecret` → section `Auth`, clé `JwtSecret`.
+
+Modèle complet et commenté : [`.env.example`](../.env.example) à la racine.
+
+### Les valeurs fail-closed — absentes, ça REFUSE
+
+Ce ne sont pas des pannes, c'est le comportement voulu. Un secret absent ne doit jamais ouvrir.
+
+| Variable | Effet si absente |
+|---|---|
+| `Auth__Password`, `Auth__JwtSecret` | `/api/auth/login` répond **503** — aucune session possible |
+| `DAEMON_WS_TOKEN` | WebSocket daemon **refusé** (avant, un jeton non configuré faisait sauter le contrôle) |
+| `AllowedOrigins__0` | **refus de démarrer** — liste vide = le framework accepte TOUTE origine, donc détournement de WebSocket inter-sites |
+| `ConnectionStrings__Supabase` | **refus de démarrer** |
+
+`AllowedOrigins` est la **source de vérité unique** du CORS *et* des origines WebSocket : deux
+listes d'origines finissent toujours par diverger. En production la valeur vient du domaine déclaré
+de la stack — depuis un téléphone, le navigateur envoie l'origine publique, pas `localhost`.
+
+### Les autres
+
+| Groupe | Variables |
+|---|---|
+| Cerveau distant | `Nim__ApiKey`, `Nim__Model`, `Nim__BaseUrl` |
+| Cerveau local (repli) | `Ollama__BaseUrl`, `Ollama__Model`, **`Ollama__NumCtx`** |
+| Embeddings | `Embedding__ApiKey`, `Embedding__Model`, `Embedding__Dimensions` |
+| Transcription | `Transcription__ApiKey` (retombe sur celle des embeddings si vide) |
+| Recherche web | `Internet__SearchApiProvider`, `Internet__BraveApiKey`, `Internet__SerpApiKey` |
+
+⚠️ `Ollama__NumCtx` est **obligatoire** : sans elle Ollama dimensionne le cache KV sur le contexte
+maximum du modèle (128k) et réclame ~15 Go pour un modèle de 2 Go → HTTP 500 intermittents.
+
+⚠️ `Embedding__Dimensions` doit correspondre **exactement** à la colonne `memory_vectors.embedding`.
+Changer de modèle d'embedding impose de revectoriser toute la table (`POST /api/memory/revectorize`) :
+mélanger deux espaces vectoriels ne lève aucune erreur et renvoie des résultats absurdes.
+
+## Nginx — points qui cassent si on les oublie
+
+- **Upgrade WebSocket** à propager sur `/daemon` et `/ws/voice` (`Upgrade` / `Connection`).
+- **Ne pas** laisser `UseHttpsRedirection` intercepter l'upgrade : derrière Nginx, l'application
+  voit du HTTP en loopback. C'est pourquoi les middlewares WebSocket sont montés **avant** dans
+  `Program.cs` — les descendre casserait les deux canaux (redirection 307).
+- **Masquer le jeton dans les journaux** : Nginx remplace `access_token` par `***`. ASP.NET
+  journalise l'URL complète, donc cette copie non masquée est coupée en production
+  (`Microsoft.AspNetCore.Hosting.Diagnostics` → `Warning`). Constaté le 2026-08-26 : un billet en
+  clair dans `access.log`.
+
+## Base de données
+
+```bash
+psql "$CONNECTION_STRING" -f memory/schema.sql
+psql "$CONNECTION_STRING" -f memory/seed.sql
+```
+
+pgvector est requis. La dimension d'index plafonne à 2000 — d'où le choix d'un modèle à 1024 dims.
 
 ## Daemon (machine Windows)
 
-Cf. [daemon.md](daemon.md). `appsettings.json` → `RenderWsUrl: wss://orion-api.onrender.com/daemon`.
+```powershell
+powershell -File scripts/install-daemon.ps1
+```
 
-## Dev Local
+Lancé par le **dossier Démarrage**, pas en service Windows (un service vit en session 0, isolée du
+bureau : ORION serait muet et invisible). Détail et pièges : [daemon.md](daemon.md).
+
+Configuration hors dépôt : `%LOCALAPPDATA%\Orion\daemon\appsettings.Production.json`. Le champ
+`Daemon:Token` doit être **identique** à `DAEMON_WS_TOKEN` côté serveur.
+
+## Dev local
 
 ```bash
-cd backend  && dotnet run --project Orion.Api      # http://localhost:5107
-cd daemon   && dotnet run --project Orion.Daemon
-cd frontend && npm run dev                          # http://localhost:5173
-# Ollama = service Windows déjà actif (http://localhost:11434)
+cp .env.example .env                              # puis renseigner
+dotnet run --project backend/Orion.Api            # http://localhost:5107
+dotnet run --project daemon/Orion.Daemon
+cd frontend && npm run dev                        # http://localhost:5173
 ```
 
-En dev, `appsettings.Development.json` ne surcharge que `Ollama.BaseUrl` → `Model`/`FallbackModel`
-viennent de `appsettings.json` (vérifier qu'ils existent dans `ollama list`).
+En développement : Swagger est exposé sur `/swagger`, la politique CORS `DevelopmentPolicy`
+s'applique, et les origines `localhost:5173` / `localhost:3000` sont ajoutées aux origines
+WebSocket — **uniquement** en développement, où elles n'élargissent la surface de rien.
 
-## .env.example
+## Vérifier que ça tourne
 
-```env
-SUPABASE_URL=https://xxx.supabase.co
-SUPABASE_SERVICE_KEY=eyJ...
-ANTHROPIC_API_KEY=sk-ant-...
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=deepseek-v4-flash:cloud
-DAEMON_WS_URL=ws://localhost:5107/daemon
-DAEMON_WS_TOKEN=secret-token-orion
-JWT_SECRET=orion-jwt-secret-change-this
-VITE_API_URL=http://localhost:5107
-VITE_WS_URL=ws://localhost:5107
+```bash
+curl -s https://<domaine>/health                     # sonde ouverte, n'expose aucune donnée
+docker logs orion --since 2m | grep -E "Daemon connected|Tool registered|probe"
 ```
+
+Au démarrage, la **sonde LLM** appelle réellement le fournisseur pour élire le modèle servi :
+`ollama list` ne prouve rien (7 modèles listés, 7 inutilisables — 2026-08-20). Sans cette sonde,
+la panne est invisible et ORION bascule en silence sur un modèle dégradé.
+
+## Sécurité
+
+Avant d'exposer une instance, lire **[security.md](security.md)** : l'audit du 2026-08-27 documente
+des constats **ouverts**, dont deux critiques sur le périmètre des outils de fichiers.

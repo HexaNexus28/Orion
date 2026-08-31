@@ -83,7 +83,13 @@ public static class ServiceCollectionExtensions
             var options = sp.GetRequiredService<DaemonOptions>();
             return new GitCommitAction(options);
         });
-        services.AddSingleton<IAction, ListFilesAction>();
+        // ListFilesAction prend desormais DaemonOptions : elle porte un PERIMETRE (audit C1).
+        // Enregistree sans options, elle aurait recu des racines vides — donc tout refuse.
+        services.AddSingleton<IAction>(sp =>
+        {
+            var options = sp.GetRequiredService<DaemonOptions>();
+            return new ListFilesAction(options);
+        });
         services.AddSingleton<IAction, KillProcessAction>();
         services.AddSingleton<IAction, GetClipboardAction>();
         services.AddSingleton<IAction, SetClipboardAction>();

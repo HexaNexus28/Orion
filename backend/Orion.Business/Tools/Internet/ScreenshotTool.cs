@@ -9,6 +9,7 @@ namespace Orion.Business.Tools.Internet;
 
 public class ScreenshotTool : ITool
 {
+    private readonly UrlScope _perimetre;
     private readonly ILogger<ScreenshotTool> _logger;
     private IPlaywright? _playwright;
     private IBrowser? _browser;
@@ -44,8 +45,9 @@ public class ScreenshotTool : ITool
         ["required"] = new JsonArray { "url" }
     };
 
-    public ScreenshotTool(ILogger<ScreenshotTool> logger)
+    public ScreenshotTool(UrlScope perimetre, ILogger<ScreenshotTool> logger)
     {
+        _perimetre = perimetre;
         _logger = logger;
     }
 
@@ -61,10 +63,18 @@ public class ScreenshotTool : ITool
         var width = input["width"]?.GetValue<int>() ?? 1280;
         var height = input["height"]?.GetValue<int>() ?? 800;
 
-        // Validate blocked domains
-        if (IsBlockedDomain(url))
+        // Le contrôle d'avant était une liste de sous-chaînes — « banking », « secure »,
+        // « login », « auth », « account » — cherchées dans l'URL en minuscules. Il refusait
+        // une page Wikipédia dont le titre contient « Login », et laissait passer
+        // http://169.254.169.254/ : bruyant sur le légitime, aveugle sur la menace.
+        //
+        // C'était aussi un TROISIÈME contrôle d'URL, plus faible que les deux autres. Il vit
+        // désormais à un seul endroit, comme le reste (constat E2).
+        var (cible, raison) = await _perimetre.VerifierAsync(url, ct);
+        if (cible is null)
         {
-            return ApiResponse<ToolResult>.ForbiddenResponse("This domain is blocked for security reasons");
+            _logger.LogWarning("[screenshot_page] URL refusée : {Raison}", raison);
+            return ApiResponse<ToolResult>.ForbiddenResponse(raison);
         }
 
         try
@@ -80,7 +90,7 @@ public class ScreenshotTool : ITool
                 ViewportSize = new ViewportSize { Width = width, Height = height }
             });
 
-            await page.GotoAsync(url, new() { Timeout = 30000, WaitUntil = WaitUntilState.NetworkIdle });
+            await page.GotoAsync(cible.ToString(), new() { Timeout = 30000, WaitUntil = WaitUntilState.NetworkIdle });
 
             // Take screenshot
             var screenshotBytes = await page.ScreenshotAsync(new()
@@ -119,13 +129,6 @@ public class ScreenshotTool : ITool
             }
             _playwright?.Dispose();
         }
-    }
-
-    private bool IsBlockedDomain(string url)
-    {
-        var blockedDomains = new[] { "banking", "secure", "login", "auth", "account" };
-        var lowerUrl = url.ToLower();
-        return blockedDomains.Any(d => lowerUrl.Contains(d));
     }
 
     private async Task<int> GetScrollHeightAsync(IPage page)
