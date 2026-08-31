@@ -146,7 +146,7 @@ builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
                     context.Token = accessToken;
                     // Marque indispensable a OnTokenValidated : sans elle, impossible de
                     // distinguer un jeton lu dans l URL d un jeton lu dans l en-tete.
-                    context.HttpContext.Items[OrionAuth.TokenVenuDeLUrl] = true;
+                    context.HttpContext.Items[OrionAuth.TokenFromUrl] = true;
                 }
                 return Task.CompletedTask;
             },
@@ -173,7 +173,7 @@ builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
                     _                       => Enumerable.Empty<string>()
                 };
                 var estBillet = audiences.Contains(OrionAuth.StreamAudience);
-                var venuDeLUrl = context.HttpContext.Items.ContainsKey(OrionAuth.TokenVenuDeLUrl);
+                var venuDeLUrl = context.HttpContext.Items.ContainsKey(OrionAuth.TokenFromUrl);
 
                 if (estBillet && !venuDeLUrl)
                 {
@@ -387,6 +387,13 @@ builder.Services.AddScoped<IToolService, ToolService>();
 builder.Services.AddScoped<IBriefingService, BriefingService>();
 builder.Services.AddScoped<IAuditService, AuditService>();
 builder.Services.AddScoped<IHealthService, HealthService>();
+
+// ========== VEILLE (flux RSS/Atom) ==========
+// La liste de flux vit dans NewsOptions, PAS dans appsettings.json : ce fichier est gitignore,
+// donc absent de l image — la veille serait vide en production sans aucun message.
+builder.Services.Configure<NewsOptions>(builder.Configuration.GetSection(NewsOptions.SectionName));
+builder.Services.AddHttpClient<INewsCollector, NewsCollector>();
+builder.Services.AddScoped<INewsQueryPlanner, LlmNewsQueryPlanner>();
 
 // ========== EMBEDDING SERVICE (RAG — NVIDIA NIM) ==========
 // Ollama a ete retire : il n existe pas sur le VPS, la memoire y serait morte en silence.

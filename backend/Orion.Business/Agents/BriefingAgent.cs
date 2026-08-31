@@ -2,11 +2,13 @@ using System.Globalization;
 using System.Text;
 using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
+using Orion.Core.Configuration;
 using Orion.Core.DTOs.Responses;
 using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Daemon;
 using Orion.Core.Interfaces.LLM;
 using Orion.Core.Interfaces.Repositories;
+using Orion.Core.Interfaces.Services;
 
 using Orion.Business.LLM;
 
@@ -17,17 +19,21 @@ public class BriefingAgent : IBriefingAgent
     private readonly ILLMAgentClient _llmClient;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IDaemonClient _daemonClient;
+    private readonly INewsCollector _news;
+    private readonly INewsQueryPlanner _newsPlanner;
     private readonly ILogger<BriefingAgent> _logger;
 
     public BriefingAgent(
         ILLMAgentClient llmClient,
         IUnitOfWork unitOfWork,
         IDaemonClient daemonClient,
-        ILogger<BriefingAgent> logger)
+        INewsCollector news, INewsQueryPlanner newsPlanner, ILogger<BriefingAgent> logger)
     {
         _llmClient = llmClient;
         _unitOfWork = unitOfWork;
         _daemonClient = daemonClient;
+        _news = news;
+        _newsPlanner = newsPlanner;
         _logger = logger;
     }
 
@@ -50,14 +56,22 @@ public class BriefingAgent : IBriefingAgent
         // Le briefing est exactement le bon moment pour le dire — une fois, groupé.
         var differes = await RecupererSignauxDifferesAsync(ct);
 
-        var prompt = BuildBriefingPrompt(profileDict, recentMemories.Select(m => m.Content).ToList(), differes, now);
+        // La veille est COLLECTEE, jamais demandee au modele : un LLM a qui on demande « quoi de
+        // neuf » invente, et une actualite inventee vaut moins que pas d'actualite.
+        // Les flux fixes couvrent les cercles ; les requetes dynamiques suivent ce sur quoi tu
+        // travailles vraiment. Sans elles la veille serait un marque-page.
+        var dynamicFeeds = await _newsPlanner.PlanAsync(ct);
+        var harvest = await _news.CollectAsync(dynamicFeeds, ct);
+
+        var prompt = BuildBriefingPrompt(
+            profileDict, recentMemories.Select(m => m.Content).ToList(), differes, harvest, now);
 
         var request = new LLMRequest
         {
             SystemPrompt = "Tu es ORION, l'assistant IA personnel de l'utilisateur. Génère uniquement le briefing demandé, sans introduction ni conclusion supplémentaire.",
             Messages = [new LLMMessage { Role = "user", Content = prompt }],
             Temperature = 0.7f,
-            MaxTokens = 300
+            MaxTokens = 500
         };
 
         string briefingText;
@@ -183,6 +197,7 @@ public class BriefingAgent : IBriefingAgent
         Dictionary<string, string> profile,
         List<string> recentMemoryContents,
         List<string> signauxDifferes,
+        NewsHarvest harvest,
         DateTime now)
     {
         var sb = new StringBuilder();
@@ -214,10 +229,29 @@ public class BriefingAgent : IBriefingAgent
             sb.AppendLine();
         }
 
+        if (harvest.Items.Count > 0)
+        {
+            sb.AppendLine("Veille du jour — ce sont de VRAIS articles collectés, classés du plus proche au plus lointain :");
+            foreach (var item in harvest.Items)
+            {
+                var cercle = item.Circle switch
+                {
+                    NewsCircle.Local => "France/ESIEA/EDF",
+                    NewsCircle.Africa => "Togo/Afrique",
+                    _ => "monde"
+                };
+                sb.AppendLine($"- [{cercle}] {item.Title} ({item.Source})");
+            }
+            sb.AppendLine();
+        }
+
         sb.AppendLine("Génère mon briefing matinal en 3 à 5 phrases naturelles et directes.");
         sb.AppendLine("Parle à la deuxième personne, comme si tu me parlais maintenant.");
         sb.AppendLine("Rappelle les priorités ou projets en cours si tu les connais.");
         sb.AppendLine("Mentionne ce qui a été signalé sans interrompre — c'est précisément le moment.");
+        sb.AppendLine("Sur la veille : retiens au plus trois sujets, ceux qui servent vraiment un etudiant");
+        sb.AppendLine("en informatique travaillant avec EDF. N'INVENTE AUCUNE actualite : si un sujet");
+        sb.AppendLine("n'est pas dans la liste ci-dessus, il n'existe pas. Cite la source.");
         sb.AppendLine("Termine par une note motivante si pertinent.");
         sb.AppendLine("Pas de markdown, pas de titres, pas de listes — texte continu pour être lu à voix haute.");
 
