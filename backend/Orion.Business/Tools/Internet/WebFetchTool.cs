@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -129,7 +130,19 @@ public class WebFetchTool : ITool
         throw new InvalidOperationException($"Trop de redirections (plus de {MaxRedirections}).");
     }
 
-    private static bool EstRedirection(System.Net.HttpStatusCode code)
+    /// <summary>
+    /// ⚠️ Le type est importé en haut du fichier, JAMAIS écrit « System.Net.HttpStatusCode » ici.
+    ///
+    /// Ce fichier vit dans `Orion.Business.Tools.Internet`. Le compilateur résout un nom en
+    /// remontant les namespaces englobants : « System » tombe alors sur
+    /// `Orion.Business.Tools.System` — le dossier des outils système — avant d'atteindre le
+    /// `System` global. Il cherche donc `Orion.Business.Tools.System.Net`, qui n'existe pas.
+    ///
+    /// CS0234, et un message qui parle d'une référence d'assembly manquante alors que le
+    /// problème est une collision de noms. Les directives `using` en tête de fichier, elles,
+    /// sont résolues AVANT la déclaration de namespace : elles n'ont pas ce problème.
+    /// </summary>
+    private static bool EstRedirection(HttpStatusCode code)
         => (int)code is >= 300 and <= 399;
 
     private WebFetchResultDto ExtractContent(string html, string url, int maxLength)
