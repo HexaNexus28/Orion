@@ -82,7 +82,8 @@ public class WebBrowseTool : ITool
             // sous-ressource n'est pas relue et ne repart pas vers le modèle.
             await page.RouteAsync("**/*", async route =>
             {
-                if (!route.Request.IsNavigationRequest())
+                // PROPRIETE, pas methode : `IsNavigationRequest()` donne CS1955.
+                if (!route.Request.IsNavigationRequest)
                 {
                     await route.ContinueAsync();
                     return;

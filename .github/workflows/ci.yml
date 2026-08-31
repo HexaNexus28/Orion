@@ -1,0 +1,103 @@
+# Compile et teste TOUT, avant que ça n'atteigne main.
+#
+# POURQUOI CE FICHIER EXISTE. Le seul garde était `build-orion-api.yml`, qui construit l'image
+# Docker — donc UNIQUEMENT `Orion.Api`, et UNIQUEMENT sur push vers main. Conséquences vécues
+# le 2026-08-31 : une erreur de compilation a été mergée sans que rien ne la signale, le build
+# d'image a échoué APRÈS le merge, et l'image n'a pas été publiée — le VPS est resté sur
+# l'ancienne version.
+#
+# Deux trous, refermés ici :
+#   - le DAEMON n'était compilé par personne. Une erreur y serait passée jusqu'à l'installation.
+#   - les TESTS n'étaient jamais exécutés. Ils existent, ils sont nombreux, et ils ne gardaient
+#     rien du tout.
+#
+# Sur pull_request : c'est là que ça compte. Un échec vu avant le merge coûte une correction ;
+# vu après, il coûte une production figée sur l'image précédente.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend — build & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore backend/Orion.sln
+
+      # --no-restore : le restore vient d'avoir lieu. Le refaire masquerait une erreur de
+      # restauration derrière une seconde tentative silencieuse.
+      - name: Build
+        run: dotnet build backend/Orion.sln -c Release --no-restore
+
+      # Les tests d'INTEGRATION sont exclus : ils appellent un Ollama REEL sur
+      # localhost:11434, qui n'existe evidemment pas sur un runner GitHub. Ils gardent tout
+      # leur sens en local, la ou le modele tourne — c'est meme leur raison d'etre : verifier
+      # qu'un modele repond vraiment, puisque la config, elle, ment (cf. ProbeAsync).
+      #
+      # Ce filtre EXCLUT UN ESPACE DE NOMS ENTIER : tout test place dans Orion.Tests.Integration
+      # cesse de garder quoi que ce soit en CI. Y ranger un test unitaire par erreur le rendrait
+      # silencieusement inoffensif.
+      - name: Tests (unitaires — l'integration exige un Ollama local)
+        run: >
+          dotnet test backend/Orion.sln -c Release --no-build --verbosity normal
+          --filter "FullyQualifiedName!~Orion.Tests.Integration"
+
+  daemon:
+    name: Daemon — build & tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '9.0.x'
+
+      - name: Restore
+        run: dotnet restore daemon/Orion.Daemon.sln
+
+      # Le daemon CIBLE Windows, mais il compile sur Linux : c'est du .NET, et ce qui nous
+      # intéresse ici est la compilation et les tests unitaires, pas l'exécution.
+      - name: Build
+        run: dotnet build daemon/Orion.Daemon.sln -c Release --no-restore
+
+      - name: Tests
+        run: dotnet test daemon/Orion.Daemon.sln -c Release --no-build --verbosity normal
+
+  frontend:
+    name: Frontend — typecheck & build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # `npm ci` et non `npm install` : il installe EXACTEMENT le lockfile et échoue si le
+      # lockfile a divergé de package.json, au lieu de le réécrire en silence.
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+
+      # `npm run build` lance tsc : la règle « zéro variable/import non utilisé » de CLAUDE.md
+      # n'est tenue que si quelqu'un l'exécute.
+      - name: Build
+        working-directory: frontend
+        run: npm run build

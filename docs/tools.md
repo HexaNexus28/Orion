@@ -8,8 +8,15 @@
 ## Fonctionnement
 
 ```
-User → AgentLoop → tool_call({...}) → IToolInvoker → [exécute | diffère | refuse] → résultat → modèle
+User  → AgentLoop → tool_call({...}) ─┐
+                                      ├→ IToolInvoker → [exécute | diffère | refuse] → résultat
+HUD   → POST /api/tools/{name} ───────┘
 ```
+
+**Deux entrées, un seul chemin.** Un geste du HUD n'est pas un second mécanisme à sécuriser :
+il emprunte le même `IToolInvoker`, donc le même garde-fou. Un bouton « commit » part en file de
+confirmation exactement comme si le modèle l'avait demandé. Seule l'`Origin` diffère (`hud` vs
+`chat`), pour qu'ORION sache d'où vient une action mise en attente.
 
 Tout outil implémente `ITool` (`Orion.Core/Interfaces/Tools/ITool.cs`) et est découvert par
 `ToolRegistry` via l'enregistrement DI `AddScoped<ITool>(…)` dans `Program.cs`. Jamais de logique

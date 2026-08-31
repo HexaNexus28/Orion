@@ -60,7 +60,9 @@ public class ToolSchemaTests
         {
             var contenu = type.GetGenericArguments()[0];
             var valeur = Activator.CreateInstance(contenu);
-            return typeof(Options).GetMethod(nameof(Options.Create))!
+            // "Create" en litteral : `nameof(Options.Create)` porte sur une methode GENERIQUE,
+            // dont le compilateur ne peut pas inferer les arguments de type dans ce contexte.
+            return typeof(Options).GetMethod("Create")!
                 .MakeGenericMethod(contenu)
                 .Invoke(null, new[] { valeur });
         }

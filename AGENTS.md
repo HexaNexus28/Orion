@@ -205,8 +205,9 @@ MemoryRevectorizer   rejoue toute la table quand le modèle d'embedding change
 
 ### Backend — Orion.Api
 
-⚠️ **Corrigé le 2026-08-27** : `ToolsController`, `AuthMiddleware` et `LoggingMiddleware`
-n'existent pas. Les outils s'exposent par `DaemonController` (`GET /api/daemon/tools`).
+⚠️ **Corrigé le 2026-08-27** : `AuthMiddleware` et `LoggingMiddleware` n'existent pas.
+`ToolsController` a été ajouté depuis (HUD → appel d'outil) et vit à côté de
+`GET /api/daemon/tools`, qui reste.
 
 ```
 Orion.Api/
@@ -216,6 +217,8 @@ Orion.Api/
 │   ├── ChatController.cs                   # POST /chat · /chat/stream (SSE)
 │   ├── MemoryController.cs                 # GET/POST/DELETE /memory · /search · /revectorize
 │   ├── DaemonController.cs                 # GET /daemon/status · /tools · POST /daemon/action
+│   ├── ToolsController.cs                  # GET /tools · POST /tools/{name} — gestes du HUD,
+│   │                                       # même IToolInvoker, donc même garde-fou
 │   ├── DeferredActionsController.cs        # file d'actions : GET · confirm · cancel
 │   ├── BriefingController.cs               # GET /briefing/today · /history
 │   ├── VoiceController.cs                  # transcribe · synthesize · converse · status

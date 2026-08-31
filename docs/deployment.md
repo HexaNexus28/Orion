@@ -103,6 +103,23 @@ En développement : Swagger est exposé sur `/swagger`, la politique CORS `Devel
 s'applique, et les origines `localhost:5173` / `localhost:3000` sont ajoutées aux origines
 WebSocket — **uniquement** en développement, où elles n'élargissent la surface de rien.
 
+## Intégration continue
+
+| Workflow | Déclencheur | Ce qu'il garde |
+|---|---|---|
+| `ci.yml` | pull request · push sur `main` | compile backend **et daemon**, exécute les deux suites de tests, `tsc` + build du front |
+| `build-orion-api.yml` | push sur `main` (`backend/**`, `frontend/**`) | construit l'image, la pousse sur GHCR, puis déclenche le déploiement |
+
+⚠️ `build-orion-api.yml` ne compile que `Orion.Api` — donc **ni le daemon, ni les tests** — et
+seulement **après** le merge. Le 2026-08-31, une erreur de compilation est ainsi passée sur `main` :
+l'échec n'est apparu qu'au build d'image, et l'image n'a pas été publiée — le VPS est resté sur la
+version précédente. C'est ce trou que `ci.yml` referme, en se déclenchant **sur la pull request**.
+
+Le déploiement suit la publication de l'image. La clé SSH est **verrouillée côté serveur** sur
+`/usr/local/bin/deploy-orion` (`restrict,command=` dans `authorized_keys`) : la commande envoyée
+par le workflow est ignorée, le serveur exécute toujours son script. Une fuite de `VPS_SSH_KEY` ne
+vaut que le droit de redéployer ORION — ni shell, ni docker, ni lecture de fichiers.
+
 ## Vérifier que ça tourne
 
 ```bash

@@ -167,6 +167,7 @@ est refusée.
 | GET/POST/DELETE | `/api/memory` · `/search` · `/{id}` · `/revectorize` | mémoire long terme |
 | GET/POST | `/api/deferred-actions` · `/{id}/confirm` · `/{id}/cancel` | file d'actions différées |
 | GET/POST | `/api/daemon/status` · `/action` · `/tools` | état et actions machine |
+| GET/POST | `/api/tools` · `/api/tools/{name}` | catalogue et exécution d'un outil (gestes du HUD) |
 | POST/GET | `/api/voice/transcribe` · `/synthesize` · `/converse` · `/status` | voix |
 | GET/POST | `/api/proactivenotification/stream` · `/notify` · `/weights` | proactivité (SSE) |
 | GET | `/api/briefing/today` · `/history` | briefing |
