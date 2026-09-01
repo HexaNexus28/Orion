@@ -1,4 +1,4 @@
-# ORION — Proactivité : ce qui existe, ce qui manque (2026-08-20)
+# ORION — Proactivité : ce qui existe, ce qui manque
 
 > Analyse du code réel, pas de la doc. Chaque affirmation est adossée à un `fichier:ligne`.
 

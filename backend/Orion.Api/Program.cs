@@ -153,7 +153,7 @@ builder.Services.AddAuthentication(OrionAuth.SelectorScheme)
 
             // Le jeton de session ne doit JAMAIS voyager dans une URL : une URL finit dans les
             // journaux du serveur, ceux du CDN, l historique du navigateur et l en-tete Referer.
-            // Constate en production le 2026-08-26 — un jeton valide 30 jours en clair dans
+            // Un jeton valide 30 jours se retrouve en clair dans
             // access.log. Seul un BILLET DE FLUX, valable une minute, a le droit d y figurer.
             //
             // Le controle vaut dans LES DEUX SENS, et c est ce qui le rend efficace :
@@ -510,7 +510,7 @@ app.UseDefaultFiles();
 // d entree, et la politique fermee par defaut repond 401 — un code qui envoie chercher du cote
 // de l authentification alors que le probleme est une table de types MIME.
 //
-// Constate le 2026-08-27 : /vad/silero_vad_v5.onnx renvoyait 401 pendant que le worklet .js
+// Sans elle, /vad/silero_vad_v5.onnx renvoie 401 pendant que le worklet .js
 // voisin renvoyait 200. Le moteur ONNX recevait un corps vide et signalait « aucun graphe dans
 // le protobuf » — une erreur qui ne pointait vers rien de vrai. Le detecteur de parole ne
 // pouvait donc PAS demarrer, et l interface parlait d un micro absent.

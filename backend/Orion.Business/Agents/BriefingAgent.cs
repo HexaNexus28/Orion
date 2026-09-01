@@ -150,10 +150,9 @@ public class BriefingAgent : IBriefingAgent
         {
             var message = await _llmClient.CompleteTextAsync(request, ct);
 
-            // Le prompt interdit deja de promettre une action, avec des exemples. Le modele l'a
-            // fait quand meme — « Je redemarre le service et verifie les logs, attends » — alors
-            // qu'aucun outil n'est branche sur ce chemin. Un garde-fou dans le prompt n'est pas
-            // un garde-fou : c'est la lecon d'ADR-015, appliquee ici.
+            // Le prompt interdit deja de promettre une action, et le modele le fait quand meme
+            // alors qu'aucun outil n'est branche sur ce chemin. Un garde-fou dans le prompt n'est
+            // pas un garde-fou : c'est la lecon d'ADR-015, appliquee ici.
             if (!string.IsNullOrWhiteSpace(message) && !PromisesAction(message))
             {
                 return ApiResponse<string>.SuccessResponse(message.Trim());

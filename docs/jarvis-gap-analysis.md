@@ -1,4 +1,4 @@
-# ORION → Jarvis — Analyse de l'écart (2026-08-20)
+# ORION → Jarvis — Analyse de l'écart
 
 > Document de diagnostic. Établi par lecture du code + builds réels, pas par lecture de la doc.
 > Toute affirmation ici est adossée à un `fichier:ligne`.

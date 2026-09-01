@@ -1,4 +1,4 @@
-# ORION → Jarvis — Architecture cible (2026-08-20)
+# ORION → Jarvis — Architecture cible
 
 > Suite de [`jarvis-gap-analysis.md`](jarvis-gap-analysis.md). Le diagnostic dit ce qui est cassé.
 > Ce document dit ce qu'on construit, et **où placer l'argent**.

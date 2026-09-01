@@ -96,7 +96,7 @@ public class AuthController : ControllerBase
     /// POURQUOI. SSE et WebSocket de navigateur ne peuvent porter aucun en-tete : leur jeton
     /// doit passer par l URL. Or une URL finit dans les journaux du serveur, ceux du CDN,
     /// l historique et l en-tete Referer. Y faire transiter un jeton valable 30 jours revient a
-    /// le publier — constate le 2026-08-26, en clair dans access.log.
+    /// le publier : il se retrouve en clair dans access.log.
     ///
     /// Le billet a une AUDIENCE distincte, pas seulement une duree courte : il ne peut donc pas
     /// servir d en-tete Authorization ailleurs, et le jeton de session ne peut pas le remplacer

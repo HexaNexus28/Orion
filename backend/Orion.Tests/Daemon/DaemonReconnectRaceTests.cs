@@ -8,12 +8,12 @@ namespace Orion.Tests.Daemon;
 /// <summary>
 /// Le daemon redemarre plus vite que le backend ne detecte sa mort.
 ///
-/// Constate le 2026-09-01 : une reinstallation du daemon laissait ORION annoncer « PC eteint »
-/// alors qu'il etait connecte, et l'etat restait faux INDEFINIMENT — le nouveau daemon n'avait
-/// aucune raison de se reconnecter, sa socket allait tres bien.
+/// Une reinstallation du daemon laisse ORION annoncer « PC eteint » alors qu'il est connecte,
+/// et l'etat reste faux indefiniment : le nouveau daemon n'a aucune raison de se reconnecter,
+/// sa socket va tres bien.
 ///
-/// La cause : le nettoyage retirait la connexion PAR CLE. Le remplacant s'etait deja enregistre
-/// sous la meme cle quand l'ancienne boucle s'est apercue de la mort de SA socket.
+/// La cause tient au nettoyage, qui retire la connexion PAR CLE. Le remplacant s'est deja
+/// enregistre sous la meme cle quand l'ancienne boucle s'apercoit de la mort de SA socket.
 /// </summary>
 public class DaemonReconnectRaceTests
 {

@@ -1,6 +1,6 @@
 # Déploiement & Dev Local — ORION
 
-> ⚠️ **Réécrit le 2026-08-27.** Cette page décrivait un déploiement Render + Vercel qui n'est plus
+> ⚠️ **Réécrit.** Cette page décrivait un déploiement Render + Vercel qui n'est plus
 > celui du projet. L'hébergement est un **VPS unique derrière Nginx**, et la PWA est servie **par
 > le backend**. Les noms `RenderWsUrl` / `orion-api.onrender.com` sont des vestiges.
 
@@ -66,7 +66,7 @@ mélanger deux espaces vectoriels ne lève aucune erreur et renvoie des résulta
   `Program.cs` — les descendre casserait les deux canaux (redirection 307).
 - **Masquer le jeton dans les journaux** : Nginx remplace `access_token` par `***`. ASP.NET
   journalise l'URL complète, donc cette copie non masquée est coupée en production
-  (`Microsoft.AspNetCore.Hosting.Diagnostics` → `Warning`). Constaté le 2026-08-26 : un billet en
+  (`Microsoft.AspNetCore.Hosting.Diagnostics` → `Warning`). : un billet en
   clair dans `access.log`.
 
 ## Base de données
@@ -133,5 +133,5 @@ la panne est invisible et ORION bascule en silence sur un modèle dégradé.
 
 ## Sécurité
 
-Avant d'exposer une instance, lire **[security.md](security.md)** : l'audit du 2026-08-27 documente
+Avant d'exposer une instance, lire **[security.md](security.md)** : l'audit documente
 des constats **ouverts**, dont deux critiques sur le périmètre des outils de fichiers.

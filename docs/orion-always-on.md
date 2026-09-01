@@ -1,4 +1,4 @@
-# ORION disponible 24/7 — architecture (2026-08-20)
+# ORION disponible 24/7 — architecture
 
 > Fait suite à une exigence produit énoncée le 2026-08-20 :
 > **« je voudrais qu'ORION fonctionne même si le PC n'est pas ouvert »**.
@@ -135,11 +135,11 @@ L'ordre des chantiers ne change pas — celui-ci s'ajoute, il ne double pas les 
 | Chantier | État |
 |---|---|
 | J1 Boucle agent | ✅ livré et prouvé e2e |
-| J2 Prompts | ✅ livré (2026-08-20) |
-| J3 Cerveau NIM | ✅ livré (2026-08-20) — **le choix d'embedding distant n'a PAS été tranché** (§5) |
-| J4 Mémoire | ✅ livré (2026-08-20), sur embeddings **locaux** — d'où la dette ci-dessous |
-| J5 Proactivité | ✅ livré (2026-08-20), 5 étages |
-| **J6a File d'actions différées** | ✅ **livré et prouvé en exécution réelle (2026-08-21)** |
+| J2 Prompts | ✅ livré |
+| J3 Cerveau NIM | ✅ livré — **le choix d'embedding distant n'a PAS été tranché** (§5) |
+| J4 Mémoire | ✅ livré, sur embeddings **locaux** — d'où la dette ci-dessous |
+| J5 Proactivité | ✅ livré, 5 étages |
+| **J6a File d'actions différées** | ✅ **livré et prouvé en exécution réelle** |
 | **J6b Embedding distant** | ⛔ **bloquant du déploiement** — voir §5, et la dette a commencé à courir |
 | **J6c Déploiement VPS** | à faire — dépend de J6b |
 
@@ -147,7 +147,7 @@ L'ordre des chantiers ne change pas — celui-ci s'ajoute, il ne double pas les 
 et c'est lui qui rend le déploiement présentable — sans lui, chaque demande d'action avec le PC
 éteint répondrait « Daemon non connecté ».
 
-### Ce que J6a a réellement livré (2026-08-21)
+### Ce que J6a a réellement livré
 
 Point d'application **unique** : `IToolInvoker`. Avant lui, deux appelants exécutaient les outils
 chacun de leur côté et le garde « daemon absent » était recopié dans **treize** outils. Les treize

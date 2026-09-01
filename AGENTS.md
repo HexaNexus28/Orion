@@ -15,7 +15,6 @@ Univers  : HexaNexus (ShiftStar, ORION, HexaNexus 2.0)
 Langue   : Français (réponses ORION) / Anglais (code, commentaires)
 Stack    : .NET 9, React 19 + Vite, PostgreSQL + pgvector, cascade NVIDIA NIM -> Ollama
 Niveau   : Développeur avancé — pas d'explications basiques
-Dépôt    : PUBLIC — aucune info personnelle, aucun secret, aucun hôte réel versionné
 ```
 
 ---
@@ -126,7 +125,7 @@ Dépôt    : PUBLIC — aucune info personnelle, aucun secret, aucun hôte réel
 
 ## 3. Architecture des Agents ORION
 
-⚠️ **Corrigé le 2026-08-27.** Ce chapitre décrivait un `MemoryAgent` et un `ToolAgent` qui
+⚠️ **Corrigé.** Ce chapitre décrivait un `MemoryAgent` et un `ToolAgent` qui
 **n'existent pas** dans le dépôt. La mémoire est un *service*, et l'exécution d'outil est passée
 sous `IToolInvoker`. Le fichier `Orion.Business/Agents/` contient exactement trois agents.
 
@@ -205,7 +204,7 @@ MemoryRevectorizer   rejoue toute la table quand le modèle d'embedding change
 
 ### Backend — Orion.Api
 
-⚠️ **Corrigé le 2026-08-27** : `AuthMiddleware` et `LoggingMiddleware` n'existent pas.
+⚠️ **Corrigé** : `AuthMiddleware` et `LoggingMiddleware` n'existent pas.
 `ToolsController` a été ajouté depuis (HUD → appel d'outil) et vit à côté de
 `GET /api/daemon/tools`, qui reste.
 
@@ -243,7 +242,7 @@ Orion.Api/
 
 ### Backend — Orion.Business
 
-⚠️ **Corrigé le 2026-08-27** : `MemoryAgent`, `ToolAgent`, `LLMRouter`, `OllamaClient`,
+⚠️ **Corrigé** : `MemoryAgent`, `ToolAgent`, `LLMRouter`, `OllamaClient`,
 `AnthropicClient` et les outils ShiftStar **n'existent pas** dans le dépôt.
 
 ```
@@ -704,7 +703,7 @@ INSERT INTO user_profile (key, value) VALUES
 
 ## 8. Définition Tool — Exemple Complet
 
-⚠️ **Réécrit le 2026-08-27.** L'exemple précédent (`get_shiftstar_stats`) portait sur un outil qui
+⚠️ **Réécrit.** L'exemple précédent (`get_shiftstar_stats`) portait sur un outil qui
 **n'a jamais existé**. Celui-ci est un outil réel du dépôt.
 
 ### tools/definitions/list_files.json
@@ -952,7 +951,7 @@ playwright install chromium   # installe le browser Chromium
 
 ### Sécurité browsing
 
-⚠️ **Corrigé le 2026-08-27.** Ce bloc décrivait des contrôles comme s'ils étaient en place. Voici
+⚠️ **Corrigé.** Ce bloc décrivait des contrôles comme s'ils étaient en place. Voici
 l'état RÉEL, vérifié dans le code.
 
 | Contrôle | État |
@@ -1084,24 +1083,21 @@ Conséquence : toute action IsDestructive passe par la file de confirmation,
 Date     : 2026-08-26
 
 ADR-016 : Authentification fermée par défaut, et fail-closed
-Raison   : l'API était TOTALEMENT ouverte (UseAuthorization commentée). Une
-           liste de routes à protéger se périme au premier oubli ; une
+Raison   : une liste de routes à protéger se périme au premier oubli ; une
            FallbackPolicy refuse ce qu'on a oublié de déclarer. De même, un
-           secret absent doit REFUSER — c'est le défaut exact qui rendait le
-           WebSocket daemon librement accessible quand la variable
-           d'environnement manquait.
+           secret absent doit REFUSER : sans ce défaut, une variable
+           d'environnement manquante ouvre le canal au lieu de le fermer.
 Corollaire : billet de flux à audience distincte (60 s) pour SSE/WebSocket,
-           parce qu'une URL finit dans les journaux — constaté en clair dans
-           access.log le 2026-08-26.
+           parce qu'une URL finit en clair dans les journaux.
 Date     : 2026-08-26
 
 ADR-017 : Le PÉRIMÈTRE d'un outil s'applique dans le code qui agit
-Raison   : audit du 2026-08-27. DaemonOptions et InternetOptions.BlockedDomains
+Raison   : audit. DaemonOptions et InternetOptions.BlockedDomains
            donnaient l'ILLUSION d'un garde-fou : injectés, jamais lus. C'est
            pire qu'une absence — ça ne se voit pas à la lecture.
 Règle    : périmètre vide = rien n'autorisé. Comparaison sur le chemin
            NORMALISÉ, sinon ..\..\ contourne le contrôle.
-Statut   : APPLIQUÉ le 2026-08-27, les sept constats fermes.
+Statut   : APPLIQUÉ, les sept constats fermes.
            Disque  -> PathScope    (Orion.Daemon.Core/Security)
            Reseau  -> UrlScope     (Orion.Business/Tools/Internet)
            DaemonOptions et InternetOptions.BlockedDomains sont enfin LUS.

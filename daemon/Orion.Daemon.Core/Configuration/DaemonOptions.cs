@@ -7,12 +7,10 @@ public class DaemonOptions
     /// <summary>
     /// URL de sante du backend, DEDUITE de <see cref="RenderWsUrl"/>.
     ///
-    /// Elle n'est pas configurable, et c'est voulu : la surveiller a une adresse differente de
-    /// celle a laquelle le daemon parle n'a aucun sens. La configuration livree sondait
-    /// `http://localhost:5107` — l'adresse du backend en DEVELOPPEMENT — alors que le daemon
-    /// etait connecte au VPS. Rien n'ecoutait la, la sonde echouait a chaque ronde, et
-    /// `service_down` (urgence 90, seuil 55) annoncait en boucle un backend mort pendant que
-    /// le WebSocket fonctionnait.
+    /// Elle n'est pas configurable, et c'est voulu : surveiller une adresse differente de celle
+    /// a laquelle le daemon parle n'a aucun sens. Une sonde pointee sur le backend de
+    /// developpement echoue a chaque ronde en production, et `service_down` (urgence 90, seuil
+    /// 55) annonce alors un backend mort pendant que le WebSocket fonctionne.
     ///
     /// Une seule source de verite : impossible que les deux divergent.
     /// </summary>

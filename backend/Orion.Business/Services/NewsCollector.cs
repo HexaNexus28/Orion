@@ -23,7 +23,7 @@ public class NewsCollector : INewsCollector
     {
         // .NET Core n'embarque QUE l'UTF-8 et le Latin-1. Les flux francais servent encore de
         // l'ISO-8859-15, et XmlReader leve « System does not support 'ISO-8859-15' encoding » —
-        // le flux passe alors pour mort. Constate par le banc de test le 2026-09-01.
+        // le flux passe alors pour mort.
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
     }
 

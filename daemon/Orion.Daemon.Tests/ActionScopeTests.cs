@@ -15,8 +15,8 @@ namespace Orion.Daemon.Tests;
 ///
 /// Une suite portant sur `PathScope` seul serait restee INTEGRALEMENT VERTE pendant toute la
 /// duree de cette faille : le verrou fonctionnait parfaitement, personne ne le posait sur la
-/// porte. Verifie par mutation le 2026-09-01 — en retirant le perimetre des deux actions, ces
-/// tests tombent (6 echecs) tandis que les 15 PathScopeTests restent verts.
+/// porte. Verifie par mutation : en retirant le perimetre des deux actions, ces tests tombent
+/// (6 echecs) tandis que les 15 PathScopeTests restent verts.
 ///
 /// Tester un garde ne prouve rien sur son APPLICATION.
 /// </summary>

@@ -5,9 +5,9 @@ namespace Orion.Tests.Agents;
 /// <summary>
 /// Le chemin proactif n'a AUCUN outil branche : le daemon signale, il n'agit pas.
 ///
-/// Le prompt interdit deja de promettre une action, avec des exemples explicites. Le modele l'a
-/// fait quand meme, en production le 2026-09-01 : « Je redemarre le service et verifie les logs,
-/// attends. » L'utilisateur a attendu un travail qui n'aurait jamais lieu.
+/// Le prompt interdit deja de promettre une action, avec des exemples explicites, et le modele
+/// le fait quand meme : « Je redemarre le service et verifie les logs, attends. » L'utilisateur
+/// attend alors un travail qui n'aura jamais lieu.
 ///
 /// C'est la demonstration d'ADR-015 : un garde-fou dans le prompt n'est pas un garde-fou. Ces
 /// tests verrouillent celui qui est dans le CODE.

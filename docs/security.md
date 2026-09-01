@@ -1,6 +1,6 @@
 # Sécurité — ORION
 
-> Audit du 2026-08-27, sur l'état réel du dépôt (branche `claude/docs-agents-security-audit-cga1pl`).
+> Audit, sur l'état réel du dépôt (branche `claude/docs-agents-security-audit-cga1pl`).
 > Ce document n'est pas une checklist théorique : chaque constat a été vérifié dans le code, et
 > chaque ligne « Vérifié » nomme le fichier qui le prouve.
 
@@ -61,7 +61,7 @@ Aucun maillon de cette chaîne ne dit non.
 
 ---
 
-### C1 — ✅ CORRIGÉ le 2026-08-27 — Lecture du disque sans périmètre
+### C1 — ✅ CORRIGÉ — Lecture du disque sans périmètre
 
 **Où** : `daemon/Orion.Daemon.Actions/ReadFileAction.cs`, `ListFilesAction.cs`
 **Outils** : `read_file`, `list_files`
@@ -122,7 +122,7 @@ sur `PathScope` — il reste protégé par la seule confirmation.
 
 ---
 
-### C2 — ✅ CORRIGÉ le 2026-08-27 — Écriture du disque sans périmètre
+### C2 — ✅ CORRIGÉ — Écriture du disque sans périmètre
 
 **Où** : `daemon/Orion.Daemon.Actions/WriteFileAction.cs` · **Outil** : `write_file`
 
@@ -143,7 +143,7 @@ périmètre, elle s'y ajoute.
 
 ---
 
-### E1 — ✅ CORRIGÉ le 2026-08-27 — `run_script` : le guillemet cassait la commande
+### E1 — ✅ CORRIGÉ — `run_script` : le guillemet cassait la commande
 
 **Où** : `daemon/Orion.Daemon.Actions/RunScriptAction.cs` · **Outil** : `run_script`
 
@@ -175,7 +175,7 @@ guillemet à casser, et ce qui s'exécute est exactement ce qui a été affiché
 
 ---
 
-### E2 — ✅ CORRIGÉ le 2026-08-27 — SSRF : n'importe quelle URI était acceptée
+### E2 — ✅ CORRIGÉ — SSRF : n'importe quelle URI était acceptée
 
 **Où** : `WebFetchTool.cs`, `WebBrowseTool.cs`, `ScreenshotTool.cs`
 
@@ -221,7 +221,7 @@ réponse (*DNS rebinding*). Fermer ça imposerait de se connecter à l'IP valid�
 
 ---
 
-### M1 — ✅ CORRIGÉ le 2026-08-27 — `kill_process` tuait toute la famille
+### M1 — ✅ CORRIGÉ — `kill_process` tuait toute la famille
 
 **Où** : `daemon/Orion.Daemon.Actions/KillProcessAction.cs`
 
@@ -236,14 +236,14 @@ une description qui dit ce qu'il déclenche. Un seul processus correspond : rien
 
 ---
 
-### M2 — ✅ CORRIGÉ le 2026-08-27 — `ReadFileAction` lisait le fichier trois fois
+### M2 — ✅ CORRIGÉ — `ReadFileAction` lisait le fichier trois fois
 
 `File.ReadLines(fullPath)` était appelé **trois fois** (contenu, `totalLines`, `truncated`) : trois
 parcours disque, et trois instants différents — un fichier qui change entre les deux donnait un
 `truncated` incohérent. Corrigé en même temps que C1, l'action ayant été réécrite : une seule
 matérialisation, tout se calcule dessus.
 
-### M3 — ✅ CORRIGÉ le 2026-08-27 — `-ExecutionPolicy Bypass` dans la doc d'installation
+### M3 — ✅ CORRIGÉ — `-ExecutionPolicy Bypass` dans la doc d'installation
 
 `docs/daemon.md` documente l'installation via `powershell -ExecutionPolicy Bypass -File ...`. C'est
 courant et ici assumé (script local, non élevé), mais cela entraîne l'utilisateur à contourner la

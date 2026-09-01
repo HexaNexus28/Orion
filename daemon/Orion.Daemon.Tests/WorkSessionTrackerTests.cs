@@ -4,10 +4,8 @@ using Orion.Daemon.Core.Proactive;
 namespace Orion.Daemon.Tests;
 
 /// <summary>
-/// Le surmenage se mesure sur du travail CONTINU. ActivityWatcher le mesurait sur du temps
-/// d'INACTIVITE : il annoncait « temps de pause » a quelqu'un qui n'avait pas touche la machine
-/// depuis six heures. Son propre message le disait — « Inactif depuis 6,0h - temps de pause » —
-/// et personne ne l'avait relu.
+/// Le surmenage se mesure sur du travail CONTINU, jamais sur du temps d'INACTIVITE : six heures
+/// sans toucher la machine decrivent une absence, pas un surmenage.
 ///
 /// Ces tests verrouillent les deux moities du contrat : signaler un vrai surmenage, et ne PAS
 /// signaler une absence.

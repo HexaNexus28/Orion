@@ -1,6 +1,6 @@
 # Roadmap — ORION (état)
 
-> ⚠️ **Réordonnée le 2026-08-20.** Les phases 1-5 ci-dessous ont été construites *en largeur* avant
+> ⚠️ **Réordonnée.** Les phases 1-5 ci-dessous ont été construites *en largeur* avant
 > qu'ORION ait un cerveau : le chemin réellement utilisé par l'UI n'exécutait aucun outil.
 > Voir [jarvis-gap-analysis.md](jarvis-gap-analysis.md). L'agentivité est la **fondation**, pas la
 > phase 7 — le plan Jarvis ci-dessous prime sur l'ordre historique.
@@ -20,32 +20,32 @@
 - **J4 ✅ Mémoire** — écriture auto à chaque tour, consolidation, schéma fermé 4 slots, garde-fous.
   ⚠️ Livré sur embeddings **locaux** — dette RÉSORBÉE par J6b (mistral-embed distant).
 - **J5 ✅ Proactivité** — watchers daemon → scoring d'urgence → prise de parole, 5 étages.
-- **J6a ✅ File d'actions différées** (2026-08-21) — `IToolInvoker` devient le point d'application
+- **J6a ✅ File d'actions différées** — `IToolInvoker` devient le point d'application
   unique de l'exécution d'outil (les 13 gardes `IsConnected` recopiés dans les outils ont disparu),
   `ITool.IsDeferrable`, table `deferred_actions` + TTL 24 h, drain à la reconnexion du daemon,
   confirmation des actions destructives **au réveil** sur l'état réel de la machine, file visible et
   annulable dans la PWA. Prouvé en exécution réelle : Notepad ouvert au réveil, fichier écrit après
   confirmation, lecture refusée franchement. 21 tests ajoutés (222 au total).
-- **J6b ✅ Embedding distant** (2026-08-25) — `OpenAiCompatibleEmbeddingService`, **mistral-embed
+- **J6b ✅ Embedding distant** — `OpenAiCompatibleEmbeddingService`, **mistral-embed
   1024 dims**, Ollama RETIRÉ du chemin de production. Le choix est parti d'une MESURE : les API ont
   été appelées une par une (le catalogue ment — 410 Gone, 404, dimensions non indexables). Modèle et
   dimension stockés à côté de chaque vecteur et vérifiés au démarrage, plus `MemoryRevectorizer`
   pour rejouer la table. Voir ADR-013.
 - **J6c ✅ Déploiement 24/7** — backend sur VPS derrière la façade Nginx (port loopback), base
   PostgreSQL Cloud, PWA servie par le backend depuis `wwwroot`.
-- **J7 ✅ Authentification** (2026-08-26) — l'API était TOTALEMENT ouverte. Fermée par défaut
-  (`FallbackPolicy`), fail-closed sur secret absent, billet de flux à audience distincte pour
-  SSE/WebSocket, origines WebSocket alignées sur le CORS. Voir ADR-016.
-- **J8 ✅ Garde-fou des actions destructives** (2026-08-26) — déplacé du prompt système vers le
+- **J7 ✅ Authentification** — modèle unique : fermée par défaut (`FallbackPolicy`),
+  fail-closed sur secret absent, billet de flux à audience distincte pour SSE/WebSocket,
+  origines WebSocket alignées sur le CORS. Voir ADR-016.
+- **J8 ✅ Garde-fou des actions destructives** — déplacé du prompt système vers le
   CODE : toute action `IsDestructive` passe par la file de confirmation, PC allumé compris.
   Voir ADR-015.
 - **J9 ✅ HUD à zones + contexte de travail** — widgets permanents, `get_work_context`.
-- **J10 ✅ Voix : Voxtral + Silero** (2026-08-27) — transcription distante (5,0 s → 0,35 s), repli
+- **J10 ✅ Voix : Voxtral + Silero** — transcription distante (5,0 s → 0,35 s), repli
   Whisper local, détection de parole par modèle Silero v5.
 
 ## Sécurité — chantier ouvert
 
-**J11 ✅ Périmètre des outils** (2026-08-27) — les sept constats de l'audit sont fermés.
+**J11 ✅ Périmètre des outils** — les sept constats de l'audit sont fermés.
 Voir [security.md](security.md).
 
 - **C1 + C2** — `PathScope` (`Orion.Daemon.Core/Security`) : `read_file`, `list_files` et
@@ -67,35 +67,32 @@ Voir [security.md](security.md).
 Reste ouvert et documenté : DNS rebinding, sous-ressources de `web_browse`, et le fait que le
 périmètre vive côté daemon (donc connu du modèle seulement après l'aller-retour).
 
-**J12 ✅ Frein sur `/api/auth/login`** (2026-09-01) — dernier point ouvert de l'audit d'auth. Seuls
+**J12 ✅ Frein sur `/api/auth/login`** — seuls
 les **échecs** sont comptés, et le mot de passe est vérifié **avant** le frein : la devinette est
 plafonnée (5 essais / 15 min) sans que le propriétaire puisse être enfermé dehors. Un limiteur
 par IP aurait été du théâtre — sans `UseForwardedHeaders`, `RemoteIpAddress` vaut le proxy pour
 toutes les requêtes. Le débit brut reste du ressort de `limit_req` côté Nginx.
 
-**J13 ✅ Le daemon installé était en retard de 4 jours** (2026-09-01) — J11 était mergé et poussé,
-mais le binaire de la machine datait d'avant. Cause structurelle : le backend se déploie seul
-(Actions → ghcr → `deploy-orion`), le daemon est compilé depuis le source **local** par un script
-que personne ne déclenche. Corrigé sur trois plans : périmètre renseigné et daemon republié ;
-`install-daemon.ps1` annonce le périmètre appliqué et **crie** s'il est vide (il conservait la
-config existante, donc il aurait publié trois outils morts en silence) ; crochet `.githooks/post-merge`
-qui signale tout `git pull` touchant `daemon/`. Reste à faire : qu'ORION le dise lui-même —
+**J13 ✅ Chaîne de mise à jour du daemon** — ORION a deux chaînes de déploiement asymétriques :
+le backend se déploie seul (Actions → ghcr → `deploy-orion`), le daemon est compilé depuis le
+source **local**. Sans signal, le binaire de la machine dérive du dépôt sans que rien ne l'indique.
+
+Trois pièces : `install-daemon.ps1` annonce le périmètre disque appliqué et refuse le silence
+quand il est vide ; le crochet `.githooks/post-merge` signale tout `git pull` touchant `daemon/` ;
+le périmètre de production est renseigné. Reste à faire : qu'ORION le signale lui-même —
 `WorkWatcher` compte déjà les commits non poussés, le miroir est à écrire.
 
 ## Voix — chantier ouvert
 
-**V1 ✅ ORION se ré-écoutait** (2026-09-01) — deux symptômes signalés comme distincts (« mes mots
-sont mal retranscrits », « ORION se répète ») avaient **une seule** cause. Le VAD tourne
-volontairement pendant qu'ORION parle (barge-in), `onAudioChunk` émettait **sans aucune garde**, et
-rien ne vide `_audioBuffer` côté serveur quand une réponse commence. Sa propre voix, captée par le
-micro, repartait donc au serveur et se collait devant la phrase suivante : Voxtral transcrivait un
-**collage** (d'où le charabia) et le modèle répondait à ses propres mots (d'où la répétition).
+**V1 ✅ Isolation de l'écho dans la boucle vocale** — le VAD tourne volontairement pendant
+qu'ORION parle, pour permettre le barge-in. Sans garde à l'émission, sa propre voix captée par le
+micro repart au serveur et se colle devant la phrase suivante : le transcripteur reçoit un
+**collage** au lieu d'une phrase, et le modèle répond à ses propres mots.
 
-Les gardes existantes (`!isTurnActive`, TTS en cours) empêchaient de **démarrer un tour**, jamais
-d'**émettre** — tout l'écart est là. Fermé par un invariant unique : **une prise = un tour = un
-envoi**, l'audio partant collé au `end_audio` qui le consomme, depuis un seul endroit. Plus le
-rejet des prises nées pendant qu'ORION parlait sans barge-in déclaré, qui ferme la fenêtre
-résiduelle de la *queue* de sa réponse.
+Une garde qui empêche de **démarrer un tour** ne suffit pas — il faut empêcher d'**émettre**.
+D'où l'invariant : **une prise = un tour = un envoi**, l'audio partant collé au `end_audio` qui le
+consomme, depuis un seul endroit. Les prises nées pendant qu'ORION parle sans barge-in déclaré
+sont écartées, ce qui ferme la fenêtre résiduelle de la *queue* de sa réponse.
 
 L'annulation d'écho du navigateur ne pouvait pas y suffire : MicVAD demande bien
 `echoCancellation`, mais un navigateur n'annule que ce **qu'il joue lui-même** — or les réponses
