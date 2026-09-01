@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.Configuration;
@@ -148,8 +149,21 @@ public class BriefingAgent : IBriefingAgent
         try
         {
             var message = await _llmClient.CompleteTextAsync(request, ct);
-            if (!string.IsNullOrWhiteSpace(message))
+
+            // Le prompt interdit deja de promettre une action, avec des exemples. Le modele l'a
+            // fait quand meme — « Je redemarre le service et verifie les logs, attends » — alors
+            // qu'aucun outil n'est branche sur ce chemin. Un garde-fou dans le prompt n'est pas
+            // un garde-fou : c'est la lecon d'ADR-015, appliquee ici.
+            if (!string.IsNullOrWhiteSpace(message) && !PromisesAction(message))
+            {
                 return ApiResponse<string>.SuccessResponse(message.Trim());
+            }
+
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                _logger.LogWarning("[BriefingAgent] Message proactif REFUSE (promesse d'action) : {Message}",
+                    message.Trim());
+            }
         }
         catch (Exception ex)
         {
@@ -158,6 +172,28 @@ public class BriefingAgent : IBriefingAgent
 
         // Repli contextuel : un message proactif muet vaut moins qu'un message generique.
         return ApiResponse<string>.SuccessResponse(GetFallbackMessage(pattern, context));
+    }
+
+    /// <summary>
+    /// Le message promet-il une action que rien n'executera ?
+    ///
+    /// Ce chemin n'a AUCUN outil branche : le daemon signale, il n'agit pas. Un message qui dit
+    /// « je redemarre » ou « attends » decrit un travail qui n'aura pas lieu, et l'utilisateur
+    /// attend pour rien. C'est le meme defaut qu'un repli silencieux, vu depuis l'utilisateur.
+    ///
+    /// On refuse et on retombe sur le message deterministe plutot que de reformuler : une
+    /// seconde generation pourrait promettre autre chose.
+    /// </summary>
+    public static bool PromisesAction(string message)
+    {
+        // Premiere personne + verbe d'action, ou une demande d'attendre. Volontairement large :
+        // un faux positif coute un message generique, un faux negatif coute la credibilite.
+        return Regex.IsMatch(
+            message,
+            @"\b(je\s+(vais|vais\s+te|m'en\s+occupe|redémarre|redemarre|relance|corrige|répare|repare|vérifie|verifie|regarde|lance|optimise|nettoie|ferme|installe|configure)"
+            + @"|j'(ai\s+lancé|ai\s+lance|optimise|analyse|examine)"
+            + @"|laisse-moi|attends|patiente|un\s+instant|je\s+te\s+tiens\s+au\s+courant)\b",
+            RegexOptions.IgnoreCase);
     }
 
     /// <summary>

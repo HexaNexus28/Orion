@@ -15,6 +15,7 @@ namespace Orion.Daemon.Watchers;
 public class WorkWatcher : IWatcher
 {
     private readonly WorkOptions _options;
+    private readonly DaemonOptions _daemon;
     private readonly ILogger _logger;
     private readonly HttpClient _http;
     private readonly Timer _timer;
@@ -32,9 +33,10 @@ public class WorkWatcher : IWatcher
 
     public event EventHandler<PatternDetectedEventArgs>? PatternDetected;
 
-    public WorkWatcher(WorkOptions options, ILogger logger)
+    public WorkWatcher(WorkOptions options, DaemonOptions daemon, ILogger logger)
     {
         _options = options;
+        _daemon = daemon;
         _logger = logger;
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(options.TimeoutSecondes) };
         _timer = new Timer(async _ => await RondeAsync(), null, Timeout.Infinite, Timeout.Infinite);
@@ -70,6 +72,20 @@ public class WorkWatcher : IWatcher
     {
         try
         {
+            // Le backend auquel le daemon parle REELLEMENT, deduit de son URL de WebSocket.
+            // Il n'a pas a etre declare : le declarer, c'est risquer de le declarer ailleurs.
+            var sante = _daemon.BackendHealthUrl;
+            if (!string.IsNullOrEmpty(sante))
+            {
+                await VerifierServiceAsync(new ServiceSurveille
+                {
+                    Nom = "Backend ORION",
+                    Url = sante,
+                    Critique = true,
+                    CodesVivants = [200],
+                });
+            }
+
             foreach (var service in _options.Services)
                 await VerifierServiceAsync(service);
 

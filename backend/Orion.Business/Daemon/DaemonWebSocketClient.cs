@@ -194,7 +194,15 @@ public class DaemonWebSocketClient : IDaemonClient
         }
         finally
         {
-            _connections.TryRemove(machineName, out _);
+            // Retirer par CLE supprimerait la connexion d'un REMPLACANT. Sequence vecue le
+            // 2026-09-01 : le daemon est tue, il redemarre et s'enregistre sous la meme cle en
+            // 2 s, PUIS cette boucle-ci s'apercoit de la mort de SA socket et retire l'entree —
+            // qui pointait deja sur la socket vivante du nouveau. IsConnected repassait a false
+            // et ORION annoncait « PC eteint » pendant que le daemon lui parlait. L'etat restait
+            // faux indefiniment : le nouveau daemon n'avait aucune raison de se reconnecter.
+            //
+            // La surcharge KeyValuePair compare la VALEUR avant de retirer, atomiquement.
+            _connections.TryRemove(new KeyValuePair<string, WebSocket>(machineName, webSocket));
             _logger.LogInformation("Daemon disconnected from {MachineName}", machineName);
         }
     }

@@ -3,6 +3,29 @@ namespace Orion.Daemon.Core.Configuration;
 public class DaemonOptions
 {
     public string RenderWsUrl { get; set; } = "wss://orion-api.onrender.com/daemon";
+
+    /// <summary>
+    /// URL de sante du backend, DEDUITE de <see cref="RenderWsUrl"/>.
+    ///
+    /// Elle n'est pas configurable, et c'est voulu : la surveiller a une adresse differente de
+    /// celle a laquelle le daemon parle n'a aucun sens. La configuration livree sondait
+    /// `http://localhost:5107` — l'adresse du backend en DEVELOPPEMENT — alors que le daemon
+    /// etait connecte au VPS. Rien n'ecoutait la, la sonde echouait a chaque ronde, et
+    /// `service_down` (urgence 90, seuil 55) annoncait en boucle un backend mort pendant que
+    /// le WebSocket fonctionnait.
+    ///
+    /// Une seule source de verite : impossible que les deux divergent.
+    /// </summary>
+    public string BackendHealthUrl
+    {
+        get
+        {
+            if (!Uri.TryCreate(RenderWsUrl, UriKind.Absolute, out var ws)) { return string.Empty; }
+
+            var scheme = ws.Scheme.Equals("wss", StringComparison.OrdinalIgnoreCase) ? "https" : "http";
+            return $"{scheme}://{ws.Authority}/api/health";
+        }
+    }
     public string Token { get; set; } = "";
     public string MachineName { get; set; } = Environment.MachineName;
     public int ReconnectDelayMs { get; set; } = 5000;
