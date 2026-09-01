@@ -3,10 +3,7 @@
 ORION = assistant IA personnel **agentique**, futur moteur IA HexaNexus.
 Stack : React 19 + Vite (PWA) | .NET 9 backend | **cascade NVIDIA NIM → Ollama local** |
 Supabase + pgvector | Daemon Windows.
-Langue : Français. `AGENTS.md` = règles/agents/phases/ADRs détaillés.
-
-⚠️ Dépôt **public** : aucune information personnelle, aucun secret, aucun nom d'hôte réel dans
-un fichier versionné.
+`AGENTS.md` = règles/agents/phases/ADRs détaillés.
 
 ```
 orion/
@@ -30,7 +27,7 @@ orion/
 - [docs/deployment.md](docs/deployment.md) — VPS + Nginx + daemon, dev local, variables d'environnement
 - [docs/roadmap.md](docs/roadmap.md) — phases et état
 
-## Invariants NON-NÉGOCIABLES (toujours actifs)
+## Invariants non négociables
 
 **4 couches** — `Core` (rien) ← `Business`/`Data` ← `Api`. Retours : Data `T?`/`IEnumerable<T>` ·
 Business `ApiResponse<T>` · Controller `IActionResult`. Détail : [docs/architecture.md](docs/architecture.md).
@@ -38,21 +35,21 @@ Business `ApiResponse<T>` · Controller `IActionResult`. Détail : [docs/archite
 **LLM** : tout passe par `IAgentLoop` (jamais d'appel LLM direct depuis un agent ou un service).
 Transport via `ILLMAgentClient` — `ILLMClient`/`ILLMRouter` sont l'ancien chemin, sans outils.
 
-⚠️ **`ollama list` NE PROUVE RIEN** : il affiche les `:cloud` en cache local même retirés ou
+**`ollama list` ne prouve rien** : il affiche les `:cloud` en cache local même retirés ou
 verrouillés par abonnement. Vérifié le 2026-08-20 : 7 modèles listés, **7 inutilisables**.
 Un modèle se vérifie en **l'appelant** — c'est le rôle de `ProbeAsync`, exécutée au démarrage.
 
 `NumCtx` est **obligatoire** dans la config : sans elle Ollama dimensionne le cache KV sur le
 contexte maximum du modèle (128k) et réclame ~15 Go pour un modèle de 2 Go → HTTP 500 intermittent.
-Config : `backend/Orion.Api/appsettings.json` sections `Ollama` + `Agent` — ⚠️ ce fichier est
+Config : `backend/Orion.Api/appsettings.json` sections `Ollama` + `Agent` — ce fichier est
 **gitignoré, donc absent du dépôt**. En production les valeurs arrivent par variables
 d'environnement (`Ollama__NumCtx`, …). Modèle complet : `.env.example`.
 
 **Sécurité — fermé par défaut, et le défaut est le REFUS.** `FallbackPolicy` exige le propriétaire :
 une route sans attribut est refusée, jamais ouverte. Un secret absent REFUSE au lieu d'ouvrir
-(`DAEMON_WS_TOKEN`, `Auth:JwtSecret`). Ne jamais défaire ces deux propriétés.
+(`DAEMON_WS_TOKEN`, `Auth:JwtSecret`).
 
-⚠️ **L'authentification ne protège que la moitié du problème** : ORION est authentifié comme son
+**L'authentification ne protège que la moitié du problème** : ORION est authentifié comme son
 propriétaire ET agit sur sa machine. Il lit le web, donc une page peut détourner le modèle — et la
 requête résultante est parfaitement authentifiée. Le garde-fou doit vivre dans le CODE, après la
 décision du modèle (`IToolInvoker` + `IsDestructive`), jamais dans une phrase du prompt.
@@ -79,13 +76,3 @@ absence : elle se fait passer pour une défense. Constats ouverts : [docs/securi
 - Toute conversation persistée (aucune exception) · toute nouvelle route = MAJ `endpoints.ts`
 - Logs : tool call, daemon action, LLM fallback — tout loggué
 - Commits conventionnels (`feat:`/`fix:`/`refactor:`/`chore:`/`docs:`)
-
-## graphify
-
-This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
-
-Rules:
-- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
-- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
-- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
