@@ -1,9 +1,8 @@
 # ORION — AGENTS.md
-# Instructions pour agents IA travaillant sur ce projet
 
 ## Rôle de ce fichier
-Ce fichier est lu par tout agent IA (Claude Code, Cursor, Windsurf, Copilot) avant d'intervenir sur le projet ORION.
-Il définit les règles de comportement, les workflows, les contraintes, et la mémoire de décisions architecturales.
+Règles de développement, workflows, contraintes et mémoire des décisions architecturales du projet
+ORION. À lire avant toute intervention sur le dépôt.
 
 ---
 
@@ -14,12 +13,11 @@ Projet   : ORION — assistant IA personnel agentique
 Univers  : HexaNexus (ShiftStar, ORION, HexaNexus 2.0)
 Langue   : Français (réponses ORION) / Anglais (code, commentaires)
 Stack    : .NET 9, React 19 + Vite, PostgreSQL + pgvector, cascade NVIDIA NIM -> Ollama
-Niveau   : Développeur avancé — pas d'explications basiques
 ```
 
 ---
 
-## 2. Règles Absolues (ne jamais violer)
+## 2. Règles absolues
 
 ```
 [RULE-01] Ne jamais appeler un fournisseur LLM directement
@@ -32,7 +30,7 @@ Niveau   : Développeur avancé — pas d'explications basiques
 
 [RULE-03] Ne jamais exécuter une action Daemon sans whitelist check
           → DaemonActionValidator.cs, avant tout Process.Start
-          → ⚠️ La whitelist ne filtre QUE le nom de l'action, jamais ses
+          → La whitelist ne filtre QUE le nom de l'action, jamais ses
             arguments : un chemin ou une URL passe sans être examiné.
             Le PÉRIMÈTRE est la responsabilité de l'action elle-même.
 
@@ -125,9 +123,8 @@ Niveau   : Développeur avancé — pas d'explications basiques
 
 ## 3. Architecture des Agents ORION
 
-⚠️ **Corrigé.** Ce chapitre décrivait un `MemoryAgent` et un `ToolAgent` qui
-**n'existent pas** dans le dépôt. La mémoire est un *service*, et l'exécution d'outil est passée
-sous `IToolInvoker`. Le fichier `Orion.Business/Agents/` contient exactement trois agents.
+La mémoire est un *service*, et l'exécution d'outil passe par `IToolInvoker`.
+`Orion.Business/Agents/` contient exactement trois agents.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -193,7 +190,7 @@ MemoryRevectorizer   rejoue toute la table quand le modèle d'embedding change
 **Règles** :
 - Ne jamais dépasser ~2000 tokens de contexte mémoire injecté.
 - RAG **non bloquant** : embeddings en panne → liste vide, la conversation continue.
-- ⚠️ Un embedding **ne bascule pas à chaud** : chaque modèle a son propre espace vectoriel.
+- Un embedding **ne bascule pas à chaud** : chaque modèle a son propre espace vectoriel.
   Changer de fournisseur impose une revectorisation complète. Modèle et dimension sont écrits
   À CÔTÉ de chaque vecteur et vérifiés au démarrage — mélanger deux espaces ne lève **aucune
   erreur** et renvoie des résultats absurdes.
@@ -204,9 +201,7 @@ MemoryRevectorizer   rejoue toute la table quand le modèle d'embedding change
 
 ### Backend — Orion.Api
 
-⚠️ **Corrigé** : `AuthMiddleware` et `LoggingMiddleware` n'existent pas.
-`ToolsController` a été ajouté depuis (HUD → appel d'outil) et vit à côté de
-`GET /api/daemon/tools`, qui reste.
+`ToolsController` (HUD → appel d'outil) vit à côté de `GET /api/daemon/tools`.
 
 ```
 Orion.Api/
@@ -237,13 +232,10 @@ Orion.Api/
 │   ├── BriefingScheduler.cs
 │   ├── DeferredActionWatcher.cs            # draine la file au retour du daemon, expire le reste
 │   └── HudBroadcastService.cs              # widgets permanents du HUD
-└── appsettings.json                        # ⚠️ GITIGNORÉ — absent du dépôt
+└── appsettings.json                        # GITIGNORÉ — absent du dépôt
 ```
 
 ### Backend — Orion.Business
-
-⚠️ **Corrigé** : `MemoryAgent`, `ToolAgent`, `LLMRouter`, `OllamaClient`,
-`AnthropicClient` et les outils ShiftStar **n'existent pas** dans le dépôt.
 
 ```
 Orion.Business/
@@ -521,7 +513,7 @@ memory/
 // le fournisseur : `ollama list` ne prouve rien.
 ```
 
-⚠️ `ILLMClient` / `ILLMRouter` existent encore mais sont l'**ancien chemin, SANS outils**. Ils ne
+`ILLMClient` / `ILLMRouter` existent encore mais sont l'**ancien chemin, SANS outils**. Ils ne
 portent pas de `tool_call`. Aucun nouveau développement ne doit les utiliser (RULE-02).
 
 ### ITool — quatre membres, trois décisions
@@ -703,8 +695,7 @@ INSERT INTO user_profile (key, value) VALUES
 
 ## 8. Définition Tool — Exemple Complet
 
-⚠️ **Réécrit.** L'exemple précédent (`get_shiftstar_stats`) portait sur un outil qui
-**n'a jamais existé**. Celui-ci est un outil réel du dépôt.
+`list_files` est un outil réel du dépôt.
 
 ### tools/definitions/list_files.json
 ```json
@@ -791,7 +782,7 @@ public class ListFilesAction : IAction
 Puis **ajouter le nom** à `DaemonActionValidator._allowedActions` — sinon l'endpoint direct
 `/api/daemon/action` refuse l'action.
 
-⚠️ **Et trancher le PÉRIMÈTRE** (RULE-18). `ListFilesAction` fait aujourd'hui
+**Et trancher le PÉRIMÈTRE** (RULE-18). `ListFilesAction` fait aujourd'hui
 `Path.GetFullPath(path)` et rien d'autre : il liste **n'importe quel** répertoire de la machine.
 C'est un constat ouvert de l'audit — voir [docs/security.md](docs/security.md) C1. Ne pas
 reproduire ce motif dans une nouvelle action.
@@ -951,16 +942,15 @@ playwright install chromium   # installe le browser Chromium
 
 ### Sécurité browsing
 
-⚠️ **Corrigé.** Ce bloc décrivait des contrôles comme s'ils étaient en place. Voici
-l'état RÉEL, vérifié dans le code.
+État réel, vérifié dans le code.
 
 | Contrôle | État |
 |---|---|
 | Timeout strict 30 s par navigation | ✅ en place (`WebFetchTool`, `WebBrowseTool`) |
 | Filtrage de domaines sensibles | ❌ **INEXISTANT** — `InternetOptions.BlockedDomains` est déclaré et **n'est lu par personne** |
 | Restriction de schéma / d'hôte | ❌ **INEXISTANTE** — seul `Uri.TryCreate(..., Absolute, …)` est vérifié |
-| Pas d'accès aux sites authentifiés | ⚠️ non implémenté comme règle : aucun credential n'est joint, mais rien ne l'empêche |
-| Pas de téléchargement automatique | ⚠️ non vérifié |
+| Pas d'accès aux sites authentifiés | non implémenté comme règle : aucun credential n'est joint, mais rien ne l'empêche |
+| Pas de téléchargement automatique | non vérifié |
 
 Conséquence : `web_fetch` atteint le loopback (`http://127.0.0.1:5107/api/…`, l'API elle-même) et
 les adresses de métadonnées d'instance (`169.254.169.254`). C'est le constat **E2** de
@@ -1110,7 +1100,7 @@ Date     : 2026-08-27
 ## 12. Ordre de Build Recommandé
 
 ```
-Phase 1 — Core MVP ✅   (⚠️ historique : plusieurs briques ont été REMPLACÉES depuis)
+Phase 1 — Core MVP ✅   (historique : plusieurs briques ont été remplacées depuis)
   [x] Setup .NET solution + tables PostgreSQL/pgvector
   [~] ILLMClient + LLMRouter          → remplacés par IAgentLoop + LLMCascade (ADR-011)
   [~] AnthropicClient                 → SUPPRIMÉ, n'existe plus dans le dépôt

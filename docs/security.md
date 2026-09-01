@@ -1,9 +1,5 @@
 # Sécurité — ORION
 
-> Audit, sur l'état réel du dépôt (branche `claude/docs-agents-security-audit-cga1pl`).
-> Ce document n'est pas une checklist théorique : chaque constat a été vérifié dans le code, et
-> chaque ligne « Vérifié » nomme le fichier qui le prouve.
-
 ## 1. Le modèle de menace, en une phrase
 
 ORION est **authentifié comme son propriétaire** et **exécute des actions sur sa machine**. Les
@@ -108,7 +104,7 @@ Noms refusés par défaut : `.ssh` · `.aws` · `.azure` · `.gnupg` · `.git` �
 `id_ed25519` · `id_ecdsa` · `credentials` · `secrets.json` · `.npmrc` · `.pypirc` ·
 `appsettings.Production.json` · `appsettings.Development.json` · `.env*`
 
-⚠️ **Conséquence opérationnelle** : `AllowedRoots` étant vide par défaut, `read_file` et
+**Conséquence opérationnelle** : `AllowedRoots` étant vide par défaut, `read_file` et
 `list_files` **refusent tout** tant que la configuration ne déclare pas de racine. C'est voulu —
 et le message d'erreur nomme la clé à renseigner. À déclarer **étroit** : les dépôts de code et
 les documents de travail, **pas** `C:\Users\<toi>`, qui contient `.ssh`, les cookies et les jetons.
@@ -167,8 +163,7 @@ guillemet à casser, et ce qui s'exécute est exactement ce qui a été affiché
   personne ne verrait jamais ;
 - un **plafond de durée** (`Daemon:ScriptTimeoutSeconds`, 120 s par défaut) : le daemon traite les
   commandes une par une, donc un seul script suspendu suffisait à rendre ORION muet sur tout le
-  reste, sans message. ⚠️ Ce dernier point ne figurait pas dans l'audit initial — il est apparu en
-  réécrivant la fonction ;
+  reste, sans message ;
 - lecture des deux flux **avant** l'attente : un script qui écrit plus que la taille du tampon de
   tube se bloquait en écriture pendant qu'on l'attendait — les deux camps s'attendaient
   indéfiniment.
