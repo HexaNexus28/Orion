@@ -248,5 +248,11 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
     endAudio,
     interrupt,
     stopPlayback,
+
+    /**
+     * ORION émet-il du son en ce moment ? Une ref, pas un état : la lire ne doit pas provoquer
+     * de rendu, et le barge-in la consulte au moment précis où le VAD signale de la parole.
+     */
+    isPlayingRef,
   };
 };

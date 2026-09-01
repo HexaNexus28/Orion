@@ -289,7 +289,7 @@ const App: React.FC = () => {
 
 
   // ── useVoiceWS — Full-duplex WebSocket voice pipeline ─────────────────────
-  const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic } = useVoiceWS({
+  const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic, isPlayingRef } = useVoiceWS({
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
       voiceWSResponseRef.current = true; // Mark: this response comes from voice WS
@@ -355,11 +355,25 @@ const App: React.FC = () => {
     isTurnActiveRef.current = isTurnActive;
   }, [isTurnActive]);
 
-  // Barge-in: quand l'utilisateur parle pendant que ORION est en train de répondre
-  // Ignore echo: only barge-in if amplitude is strong (user speaking into mic, not speaker echo)
-  const bargeInThreshold = 0.04; // Higher than SPEECH_THRESHOLD (0.015) to avoid echo
+  // Barge-in — et surtout : PAS pendant qu'ORION émet du son.
+  //
+  // La version précédente décidait au VOLUME (seuil 0,04, censé écarter l'écho). Mesuré en
+  // usage réel : la voix d'ORION revenue par le haut-parleur arrive à 0,421, soit dix fois
+  // au-dessus. Il déclenchait donc un barge-in sur lui-même, s'interrompait, et sa propre
+  // phrase repartait au serveur comme une demande.
+  //
+  // Le volume ne peut pas distinguer l'écho de l'utilisateur : sans signal de référence, la
+  // question est indécidable. Mais on sait avec certitude si ORION est en train de JOUER —
+  // et pendant ce temps, tout ce que le micro capte est suspect.
+  //
+  // Ce qu'on garde : couper ORION pendant qu'il RÉFLÉCHIT (tour actif, aucun son émis).
+  // Ce qu'on perd : le couper en pleine phrase, qui exige un casque ou une annulation d'écho
+  // fonctionnelle — ni l'un ni l'autre n'est garanti sur un téléphone en haut-parleur.
+  const bargeInThreshold = 0.04;
   useEffect(() => {
-    if (isSpeaking && isTurnActive && amplitudeRef.current > bargeInThreshold) {
+    const orionEmet = isPlayingRef.current || window.speechSynthesis?.speaking;
+
+    if (isSpeaking && isTurnActive && !orionEmet && amplitudeRef.current > bargeInThreshold) {
       console.log('[App] Barge-in: interruption du tour ORION (amp:', amplitudeRef.current.toFixed(3), ')');
       // Le barge-in est DÉCLARÉ : c'est ce drapeau, et lui seul, qui autorise une prise née
       // pendant qu'ORION parlait à devenir un vrai tour. Sans lui, elle est traitée comme
@@ -649,8 +663,11 @@ const App: React.FC = () => {
 
       {/* Commandes visibles — un raccourci clavier ne se découvre pas, et le swipe n'existe
           pas à la souris. Ces deux boutons sont le SEUL chemin vers la mémoire et le briefing
-          sur ordinateur. */}
-      <div className="fixed top-4 right-4 z-20 flex gap-2">
+          sur ordinateur.
+
+          À GAUCHE : le coin droit appartient à DeferredQueueBadge, qui y apparaît dès qu'une
+          action attend. Les deux s'y superposaient. */}
+      <div className="fixed top-4 left-4 z-20 flex gap-2">
         <button
           type="button"
           onClick={() => setIsMemoryOpen(true)}

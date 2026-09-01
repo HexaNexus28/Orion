@@ -11,14 +11,14 @@ export const SettingsOverlay: React.FC<SettingsOverlayProps> = ({ isOpen, onClos
     <AnimatePresence>
       {isOpen && (
         <motion.div
-          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
         >
           <motion.div
-            className="w-full max-w-md rounded-2xl bg-orion-darker border border-orion-accent/20"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-2xl bg-orion-darker border border-orion-accent/20"
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.9, opacity: 0 }}

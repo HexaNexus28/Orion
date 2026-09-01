@@ -27,7 +27,7 @@ export const BriefingOverlay: React.FC<BriefingOverlayProps> = ({ isOpen, onClos
           onClick={onClose}
         >
           <motion.div
-            className="w-full max-w-md rounded-b-2xl bg-orion-darker border border-orion-accent/20"
+            className="w-full max-w-md max-h-[85vh] overflow-y-auto rounded-b-2xl bg-orion-darker border border-orion-accent/20"
             initial={{ y: '-100%' }}
             animate={{ y: 0 }}
             exit={{ y: '-100%' }}
@@ -42,11 +42,6 @@ export const BriefingOverlay: React.FC<BriefingOverlayProps> = ({ isOpen, onClos
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-              </div>
-
-              {/* Drag handle at bottom */}
-              <div className="flex justify-center mt-4">
-                <div className="w-10 h-1 rounded-full bg-orion-accent/30" />
               </div>
 
               {loading ? (
@@ -67,7 +62,7 @@ export const BriefingOverlay: React.FC<BriefingOverlayProps> = ({ isOpen, onClos
                       <h3 className="text-sm font-medium text-orion-accent mb-2">
                         Sources ({briefing.sources.length})
                       </h3>
-                      <ul className="space-y-2">
+                      <ul className="space-y-2 max-h-56 overflow-y-auto pr-1">
                         {briefing.sources.map((s: BriefingSource) => (
                           <li key={s.url} className="text-xs leading-snug">
                             <a
@@ -90,6 +85,11 @@ export const BriefingOverlay: React.FC<BriefingOverlayProps> = ({ isOpen, onClos
                   Aucun briefing disponible
                 </div>
               )}
+
+              {/* Poignee : en BAS, comme son nom l'indiquait deja. */}
+              <div className="flex justify-center mt-4">
+                <div className="w-10 h-1 rounded-full bg-orion-accent/30" />
+              </div>
             </div>
           </motion.div>
         </motion.div>
