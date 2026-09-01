@@ -77,7 +77,7 @@ public class DaemonWorker : BackgroundService
             {
                 new ActivityWatcher(_proactiveOptions, _logger),
                 new TimeWatcher(_proactiveOptions, _logger),
-                new ProcessWatcher(_activite, _logger),
+                new ProcessWatcher(_activite, new WorkSessionTracker(_proactiveOptions), _logger),
                 new SystemWatcher(_logger),
                 new AdaptiveWatcher(_logger),  // Auto-learning / self-improving
                 new WorkWatcher(_workOptions, _logger)  // Services, depots : ce qui casse une journee

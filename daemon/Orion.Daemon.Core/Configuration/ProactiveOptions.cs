@@ -40,6 +40,22 @@ public class ProactiveOptions
     /// <summary>Ajouté au seuil pendant une session concentrée. Les incidents critiques y échappent.</summary>
     public int FocusPenalty { get; set; } = 25;
 
+    /// <summary>Travail CONTINU au-delà duquel ORION signale un surmenage.</summary>
+    public int OverworkAfterHours { get; set; } = 3;
+
+    /// <summary>
+    /// Temps sans aucune application de travail au premier plan qui clôt une session. En
+    /// dessous, aller lire une page web ne remet pas le compteur à zéro.
+    /// </summary>
+    public int BreakMinutes { get; set; } = 10;
+
+    /// <summary>
+    /// Intervalle entre deux rappels de surmenage dans une MEME session. Sans rappel, la
+    /// severite vaudrait toujours zero : elle est mesuree au franchissement du seuil, et un
+    /// signal unique ne pourrait jamais dire que trois heures sont devenues six.
+    /// </summary>
+    public int OverworkReminderMinutes { get; set; } = 60;
+
     public List<string> MonitoredPatterns { get; set; } = new()
     {
         "skip_meal",

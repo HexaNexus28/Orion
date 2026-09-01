@@ -21,6 +21,7 @@ namespace Orion.Daemon.Watchers;
 public class ProcessWatcher : IWatcher
 {
     private readonly IActivityContext _activite;
+    private readonly WorkSessionTracker _session;
     private readonly ILogger _logger;
     private readonly Timer _checkTimer;
     private bool _isRunning;
@@ -38,9 +39,10 @@ public class ProcessWatcher : IWatcher
 
     public event EventHandler<PatternDetectedEventArgs>? PatternDetected;
 
-    public ProcessWatcher(IActivityContext activite, ILogger logger)
+    public ProcessWatcher(IActivityContext activite, WorkSessionTracker session, ILogger logger)
     {
         _activite = activite;
+        _session = session;
         _logger = logger;
         _checkTimer = new Timer(Verifier, null, Timeout.Infinite, Timeout.Infinite);
     }
@@ -64,8 +66,31 @@ public class ProcessWatcher : IWatcher
     {
         try
         {
+            var maintenant = DateTime.UtcNow;
             var nom = ApplicationAuPremierPlan();
-            _activite.Signaler(nom, DateTime.UtcNow);
+            _activite.Signaler(nom, maintenant);
+
+            // Le seul signal que ce watcher peut produire honnêtement : il est le seul à mesurer
+            // la durée de travail CONTINUE. ActivityWatcher émettait `overwork` sur du temps
+            // d'INACTIVITÉ — il annonçait un surmenage à quelqu'un parti depuis six heures.
+            var severite = _session.Tick(nom, maintenant);
+            if (severite is not null)
+            {
+                var duree = _session.Duration(maintenant);
+                _logger.LogInformation("[ProcessWatcher] Surmenage : {H:F1} h de travail continu",
+                    duree.TotalHours);
+
+                PatternDetected?.Invoke(this, new PatternDetectedEventArgs
+                {
+                    Pattern = "overwork",
+                    Context = $"{duree.TotalHours:F1} h de travail continu, sans vraie pause",
+                    Metadata = new Dictionary<string, object>
+                    {
+                        ["hours"] = Math.Round(duree.TotalHours, 1),
+                        ["severity"] = severite.Value,
+                    }
+                });
+            }
 
             if (!string.IsNullOrEmpty(nom) && !string.Equals(nom, _dernierNom, StringComparison.OrdinalIgnoreCase))
             {

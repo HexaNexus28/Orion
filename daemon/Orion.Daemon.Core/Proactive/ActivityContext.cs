@@ -21,12 +21,19 @@ public class ActivityContext : IActivityContext
     /// Applications où une interruption coûte cher : reprendre le fil d'un raisonnement de
     /// code prend bien plus longtemps que reprendre la lecture d'une page web.
     /// </summary>
-    private static readonly HashSet<string> AppsDeTravail = new(StringComparer.OrdinalIgnoreCase)
+    private static readonly HashSet<string> WorkApps = new(StringComparer.OrdinalIgnoreCase)
     {
         "code", "devenv", "rider", "datagrip", "webstorm", "pycharm", "idea",
         "windowsterminal", "pwsh", "powershell", "cmd", "wsl", "ubuntu",
         "photoshop", "illustrator", "figma", "blender",
     };
+
+    /// <summary>
+    /// Expose la liste plutot que de la laisser recopier : deux listes d'applications de
+    /// travail finiraient par diverger, et l'ecart serait invisible.
+    /// </summary>
+    public static bool IsWorkApp(string? application)
+        => !string.IsNullOrWhiteSpace(application) && WorkApps.Contains(application.Trim());
 
     public void Signaler(string? application, DateTime maintenant)
     {
@@ -56,7 +63,7 @@ public class ActivityContext : IActivityContext
             if (maintenant - _dernierSignal > fraicheur) return ActivityState.Inconnu;
 
             var duree = maintenant - _depuis;
-            var concentre = AppsDeTravail.Contains(_application)
+            var concentre = IsWorkApp(_application)
                             && duree >= TimeSpan.FromMinutes(Math.Max(1, _options.FocusAfterMinutes));
 
             return new ActivityState(_application, duree, concentre);

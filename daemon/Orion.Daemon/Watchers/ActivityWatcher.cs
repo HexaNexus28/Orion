@@ -63,8 +63,10 @@ public class ActivityWatcher : IWatcher
             var idleTime = GetIdleTime();
             var now = DateTime.Now;
 
-            // Pattern: skip_meal (inactif depuis 3h + heure repas passée)
-            if (idleTime.TotalHours >= 3 && 
+            // ACTIF, pas inactif. La version precedente exigeait 3 h d'inactivite passe l'heure
+            // du repas : elle decrivait quelqu'un en train de manger, et lui reprochait de ne
+            // pas manger. On saute un repas quand on est ENCORE devant la machine.
+            if (idleTime < TimeSpan.FromMinutes(15) &&
                 now.TimeOfDay > _options.LunchTime.Add(TimeSpan.FromHours(1)) &&
                 _options.EnableMealReminders)
             {
@@ -72,26 +74,21 @@ public class ActivityWatcher : IWatcher
                 PatternDetected?.Invoke(this, new PatternDetectedEventArgs
                 {
                     Pattern = "skip_meal",
-                    Context = $"Inactif depuis {idleTime.TotalHours:F1}h, heure repas: {_options.LunchTime}",
+                    Context = $"Toujours au clavier, il est {now:HH:mm} et l'heure du repas ({_options.LunchTime:hh\\hmm}) est passee",
                     Metadata = new Dictionary<string, object>
                     {
-                        ["idle_hours"] = idleTime.TotalHours,
-                        ["current_time"] = now.ToString("HH:mm")
+                        ["idle_minutes"] = Math.Round(idleTime.TotalMinutes, 1),
+                        ["current_time"] = now.ToString("HH:mm"),
+                        ["severity"] = 30
                     }
                 });
             }
 
-            // Pattern: overwork (inactif depuis 6h)
-            if (idleTime.TotalHours >= 6 && _options.EnableBreakReminders)
-            {
-                _logger.LogInformation("[ActivityWatcher] Pattern detected: overwork");
-                PatternDetected?.Invoke(this, new PatternDetectedEventArgs
-                {
-                    Pattern = "overwork",
-                    Context = $"Inactif depuis {idleTime.TotalHours:F1}h - temps de pause",
-                    Metadata = new Dictionary<string, object> { ["idle_hours"] = idleTime.TotalHours }
-                });
-            }
+            // `overwork` a ete RETIRE d'ici : il se declenchait sur six heures d'INACTIVITE,
+            // c'est-a-dire sur quelqu'un qui n'avait pas touche la machine — et lui annoncait
+            // « temps de pause ». Le message le disait lui-meme : « Inactif depuis 6,0h - temps
+            // de pause ». Le surmenage se mesure sur du travail CONTINU, ce que seul
+            // ProcessWatcher sait faire (voir WorkSessionTracker).
         }
         catch (Exception ex)
         {
