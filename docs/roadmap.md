@@ -99,9 +99,14 @@ D'où l'invariant : **une prise = un tour = un envoi**, l'audio partant collé a
 consomme, depuis un seul endroit. Les prises nées pendant qu'ORION parle sans barge-in déclaré
 sont écartées, ce qui ferme la fenêtre résiduelle de la *queue* de sa réponse.
 
-L'annulation d'écho du navigateur ne pouvait pas y suffire : MicVAD demande bien
-`echoCancellation`, mais un navigateur n'annule que ce **qu'il joue lui-même** — or les réponses
-passent par `speechSynthesis`, donc par le moteur TTS du système.
+L'annulation d'écho du navigateur ne pouvait pas y suffire tant qu'une réponse passait par
+`speechSynthesis` : MicVAD demande bien `echoCancellation`, mais un navigateur n'annule que ce
+**qu'il joue lui-même**, et le moteur TTS du système lui échappe.
+
+**Cette sortie-là n'existe plus.** Web Speech a été retirée du dépôt — c'était le seul flux sonore
+hors de portée de l'annulation d'écho. Il reste UN chemin par destination : Kokoro pour la voix
+conversationnelle, le daemon pour les notifications proactives. Les seuils ne compensent plus une
+fuite, ils gardent une surface fermée.
 
 ⏸ **À valider à la voix, en conditions réelles** : c'est le seul juge.
 

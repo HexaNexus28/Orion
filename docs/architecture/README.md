@@ -1,6 +1,6 @@
 # ORION - Documentation Architecture
 
-Cette documentation est organisée en 3 fichiers distincts :
+Cette documentation est organisée en 4 fichiers distincts :
 
 ##  Structure
 
@@ -51,5 +51,13 @@ Cette documentation est organisée en 3 fichiers distincts :
 
 ##  Mise à jour
 
-Ces fichiers sont maintenus à jour avec l'évolution du code source.
-Date de dernière mise à jour : **Avril 2026**
+⚠️ **Ces fichiers ne sont PAS régénérés automatiquement.** Ils ont dérivé une fois : les diagrammes
+décrivaient `ILLMClient`, `LLMRouter`, `AnthropicClient`, `MemoryAgent` et `ToolAgent` — cinq classes
+dont trois n'ont jamais existé et deux ont été supprimées — tout en affirmant être à jour.
+
+Une documentation qui se déclare à jour sans l'être coûte plus cher que son absence : on cherche un
+fichier qui n'existe pas et on conclut qu'on a mal lu. **Toute modification des couches ou du chemin
+LLM doit toucher ces diagrammes dans le même commit.**
+
+Vue d'ensemble courte et tenue à jour : [`../architecture.md`](../architecture.md). Ces quatre
+fichiers en sont le détail (ERD, diagrammes de classes, séquences, audit).

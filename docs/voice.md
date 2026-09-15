@@ -30,17 +30,32 @@ Prompt voix dédié (`ChatRequest.VoiceMode` → réponses courtes orales sans m
 split (`.!?` min 20 chars, weak break `, : ;` à 80, force à 150) · TTS pipeliné en parallèle du LLM
 stream (`Task.WhenAll`) · frontend pre-decode chunk N+1 pendant lecture N (`useVoiceWS.ts`).
 
-## Anti-écho (CRITIQUE)
+## Anti-écho — un seul chemin sonore, pas un réglage
 
-- `voiceWSResponseRef` bloque Web Speech TTS pendant le pipeline WS
-- `window.speechSynthesis.speaking` check avant trigger VAD
-- barge-in seuil amplitude `0.04` (> seuil parole `0.015`) pour ignorer l'écho haut-parleur
-- **Ne jamais activer Web Speech TTS et Kokoro simultanément**
+**Web Speech API a été retirée d'ORION.** C'était elle, la cause.
 
-## TTS dual-mode
+Elle passe par le moteur TTS du **système**. Or un navigateur n'annule à l'écho que ce qu'**il**
+joue lui-même : la voix d'ORION sortait du haut-parleur, rentrait par le micro, et aucun signal
+de référence n'existait pour la distinguer de la parole de l'utilisateur. Sur un téléphone en
+haut-parleur, sa voix est souvent **plus forte** que celle de l'utilisateur — le volume ne peut
+donc rien trancher. Aucun seuil ne ferme ça.
 
-- **Mode TEXT (clavier)** → Web Speech API navigateur (`voiceWSResponseRef = false`)
-- **Mode VOICE (WS)** → Kokoro daemon (`voiceWSResponseRef = true`)
+Ce qui reste, une destination par chemin :
+
+| | Chemin | Pourquoi |
+|---|---|---|
+| Conversation | WAV du WebSocket, joués par `AudioContext` | l'annulation d'écho du navigateur, elle, les voit |
+| Proactif | action `speak` du daemon, haut-parleurs du PC | la notification naît des watchers du daemon : elle vient de la machine, elle sonne sur la machine — y compris application fermée |
+
+**ORION parle quand on lui PARLE.** Le mode texte ne déclenche plus de synthèse : écris-lui, il
+répond par écrit. C'est le prix assumé — il n'existait aucun moyen de faire parler le mode texte
+dans le navigateur sans réintroduire le moteur système.
+
+Gardes qui subsistent côté prise :
+
+- une prise n'est ÉMISE que par `processVoiceTurn`, jamais par `onAudioChunk` : on n'envoie de
+  l'audio que si on envoie aussi le `end_audio` qui le consomme ;
+- une prise née pendant qu'ORION parle n'est gardée que si un barge-in a été **déclaré**.
 
 ## Flow frontend voix (App.tsx)
 

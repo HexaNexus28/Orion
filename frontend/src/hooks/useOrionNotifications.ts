@@ -33,9 +33,6 @@ export const useOrionNotifications = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
 
-  // Sélection de la meilleure voix française disponible
-
-  // Synthèse vocale via Web Speech API
   // Envoyer une action au daemon via le backend (utilise axios + endpoints)
   const sendAction = useCallback(async (action: string, parameter?: string, data?: Record<string, unknown>) => {
     try {

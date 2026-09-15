@@ -62,7 +62,7 @@ IAgentLoop (AgentLoop)          ← TOUT passe par là. Jamais d'appel LLM direc
 **L'ORDRE DU TABLEAU EST LA POLITIQUE** — rien d'autre ne la décide (`Program.cs`). Distant
 d'abord pour la qualité, local en dernier pour survivre hors-ligne.
 
-⚠️ `ILLMClient` / `ILLMRouter` sont l'**ancien chemin, sans outils** : ils ne portent pas de
+⚠️ `ILLMClient` / `ILLMRouter` ont été **supprimés** : ils ne portaient pas de
 `tool_call` et ne doivent plus être utilisés pour un nouveau développement. L'ancienne cascade
 « Ollama Cloud → local » et le client Anthropic ont disparu du code — il n'existe **pas** de
 `AnthropicClient` dans le dépôt.

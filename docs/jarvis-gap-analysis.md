@@ -3,6 +3,15 @@
 > Document de diagnostic. Établi par lecture du code + builds réels, pas par lecture de la doc.
 > Toute affirmation ici est adossée à un `fichier:ligne`.
 
+⚠️ **INSTANTANÉ DATÉ — ne pas lire comme l'état courant.** Ce document décrit le dépôt **au moment
+du diagnostic** (dernier commit analysé : `5cf070b`). Les `fichier:ligne` ne pointent plus au bon
+endroit, et plusieurs symboles cités ont depuis été supprimés — `useChat`, `useVoice`, `LLMRouter`,
+`OllamaClient`, `ILLMClient`, `IMemoryAgent`, `IToolAgent`.
+
+C'est voulu : **la valeur de ce fichier est le diagnostic, pas l'inventaire.** Il explique POURQUOI
+ORION ne tenait pas debout. Le corriger au fil des commits effacerait justement ce qu'il documente.
+Pour l'état courant, voir [`architecture.md`](architecture.md) et [`roadmap.md`](roadmap.md).
+
 ## 0. Mesures d'entrée (état réel, pas déclaré)
 
 | Mesure | Résultat |
@@ -320,8 +329,10 @@ la boucle n'est pas branchée.
 
 ## 5. Dette annexe relevée (hors chemin critique)
 
-- `orionfix.md` / `frontfix.md` (32 Ko) : briefs Windsurf/Kimi périmés (Kimi K2 Moonshot en primary,
-  `Task.Delay(50)` de faux streaming). **Contredisent le code actuel** → à supprimer, pas à maintenir.
+- ~~`orionfix.md` / `frontfix.md` (32 Ko)~~ : **supprimés.** Briefs Windsurf/Kimi périmés (Kimi K2
+  Moonshot en primary, `Task.Delay(50)` de faux streaming, `useVoice.ts` qui n'existe plus) posés à
+  la racine d'un dépôt public. Ils contredisaient le code actuel : le premier fichier qu'un lecteur
+  ouvre ne doit pas décrire une architecture morte.
 - `docs/roadmap.md` : Phase 7 « Capacités Jarvis » listée après la 3D et la vision. **Inversion de
   priorité** — l'agentivité est la fondation, pas la cerise.
 - README annonce « fallback Claude », « ConversationAgent → MemoryAgent → ToolAgent », « 33 tests » :

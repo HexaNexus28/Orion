@@ -29,6 +29,8 @@ orion/
 - [docs/daemon.md](docs/daemon.md) — Worker Service Windows, watchers, notifiers, install
 - [docs/deployment.md](docs/deployment.md) — VPS + Nginx + daemon, dev local, variables d'environnement
 - [docs/roadmap.md](docs/roadmap.md) — phases et état
+- [docs/architecture/](docs/architecture/) — détail : ERD, diagrammes de classes, séquences, audit
+  (⚠️ pas régénérés automatiquement — à mettre à jour dans le même commit que le code)
 
 ## Invariants NON-NÉGOCIABLES (toujours actifs)
 
@@ -36,7 +38,8 @@ orion/
 Business `ApiResponse<T>` · Controller `IActionResult`. Détail : [docs/architecture.md](docs/architecture.md).
 
 **LLM** : tout passe par `IAgentLoop` (jamais d'appel LLM direct depuis un agent ou un service).
-Transport via `ILLMAgentClient` — `ILLMClient`/`ILLMRouter` sont l'ancien chemin, sans outils.
+Transport via `ILLMAgentClient`. L'ancien chemin (`ILLMClient` / `ILLMRouter`) a été
+SUPPRIMÉ du dépôt — s'il réapparaît, c'est une régression, pas une option.
 
 ⚠️ **`ollama list` NE PROUVE RIEN** : il affiche les `:cloud` en cache local même retirés ou
 verrouillés par abonnement. Vérifié le 2026-08-20 : 7 modèles listés, **7 inutilisables**.

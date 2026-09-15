@@ -236,7 +236,8 @@ logger.LogInformation(" Repositories & UnitOfWork registered");
 
 
 // ========== BOUCLE AGENT (chantier 1 — Jarvis) ==========
-// Transport dedie : streaming AVEC tools, ce que ILLMClient ne peut structurellement pas porter.
+// Transport dedie : streaming AVEC tools, ce que l'ancien ILLMClient (supprime) ne pouvait
+// structurellement pas porter.
 var ollamaBaseUrl = builder.Configuration["Ollama:BaseUrl"] ?? "http://localhost:11434";
 var ollamaTimeout = builder.Configuration.GetValue<int?>("Ollama:TimeoutSeconds") ?? 120;
 builder.Services.AddHttpClient(OllamaAgentClient.HttpClientName, client =>

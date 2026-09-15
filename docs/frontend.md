@@ -19,27 +19,37 @@ Stack 3D     : Three.js (@react-three/fiber + drei: Float/Billboard/Text3D) · C
 
 ## Structure
 
+⚠️ Ce bloc est vérifié contre le dépôt. Un fichier cité ici et introuvable est un bug de la doc,
+pas un fichier à recréer.
+
 ```
 src/
-├── algorithms/   vadProcessor, audioAnalyser, particleEngine, handTracker
-├── components/   entity/ · hologram/ (HologramCard/Chart/ResponsePanel — pur Three.js GLSL/SDF) ·
-│                 response/ · input/SlideInput · overlay/ (Memory/Briefing/Settings/DeferredQueue) ·
-│                 canvas/ (Scene3D, OrionCore3D)
-├── hooks/        useOrionEntity, useChat, useStream (appendChunk/setStreaming), useVAD,
-│                 useVoiceWS (pipeline voix actif), useVoice (LEGACY HTTP), useGestures,
-│                 useHandTracking, useOrionNotifications (SSE), usePushNotif, useOrionStatus
-├── context/      EntityContext, OrionStatusContext, ThemeContext
-├── services/     api.ts (axios) · chatService · memoryService · briefingService · daemonService ·
-│                 healthService · voiceApi (LEGACY) · voiceWebSocket (client /ws/voice)
+├── algorithms/   handTracker (MediaPipe, Phase 5)
+├── components/   auth/ (AuthGate, LoginScreen) · canvas/ (Scene3D, OrionCore3D) ·
+│                 hologram/ (HologramCard/Chart/Text/ResponsePanel/ResponseText3D — Three.js GLSL/SDF) ·
+│                 input/SlideInput (CLAVIER seul) · ui/HudZones ·
+│                 overlay/ (Memory, Briefing, Settings, DeferredQueue+Badge, ToolActivityStrip,
+│                 VoiceStatusHint)
+├── hooks/        useStream (SSE texte), useVAD (Silero v5), useVoiceWS (SEUL pipeline voix),
+│                 useGestureControl, useHandTracking, useOrionNotifications (SSE proactif)
+├── context/      EntityContext, OrionStatusContext, HudCardsContext
+├── props/        props de composants — jamais inline
+├── services/     api.ts (axios) · authService · chatService · memoryService · toolService ·
+│                 briefingService · daemonService · deferredService · healthService ·
+│                 voiceWebSocket (client /ws/voice)
 ├── config/       endpoints.ts (ENDPOINTS centralisés + voiceWS: '/ws/voice')
 ├── types/        api/apiResponse · dto/ · models/
-└── App.tsx       surface unique — pas de Router
+├── utils/        animationUtils
+└── App.tsx       surface unique — pas de Router, pas de pages/
 ```
 
-`App.tsx` : `<ThemeProvider><EntityProvider>` → `<Scene3D>` (3D permanent z-0, reçoit responseText
-+ isStreaming + onTap/onLongPress/onDoubleTap) + `<HoloCards>` (z-10) + `<SlideInput>` (slide bas) +
-overlays Memory/Briefing/Settings/DeferredQueue (z-30) + statut points discrets (entité, VAD,
-daemon, SSE) + `DeferredQueueBadge` (z-20).
+`main.tsx` : `<AuthGate>` → `<EntityProvider>` → `<OrionStatusProvider>` → `<HudCardsProvider>` →
+`<App/>`. `AuthGate` est une BARRIÈRE, pas un habillage : sans session, App n'est jamais monté.
+
+`App.tsx` : `<Scene3D>` (3D permanent z-0, reçoit responseText + isStreaming +
+onTap/onLongPress/onDoubleTap) + `<HudZones>` (z-10) + `<SlideInput>` (slide bas) +
+overlays Memory/Briefing/Settings/DeferredQueue (z-30, **exclusifs** — un seul `activeOverlay` à la
+fois) + statut points discrets (entité, VAD, daemon, SSE) + `DeferredQueueBadge` (z-20).
 
 **File d'actions différées** — `useDeferredQueue` est appelé **une seule fois**, dans `App`, et son
 résultat descend vers la pastille ET l'overlay : deux instances feraient deux appels, et surtout la
@@ -51,7 +61,13 @@ relit sur deux signaux — la reconnexion du daemon (immédiat) et la notificati
 
 `SlideInput.onSubmit` → `App.handleSubmit` → `useStream.streamMessage` → `chatService.streamMessage`
 (fetch SSE `POST /api/chat/stream`, parse lignes `data: …` jusqu'à `[DONE]`) → `setState.text` mis à
-jour token par token → `useEffect` TTS Web Speech parle phrase par phrase (mode TEXT).
+jour token par token → affichage, **et rien d'autre**.
+
+Le mode texte ne parle pas. Un `useEffect` faisait auparavant lire la réponse phrase par phrase par
+`speechSynthesis` : ORION répondait à voix haute à une question tapée au clavier, et cette voix-là
+sortait du moteur du système — donc hors de portée de l'annulation d'écho du navigateur, qui n'annule
+que ce qu'il joue lui-même. Le micro se réentendait. Web Speech a été retirée : **on écrit, ORION
+écrit ; on parle, ORION parle** (cf. [voice.md](voice.md)).
 
 ## Flow voix
 
