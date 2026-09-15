@@ -34,41 +34,8 @@ export const useOrionNotifications = () => {
   const [clientId, setClientId] = useState<string | null>(null);
 
   // Sélection de la meilleure voix française disponible
-  const getBestFrenchVoice = useCallback((): SpeechSynthesisVoice | undefined => {
-    const voices = window.speechSynthesis.getVoices();
-    const fr = voices.filter(v => v.lang.startsWith('fr'));
-    if (!fr.length) return undefined;
-    // 1. Voix neurales Windows Edge
-    const natural = fr.find(v => v.name.includes('Natural') || v.name.includes('Eva') || v.name.includes('Denise') || v.name.includes('Elsa'));
-    if (natural) return natural;
-    // 2. Google Français
-    const google = fr.find(v => v.name.includes('Google'));
-    if (google) return google;
-    // 3. N'importe sauf Hortense
-    return fr.find(v => !v.name.includes('Hortense')) ?? fr[0];
-  }, []);
 
   // Synthèse vocale via Web Speech API
-  const speak = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) {
-      console.warn('[useOrionNotifications] Web Speech API not supported');
-      return;
-    }
-
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 0.92;
-    utterance.pitch = 1.0;
-    utterance.volume = 1;
-
-    const voice = getBestFrenchVoice();
-    if (voice) utterance.voice = voice;
-
-    window.speechSynthesis.speak(utterance);
-  }, [getBestFrenchVoice]);
-
   // Envoyer une action au daemon via le backend (utilise axios + endpoints)
   const sendAction = useCallback(async (action: string, parameter?: string, data?: Record<string, unknown>) => {
     try {
@@ -123,7 +90,15 @@ export const useOrionNotifications = () => {
             const notification: OrionNotification = JSON.parse((event as MessageEvent).data);
             setLastNotification(notification);
             if (notification.speak && notification.message) {
-              speak(notification.message);
+              // LE PC PARLE, PAS LE NAVIGATEUR. Une notification proactive naît des watchers
+              // du daemon : elle vient de la machine, elle doit sonner SUR la machine — y
+              // compris quand l'application n'est pas ouverte, ce que le navigateur ne peut
+              // pas faire.
+              //
+              // La faire parler ici passait par Web Speech, donc par le moteur TTS du système,
+              // hors de portée de l'annulation d'écho du navigateur. Sa voix repartait dans le
+              // micro pendant que le VAD écoutait, et ORION se répondait à lui-même.
+              void speakViaDaemon(notification.message);
             }
           } catch (err) {
             console.error("[useOrionNotifications] Notification illisible :", err);
@@ -175,56 +150,13 @@ export const useOrionNotifications = () => {
       source?.close();
       setIsConnected(false);
     };
-  }, [speak, upsertCard]);
+  }, [speakViaDaemon, upsertCard]);
 
   return {
     lastNotification,
     isConnected,
     clientId,
-    speak,
     sendAction,
     speakViaDaemon
   };
-};
-
-const getBestFrenchVoiceGlobal = (): SpeechSynthesisVoice | undefined => {
-  const voices = window.speechSynthesis.getVoices();
-  const fr = voices.filter(v => v.lang.startsWith('fr'));
-  if (!fr.length) return undefined;
-  const natural = fr.find(v => v.name.includes('Natural') || v.name.includes('Eva') || v.name.includes('Denise') || v.name.includes('Elsa'));
-  if (natural) return natural;
-  const google = fr.find(v => v.name.includes('Google'));
-  if (google) return google;
-  return fr.find(v => !v.name.includes('Hortense')) ?? fr[0];
-};
-
-// Hook simple pour parler directement
-export const useOrionSpeech = () => {
-  const speak = useCallback((text: string) => {
-    if (!('speechSynthesis' in window)) {
-      console.warn('[useOrionSpeech] Web Speech API not supported');
-      return;
-    }
-
-    window.speechSynthesis.cancel();
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 0.92;
-    utterance.pitch = 1.0;
-    utterance.volume = 1;
-
-    const voice = getBestFrenchVoiceGlobal();
-    if (voice) utterance.voice = voice;
-
-    window.speechSynthesis.speak(utterance);
-  }, []);
-
-  const stop = useCallback(() => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-  }, []);
-
-  return { speak, stop };
 };

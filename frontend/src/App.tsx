@@ -27,8 +27,6 @@ const App: React.FC = () => {
   const { daemonConnected } = useOrionStatus();
   const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
   const deferredQueue = useDeferredQueue();
-  const spokenUpToRef = useRef(0);
-  const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
 
 
   const [isInputVisible, setIsInputVisible] = useState(false);
@@ -41,10 +39,6 @@ const App: React.FC = () => {
   const isPassiveListeningRef = useRef(false);
   const isProcessingVoiceRef = useRef(false);
   const touchStartYRef = useRef<number | null>(null);
-  const speechUnlockedRef = useRef(false);
-  const pendingUtterancesRef = useRef(0);
-
-  const [isTTSSpeaking, setIsTTSSpeaking] = useState(false);
 
   // ── Swipe detection ──────────────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -66,102 +60,17 @@ const App: React.FC = () => {
     }
   }, [isInputVisible, isMemoryOpen, isBriefingOpen, isSettingsOpen]);
 
-  // ── Sélection de voix française — préférence voix neurales/naturelles ───────
-  const getBestFrenchVoice = useCallback((): SpeechSynthesisVoice | undefined => {
-    const voices = window.speechSynthesis.getVoices();
-    const fr = voices.filter(v => v.lang.startsWith('fr'));
-    if (!fr.length) return undefined;
-    // 1. Voix neurales Windows Edge (Eva, Denise, Elsa = Natural)
-    const natural = fr.find(v => v.name.includes('Natural') || v.name.includes('Eva') || v.name.includes('Denise') || v.name.includes('Elsa'));
-    if (natural) return natural;
-    // 2. Google Français (Chrome — qualité correcte)
-    const google = fr.find(v => v.name.includes('Google'));
-    if (google) return google;
-    // 3. N'importe quelle voix féminine sauf Hortense (très robotique)
-    const decent = fr.find(v => !v.name.includes('Hortense'));
-    return decent ?? fr[0];
-  }, []);
-
-  // ── Déverrouillage Web Speech API (Chrome exige un geste utilisateur) ────────
-  const unlockSpeech = useCallback(() => {
-    if (speechUnlockedRef.current || !('speechSynthesis' in window)) return;
-    speechUnlockedRef.current = true;
-    // Utterance silencieuse pour débloquer l'API
-    const unlock = new SpeechSynthesisUtterance('');
-    unlock.volume = 0;
-    unlock.onend = () => window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(unlock);
-    // Charger les voix si pas encore disponibles
-    if (!window.speechSynthesis.getVoices().length) {
-      window.speechSynthesis.onvoiceschanged = () => {
-        window.speechSynthesis.onvoiceschanged = null;
-      };
-    }
-  }, []);
-
-  // Arrêt TTS complet + reset état
-  const stopTTS = useCallback(() => {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-    pendingUtterancesRef.current = 0;
-    setIsTTSSpeaking(false);
-  }, []);
-
-  const speakSentence = useCallback((text: string) => {
-    if (!('speechSynthesis' in window) || !text) return;
-
-    pendingUtterancesRef.current++;
-    setIsTTSSpeaking(true); // VAD bloqué pendant qu'ORION parle
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 1.35;
-    utterance.pitch = 1.0;
-    utterance.volume = 1;
-    const voice = getBestFrenchVoice();
-    if (voice) utterance.voice = voice;
-
-    const onDone = () => {
-      pendingUtterancesRef.current = Math.max(0, pendingUtterancesRef.current - 1);
-      if (pendingUtterancesRef.current === 0 && !window.speechSynthesis.speaking) {
-        // Attendre que l'écho meure avant de réécouter
-        setTimeout(() => setIsTTSSpeaking(false), 1200);
-      }
-    };
-    utterance.onend = onDone;
-    utterance.onerror = onDone;
-
-    window.speechSynthesis.speak(utterance);
-  }, [getBestFrenchVoice]);
-
-  // ── TTS : parle phrase par phrase pendant le stream (Web Speech API) ────────
-  // Only active for TEXT input mode. When voice WS pipeline is active (isTurnActive),
-  // TTS audio comes from Kokoro via WebSocket — don't double-speak.
-  useEffect(() => {
-    if (!responseText) {
-      spokenUpToRef.current = 0; // Reset cursor only on new conversation (empty text)
-      return;
-    }
-    if (isTTSSpeaking || voiceWSResponseRef.current) return; // Don't reset cursor here!
-
-    const unspoken = responseText.slice(spokenUpToRef.current);
-    const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
-    let match: RegExpExecArray | null;
-    let lastMatchEnd = 0;
-
-    while ((match = sentenceRegex.exec(unspoken)) !== null) {
-      const sentence = match[0].trim().replace(/[*_`#>|]/g, '').trim();
-      if (sentence.length > 3) speakSentence(sentence);
-      lastMatchEnd = match.index + match[0].length;
-    }
-
-    if (lastMatchEnd > 0) spokenUpToRef.current += lastMatchEnd;
-
-    if (!isStreaming) {
-      const remaining = responseText.slice(spokenUpToRef.current).trim().replace(/[*_`#>|]/g, '').trim();
-      if (remaining.length > 3) speakSentence(remaining);
-      spokenUpToRef.current = responseText.length;
-    }
-  }, [responseText, isStreaming, isTTSSpeaking, speakSentence]);
+  // ORION PARLE QUAND ON LUI PARLE. Le mode texte ne declenche plus de synthese.
+  //
+  // Web Speech API a ete retiree d'ORION. Elle passe par le moteur TTS du SYSTEME, hors de
+  // portee de l'annulation d'echo du navigateur — qui n'annule que ce qu'IL joue. Sa voix
+  // repartait donc dans le micro et ORION se re-ecoutait : c'est la cause qu'aucun reglage de
+  // seuil ne pouvait fermer, parce qu'il n'existe aucun signal de reference pour distinguer
+  // son echo de ta voix.
+  //
+  // Reste UN seul chemin sonore dans le navigateur : les WAV du WebSocket vocal, joues par
+  // AudioContext — que l'annulation d'echo, elle, voit. Ecris a ORION, il repond par ecrit ;
+  // parle-lui, il repond de vive voix.
 
   // ── Voice error handling ─────────────────────────────────────────────────────
   const handleVoiceError = useCallback((error: string) => {
@@ -183,12 +92,10 @@ const App: React.FC = () => {
   const handleSpeechStart = useCallback(() => {
     takeStartedDuringTurnRef.current = isTurnActiveRef.current;
     bargeInDeclaredRef.current = false;
-    unlockSpeech();
     setVoiceError(null);
     setState('listening');
     setAmplitude(0.6);
-    stopTTS(); // Coupe Web Speech TTS
-  }, [unlockSpeech, setState, setAmplitude, stopTTS]);
+  }, [setState, setAmplitude]);
 
   // Ref pour stocker l'audio reçu du VAD
   // FRONT déclencheur du tour, rien de plus. Ce booléen portait un Blob WAV dont le contenu
@@ -254,11 +161,10 @@ const App: React.FC = () => {
   const armMicrophone = useCallback(() => {
     if (micArmedRef.current) return;
     micArmedRef.current = true;
-    unlockSpeech();      // débloque aussi la synthèse vocale, soumise à la même règle
     setMicArme(true);
     setVoiceError(null);
     console.log('[App] Micro armé par le premier geste');
-  }, [unlockSpeech]);
+  }, []);
 
   // Le clavier compte comme geste : sans ça, qui ouvre la saisie au clavier resterait muet.
   useEffect(() => {
@@ -269,9 +175,8 @@ const App: React.FC = () => {
   }, [micArmed, armMicrophone]);
 
   const handleOpenInput = useCallback(() => {
-    unlockSpeech(); // Déverrouillle TTS dès le premier tap
     setIsInputVisible(true);
-  }, [unlockSpeech]);
+  }, []);
   const handleCloseInput = useCallback(() => setIsInputVisible(false), []);
   const handleOpenSettings = useCallback(() => setIsSettingsOpen(true), []);
 
@@ -308,7 +213,6 @@ const App: React.FC = () => {
   const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic, isPlayingRef } = useVoiceWS({
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
-      voiceWSResponseRef.current = true; // Mark: this response comes from voice WS
       reset();
       setState('thinking');
       setStreaming(true);
@@ -331,20 +235,16 @@ const App: React.FC = () => {
     },
     onLLMDone: (fullText) => {
       console.log('[App] LLM done:', fullText.substring(0, 60) + '...');
-      // Keep isStreaming=true until TTS finishes — text stays "live" while ORION speaks
-      // setStreaming(false) will be called by onOrionSpeaking(false) via isTurnActive
-      spokenUpToRef.current = fullText.length;
+      // isStreaming reste vrai jusqu'a la fin de la lecture : le texte demeure « vivant »
+      // pendant qu'ORION parle. C'est onOrionSpeaking(false) qui le fige.
     },
     onOrionSpeaking: (speaking) => {
       if (speaking) {
         setState('responding');
-        setIsTTSSpeaking(true);
-        setStreaming(true); // Keep text in "streaming" mode during audio playback
+        setStreaming(true); // Le texte reste « en cours » pendant la lecture audio
       } else {
         setState('idle');
-        setIsTTSSpeaking(false);
-        setStreaming(false); // Text locks when ORION finishes speaking
-        voiceWSResponseRef.current = false;
+        setStreaming(false); // Il se fige quand ORION a fini de parler
       }
     },
     onAmplitude: () => {
@@ -387,7 +287,7 @@ const App: React.FC = () => {
   // fonctionnelle — ni l'un ni l'autre n'est garanti sur un téléphone en haut-parleur.
   const bargeInThreshold = 0.04;
   useEffect(() => {
-    const orionEmet = isPlayingRef.current || window.speechSynthesis?.speaking;
+    const orionEmet = isPlayingRef.current;
 
     if (isSpeaking && isTurnActive && !orionEmet && amplitudeRef.current > bargeInThreshold) {
       console.log('[App] Barge-in: interruption du tour ORION (amp:', amplitudeRef.current.toFixed(3), ')');
@@ -448,7 +348,6 @@ const App: React.FC = () => {
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
-    voiceWSResponseRef.current = false; // Text input → allow Web Speech TTS
     reset();
     setState('thinking');
     try {
@@ -522,7 +421,6 @@ const App: React.FC = () => {
       hasCapturedAudioRef.current && // Audio prêt
       !isInputVisible &&
       !isTurnActive && // Don't start new turn while ORION is responding (echo protection)
-      !window.speechSynthesis?.speaking && // Don't trigger during Web Speech TTS (notifs, etc.)
       isPassiveListeningRef.current &&
       !isProcessingVoiceRef.current
     ) {
