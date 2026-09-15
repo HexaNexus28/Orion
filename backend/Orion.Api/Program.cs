@@ -484,6 +484,11 @@ builder.Services.AddHostedService<HudBroadcastService>();
 
 builder.Services.AddHostedService<BriefingScheduler>();
 
+// Distille les episodes en faits durables. SANS lui, MemoryConsolidator n'etait declenche que
+// si le modele appelait de lui-meme `memory_reflect` — donc jamais : les episodes s'accumulaient
+// sans devenir des souvenirs, et la memoire durable restait vide.
+builder.Services.AddHostedService<MemoryConsolidationScheduler>();
+
 // Draine la file des le retour du daemon, et expire ce qui a trop attendu.
 builder.Services.AddHostedService<DeferredActionWatcher>();
 

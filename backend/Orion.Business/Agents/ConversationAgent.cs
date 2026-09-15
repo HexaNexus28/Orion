@@ -35,6 +35,7 @@ public class ConversationAgent : IConversationAgent
     private readonly IToolRegistry _toolRegistry;
     private readonly IToolInvoker _toolInvoker;
     private readonly IDaemonClient _daemonClient;
+    private readonly IMemoryService _memoryService;
     private readonly ILogger<ConversationAgent> _logger;
 
     public ConversationAgent(
@@ -46,6 +47,7 @@ public class ConversationAgent : IConversationAgent
         IToolRegistry toolRegistry,
         IToolInvoker toolInvoker,
         IDaemonClient daemonClient,
+        IMemoryService memoryService,
         ILogger<ConversationAgent> logger)
     {
         _agentLoop = agentLoop;
@@ -56,6 +58,7 @@ public class ConversationAgent : IConversationAgent
         _toolRegistry = toolRegistry;
         _toolInvoker = toolInvoker;
         _daemonClient = daemonClient;
+        _memoryService = memoryService;
         _logger = logger;
     }
 
@@ -263,7 +266,9 @@ public class ConversationAgent : IConversationAgent
         // On ne fabrique pas de contenu à sa place : on dit qu'il n'y a pas eu de réponse, et
         // on le LOGGUE en avertissement. Un repli qui masque au lieu d'alerter serait un bug
         // de plus, pas un correctif.
-        if (content.Length == 0)
+        var modeleMuet = content.Length == 0;
+
+        if (modeleMuet)
         {
             _logger.LogWarning(
                 "[ConversationAgent/Stream] Le modèle n'a rien produit — session {SessionId}, PC joignable: {Daemon}",
@@ -293,6 +298,21 @@ public class ConversationAgent : IConversationAgent
         catch (Exception ex)
         {
             _logger.LogError(ex, "[ConversationAgent/Stream] Sauvegarde de la reponse impossible");
+        }
+
+        // L'ECHANGE DEVIENT UN SOUVENIR. C'est ici, et nulle part ailleurs.
+        //
+        // Avant, rien n'ecrivait jamais en memoire automatiquement : les seuls chemins d'ecriture
+        // etaient l'outil `memory_save` et `memory_reflect`, c'est-a-dire SI le modele y pensait.
+        // La table restait donc quasi vide, et trois symptomes en decoulaient — ORION ne se
+        // souvenait de rien, le briefing sortait generique faute de matiere a injecter, et
+        // l'ecran memoire n'affichait rien. Une seule cause, trois pannes visibles.
+        //
+        // `ProcessAsync` delegue a cette methode : le chemin HTTP et le chemin vocal passent
+        // donc tous les deux ici. Un seul endroit, pas deux a tenir synchronises.
+        if (!modeleMuet)
+        {
+            await EnregistrerEpisodeAsync(context.UserMessage, content.ToString(), ct);
         }
     }
 
@@ -379,6 +399,43 @@ public class ConversationAgent : IConversationAgent
         // le HUD doit refleter ce qui s est reellement passe.
         var error = result.Data?.Error ?? result.Message ?? "Execution de l'outil echouee";
         return new ToolOutcome(JsonSerializer.Serialize(new { error }));
+    }
+
+    /// <summary>
+    /// Écrit l'échange comme ÉPISODE — la matière première de la consolidation.
+    ///
+    /// POURQUOI UN ÉPISODE ET PAS UN FAIT. `MemorySlot.Episode` est du brut, volontairement :
+    /// distiller à l'écriture demanderait de décider, au milieu d'un tour, ce qui mérite d'être
+    /// retenu — alors qu'on ne le sait pas encore. `MemoryConsolidator` relit ces épisodes plus
+    /// tard, à froid, et n'en garde que des faits durables rangés dans le schéma fermé.
+    ///
+    /// AU MIEUX, JAMAIS BLOQUANT. La réponse est déjà rendue à l'utilisateur quand on arrive
+    /// ici. Une panne d'embedding ou de base ne doit pas transformer un tour réussi en erreur :
+    /// on journalise et on continue. C'est la même règle que la sauvegarde du message.
+    /// </summary>
+    private async Task EnregistrerEpisodeAsync(string question, string reponse, CancellationToken ct)
+    {
+        try
+        {
+            // Les deux moitiés dans UNE ligne : un épisode coupé en deux perdrait le lien entre
+            // la demande et la réponse, et la distillation relirait des fragments sans contexte.
+            var episode = $"Moi : {question.Trim()}\nORION : {reponse.Trim()}";
+
+            var enregistre = await _memoryService.SaveMemoryAsync(
+                episode,
+                nameof(MemorySlot.Episode),
+                importance: 1.0f,
+                ct);
+
+            if (enregistre.Success)
+                _logger.LogInformation("[ConversationAgent/Memoire] Episode enregistre — {Chars} caracteres", episode.Length);
+            else
+                _logger.LogWarning("[ConversationAgent/Memoire] Episode NON enregistre : {Msg}", enregistre.Message);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[ConversationAgent/Memoire] Ecriture de l'episode impossible");
+        }
     }
 
     private async Task<Dictionary<string, string>> BuildUserProfileAsync(CancellationToken ct)
