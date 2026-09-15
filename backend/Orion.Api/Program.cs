@@ -524,7 +524,7 @@ app.UseStaticFiles(new StaticFileOptions { ContentTypeProvider = contentTypes })
 //
 // AllowedOrigins etait EN DUR sur localhost. Quand cette liste est non vide, toute connexion
 // dont l.en-tete Origin n.y figure pas est REJETEE. Depuis un telephone le navigateur envoie
-// https://orion.shift-star.app : la voix etait donc refusee en silence en production, alors que
+// le domaine public de la stack : la voix etait donc refusee en silence en production, alors que
 // le WebSocket du daemon passait — un client non-navigateur n.envoie aucun Origin. Meme source
 // de verite que le CORS : deux listes d.origines finissent toujours par diverger.
 // ATTENTION : AllowedOrigins ne peut PAS venir de appsettings.json, qui est gitignore donc

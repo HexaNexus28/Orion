@@ -88,13 +88,13 @@ sur les vraies données. C'est exactement la séparation dev/prod déjà en plac
 Pour la base de production, un seul critère décide : **elle doit être joignable par le backend
 toujours-actif**. D'où la question ouverte : *où vit le plan cerveau ?*
 
-| | VPS IONOS | Render |
+| | VPS déjà en service | Plateforme managée |
 |---|---|---|
-| Coût | **déjà payé** (9-15 €/mois, mutualisé) | gratuit = s'endort (incompatible avec la proactivité) ; ~7 $/mois sinon |
-| Cohérence | pattern maison : une stack Docker par projet, port loopback `127.0.0.1:80XX` derrière la façade Nginx | plateforme séparée à gérer |
-| Base | Supabase self-hosted déjà en place | Supabase Cloud |
-| Réserve | ⚠️ **« charge serrée » documentée** (`infrastructure/CLAUDE.md:602-628`) | aucune |
-| Ops | Ansible, backups R2, à ta main | rien à faire |
+| Coût | **déjà engagé**, mutualisé avec d'autres services | le palier gratuit s'endort — incompatible avec la proactivité |
+| Cohérence | pattern maison : une stack Docker par projet, port loopback derrière la façade Nginx | plateforme séparée à gérer |
+| Base | PostgreSQL auto-hébergé déjà en place | base managée |
+| Réserve | ⚠️ **charge déjà serrée** — d'autres services en production sur la même machine | aucune |
+| Ops | provisionnement et sauvegardes à sa main | rien à faire |
 
 ### Sur la pause Supabase Cloud
 
@@ -112,7 +112,7 @@ Les embeddings locaux (`nomic-embed-text`) tombent aussi quand le PC s'éteint. 
 
 - **NIM** — à vérifier : le catalogue contient-il un modèle d'embedding exploitable ?
 - **`nomic-embed-text` sur le VPS** — 274 Mo, tourne en CPU sans GPU. Modeste, mais c'est une
-  charge de plus sur un VPS déjà serré.
+  charge de plus sur une machine déjà chargée.
 
 > ⚠️ **`memory_vectors.embedding` est déclaré `vector(768)` dans `memory/schema.sql`.**
 > Changer de modèle d'embedding change la dimension → migration de schéma **et revectorisation de

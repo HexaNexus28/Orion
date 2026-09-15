@@ -113,8 +113,8 @@ la mémoire projet annoncent un modèle frontier. Chaque tour paie en plus un al
 Aucun log ne dit « ton modèle principal est inaccessible » — juste un `LogWarning` noyé.
 
 **1.12 — Le matériel ne permet pas de compenser en local.**
-Mesuré sur cette machine : **15,7 Go RAM** (2,6 Go libres au moment du test), GPU **Intel Iris Xe
-intégré, 2 Go de VRAM partagée** — pas de GPU dédié. Inférence CPU.
+Mesuré sur la machine de développement : **~16 Go de RAM**, un GPU **intégré sans VRAM dédiée** —
+donc pas de GPU exploitable pour l'inférence. Tout tourne en CPU.
 
 Débit réel mesuré, modèle déjà chargé (`llama3.2:3b`) :
 **140 tokens en 16,8 s → ≈ 8 tokens/seconde.**
@@ -137,7 +137,8 @@ Ce que ça implique, chiffré :
 | Réponse de 3 phrases | ~17 s | **102 s** |
 
 **4,3× plus lent** — pire que l'estimation prudente de 3 tokens/s. Une seule réponse courte prend
-plus d'une minute et demie. Le VPS IONOS (16 Go, sans GPU) ne change rien à ce plafond.
+plus d'une minute et demie. Un VPS sans GPU ne change rien à ce plafond : c'est la bande passante
+mémoire qui borne, pas la quantité de RAM.
 
 > **Conclusion 1bis** : le cerveau de Jarvis ne peut pas être local sur ce matériel.
 > Ce n'est pas un avis, c'est une mesure.
@@ -176,10 +177,10 @@ La panne est **intermittente et dépend de ce qui tourne à côté**, ce qui la 
 attribuer. Corrigé : `NumCtx` (8192) désormais obligatoire et envoyé à chaque appel.
 
 **1.15 — La base de données d'ORION n'existe plus.**
-`db.niwciampfbwppjpufbnz.supabase.co` → **NXDOMAIN**, API REST injoignable (`status=000`).
-Le projet Supabase a disparu — comportement attendu du palier gratuit après une longue inactivité
-(dernier commit produit : 2026-06-05). Conséquence : `PrepareStreamAsync` renvoie
-`503 Base de donnees inaccessible` et **aucun tour de conversation ne peut aboutir en HTTP**.
+L'hôte `db.<ref-projet>.supabase.co` → **NXDOMAIN**, API REST injoignable (`status=000`).
+Le projet Supabase a disparu — comportement attendu du palier gratuit après une longue inactivité.
+Conséquence : `PrepareStreamAsync` renvoie `503 Base de donnees inaccessible` et **aucun tour de
+conversation ne peut aboutir en HTTP**.
 C'est le dernier verrou avant le e2e complet — et une décision d'hébergement, pas un bug.
 
 **1.16 — Le daemon renvoyait ses erreurs à une adresse inexistante.**

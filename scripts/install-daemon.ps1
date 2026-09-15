@@ -50,8 +50,15 @@ if (-not (Test-Path $confProd)) {
     $confDev = Join-Path $projet "Orion.Daemon\appsettings.Development.json"
     if (-not (Test-Path $confDev)) { throw "Aucune configuration source : impossible de recuperer le jeton" }
     $dev = Get-Content $confDev -Raw | ConvertFrom-Json
+
+    # L URL vient de la configuration de DEVELOPPEMENT, comme le jeton, et pour la meme raison :
+    # appsettings.Development.json est gitignore, donc le domaine reel n apparait nulle part dans
+    # le depot. Absente, on ecrit un marqueur qui echoue BRUYAMMENT plutot qu une URL qui pointe
+    # au hasard.
+    $urlBackend = if ($dev.Daemon.RenderWsUrl) { $dev.Daemon.RenderWsUrl } else { "wss://<ton-domaine>/daemon" }
+
     @{ Daemon = @{
-        RenderWsUrl        = "wss://orion.shift-star.app/daemon"
+        RenderWsUrl        = $urlBackend
         Token              = $dev.Daemon.Token
         MachineName        = $env:COMPUTERNAME
         ReconnectDelayMs   = 5000

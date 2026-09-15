@@ -80,7 +80,7 @@ public class NewsOptions
     /// <summary>
     /// Certains serveurs refusent un client sans navigateur (Techpoint Africa repond 403).
     /// </summary>
-    public string UserAgent { get; set; } = "OrionNewsBot/1.0 (+https://orion.shift-star.app)";
+    public string UserAgent { get; set; } = "OrionNewsBot/1.0";
 
     /// <summary>
     /// Liste par DEFAUT, dans le code et non dans appsettings.json — ce fichier est gitignore,
