@@ -30,10 +30,17 @@ const App: React.FC = () => {
 
 
   const [isInputVisible, setIsInputVisible] = useState(false);
-  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
-  const [isBriefingOpen, setIsBriefingOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDeferredOpen, setIsDeferredOpen] = useState(false);
+  // UNE SEULE SURFACE A LA FOIS.
+  //
+  // C'etaient quatre booleens independants, et rien n'empechait d'en ouvrir plusieurs : « m »
+  // puis « b » au clavier, ou deux clics de boutons, et deux panneaux pleins se superposaient —
+  // tous les quatre a z-30, donc empiles dans l'ordre du DOM, c'est-a-dire au hasard. Seul le
+  // swipe se protegeait ; ni les boutons ni les raccourcis ne le faisaient.
+  //
+  // Un etat unique rend l'exclusion STRUCTURELLE : ouvrir une surface ferme l'autre, sans avoir
+  // a penser a la fermer a chaque point d'appel. C'est le genre de garde qu'on n'oublie pas.
+  const [activeOverlay, setActiveOverlay] = useState<'memory' | 'briefing' | 'settings' | 'deferred' | null>(null);
+  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const isPassiveListeningRef = useRef(false);
@@ -51,14 +58,14 @@ const App: React.FC = () => {
     touchStartYRef.current = null;
 
     // Only trigger swipe when no overlay/input is open
-    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen || isDeferredOpen) return;
+    if (isInputVisible || activeOverlay) return;
 
     if (deltaY > SWIPE_THRESHOLD) {
-      setIsMemoryOpen(true);       // swipe up → mémoire
+      setActiveOverlay('memory');   // swipe up → mémoire
     } else if (deltaY < -SWIPE_THRESHOLD) {
-      setIsBriefingOpen(true);     // swipe down → briefing
+      setActiveOverlay('briefing'); // swipe down → briefing
     }
-  }, [isInputVisible, isMemoryOpen, isBriefingOpen, isSettingsOpen]);
+  }, [isInputVisible, activeOverlay]);
 
   // ORION PARLE QUAND ON LUI PARLE. Le mode texte ne declenche plus de synthese.
   //
@@ -178,7 +185,7 @@ const App: React.FC = () => {
     setIsInputVisible(true);
   }, []);
   const handleCloseInput = useCallback(() => setIsInputVisible(false), []);
-  const handleOpenSettings = useCallback(() => setIsSettingsOpen(true), []);
+  const handleOpenSettings = useCallback(() => setActiveOverlay('settings'), []);
 
   // ── Passive listening (ref-based to avoid re-render loops) ─────────────────────
   const startPassiveListeningRef = useRef<() => Promise<void>>(undefined);
@@ -373,14 +380,9 @@ const App: React.FC = () => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       switch (e.key.toLowerCase()) {
-        case 'm': setIsMemoryOpen(v => !v); break;
-        case 'b': setIsBriefingOpen(v => !v); break;
-        case 'escape':
-          setIsMemoryOpen(false);
-          setIsBriefingOpen(false);
-          setIsSettingsOpen(false);
-          setIsDeferredOpen(false);
-          break;
+        case 'm': setActiveOverlay(v => (v === 'memory' ? null : 'memory')); break;
+        case 'b': setActiveOverlay(v => (v === 'briefing' ? null : 'briefing')); break;
+        case 'escape': setActiveOverlay(null); break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -472,6 +474,16 @@ const App: React.FC = () => {
     }
   }, [lastNotification, refreshDeferred]);
 
+  // ── ÉCHELLE DES PLANS, et elle n'a qu'un seul endroit ────────────────────────
+  //   z-0   la scène 3D
+  //   z-10  l'ambiance (indice d'état vocal)
+  //   z-20  ce qui reste affiché : boutons, badges, bande d'outils, notification
+  //   z-30  les surfaces modales — UNE SEULE ouverte à la fois
+  //   z-40  le voile de la saisie
+  //   z-50  la saisie elle-même, et la panne micro qui doit passer devant tout
+  //
+  // Les quatre overlays partageaient z-30 AVEC la bande d'outils et la notification, qui
+  // passaient donc par-dessus un panneau ouvert. À égalité, c'est l'ordre du DOM qui tranche.
   return (
     <div
       className="fixed inset-0 overflow-hidden bg-orion-darker"
@@ -526,7 +538,7 @@ const App: React.FC = () => {
         <DeferredQueueBadge
           enAttente={deferredQueue.enAttente.length}
           aConfirmer={deferredQueue.aConfirmer.length}
-          onOpen={() => setIsDeferredOpen(true)}
+          onOpen={() => setActiveOverlay('deferred')}
         />
       )}
 
@@ -559,7 +571,7 @@ const App: React.FC = () => {
       <div className="fixed top-4 left-4 z-20 flex gap-2">
         <button
           type="button"
-          onClick={() => setIsMemoryOpen(true)}
+          onClick={() => setActiveOverlay('memory')}
           title="Mémoire (M) — ou glisse vers le haut"
           className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
         >
@@ -567,7 +579,7 @@ const App: React.FC = () => {
         </button>
         <button
           type="button"
-          onClick={() => setIsBriefingOpen(true)}
+          onClick={() => setActiveOverlay('briefing')}
           title="Briefing (B) — ou glisse vers le bas"
           className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
         >
@@ -575,13 +587,13 @@ const App: React.FC = () => {
         </button>
       </div>
 
-      {/* Overlays — z-30 */}
-      <MemoryOverlay isOpen={isMemoryOpen} onClose={() => setIsMemoryOpen(false)} />
-      <BriefingOverlay isOpen={isBriefingOpen} onClose={() => setIsBriefingOpen(false)} />
-      <SettingsOverlay isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      {/* Overlays — z-30, et UN SEUL ouvert a la fois (cf. `activeOverlay`). */}
+      <MemoryOverlay isOpen={activeOverlay === 'memory'} onClose={closeOverlay} />
+      <BriefingOverlay isOpen={activeOverlay === 'briefing'} onClose={closeOverlay} />
+      <SettingsOverlay isOpen={activeOverlay === 'settings'} onClose={closeOverlay} />
       <DeferredQueueOverlay
-        isOpen={isDeferredOpen}
-        onClose={() => setIsDeferredOpen(false)}
+        isOpen={activeOverlay === 'deferred'}
+        onClose={closeOverlay}
         queue={deferredQueue}
       />
 
@@ -592,7 +604,7 @@ const App: React.FC = () => {
 
       {/* Notification proactive du daemon */}
       {lastNotification && !isInputVisible && (
-        <div className="absolute top-6 left-4 right-4 z-30 animate-fade-in">
+        <div className="absolute top-6 left-4 right-4 z-20 animate-fade-in">
           <div className={`rounded-xl px-4 py-3 backdrop-blur-md border ${
             lastNotification.priority === 'critical' ? 'bg-red-500/20 border-red-500/40 text-red-200' :
             lastNotification.priority === 'high' ? 'bg-orange-500/20 border-orange-500/40 text-orange-200' :
