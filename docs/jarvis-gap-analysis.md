@@ -247,7 +247,7 @@ Un Jarvis tient sur trois piliers. État réel :
 | Pilier | Attendu | État ORION |
 |---|---|---|
 | **Agentivité** — décider et exécuter des actions en chaîne | boucle agent multi-tours | ❌ inexistante dans le chemin utilisé |
-| **Mémoire** — se souvenir sans qu'on le lui demande | écriture auto + consolidation | ❌ table vide par construction |
+| **Mémoire** — se souvenir sans qu'on le lui demande | écriture auto + consolidation | ✅ épisode à chaque tour + consolidation planifiée (corrigé le 2026-09-15 ; la table est restée vide bien après que J4 ait été déclaré fait) |
 | **Proactivité** — initier sans être sollicité | watchers → scoring → parole | ⚠️ watchers daemon présents, aucune boucle de décision |
 
 Le reste (voix, 3D, PWA, daemon, tools, 4 couches) est **du solide déjà payé**.

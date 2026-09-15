@@ -99,8 +99,6 @@ export interface ToolActivityStripProps {
 export interface SlideInputProps {
   isVisible: boolean;
   onSubmit: (text: string) => void;
-  onVoiceStart?: () => void;
-  onVoiceEnd?: (transcript: string) => void;
   disabled?: boolean;
   state: OrionState;
   onClose: () => void;

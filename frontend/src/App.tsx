@@ -191,10 +191,12 @@ const App: React.FC = () => {
   }, [unlockSpeech, setState, setAmplitude, stopTTS]);
 
   // Ref pour stocker l'audio reçu du VAD
-  const audioBlobRef = useRef<Blob | null>(null);
+  // FRONT déclencheur du tour, rien de plus. Ce booléen portait un Blob WAV dont le contenu
+  // n'était jamais lu — encodé échantillon par échantillon à chaque prise, pour être jeté.
+  const hasCapturedAudioRef = useRef(false);
 
-  const handleAudioReady = useCallback((blob: Blob) => {
-    audioBlobRef.current = blob;
+  const handleSpeechCaptured = useCallback(() => {
+    hasCapturedAudioRef.current = true;
     setAmplitude(0); // Reset le pulse quand la parole se termine
   }, [setAmplitude]);
 
@@ -226,7 +228,7 @@ const App: React.FC = () => {
 
   const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD, contextState } = useVAD({
     onSpeechStart: handleSpeechStart,
-    onAudioReady: handleAudioReady,
+    onSpeechCaptured: handleSpeechCaptured,
     // On RETIENT la prise au lieu de l'émettre. C'est `processVoiceTurn` qui décide de son
     // sort, et qui l'envoie collée à son `end_audio`. Une prise non retenue par la décision
     // (écho d'ORION, bruit ambiant pendant qu'il répond) est simplement écrasée par la
@@ -267,7 +269,7 @@ const App: React.FC = () => {
     }
     console.log('[App] startPassiveListening → démarrage VAD');
     try {
-      audioBlobRef.current = null;
+      hasCapturedAudioRef.current = false;
       await startVAD();
       isPassiveListeningRef.current = true;
       setVoiceError(null);
@@ -380,7 +382,7 @@ const App: React.FC = () => {
       // l'écho qu'elle est presque toujours.
       bargeInDeclaredRef.current = true;
       interrupt();
-      audioBlobRef.current = null; // Discard echo audio
+      hasCapturedAudioRef.current = false; // Discard echo audio
     }
   }, [isSpeaking, isTurnActive, interrupt]); // amplitudeRef is a ref — not a dep
 
@@ -404,7 +406,7 @@ const App: React.FC = () => {
     if (takeStartedDuringTurnRef.current && !bargeInDeclaredRef.current) {
       console.log('[App] Prise écartée — écho d\'ORION');
       takeStartedDuringTurnRef.current = false;
-      audioBlobRef.current = null;
+      hasCapturedAudioRef.current = false;
       return;
     }
     takeStartedDuringTurnRef.current = false;
@@ -413,9 +415,9 @@ const App: React.FC = () => {
     isProcessingVoiceRef.current = true;
     setState('thinking');
 
-    // Le déclencheur doit être un FRONT : laissé non-nul, il repart dès que `isTurnActive`
+    // Le déclencheur doit être un FRONT : laissé vrai, il repart dès que `isTurnActive`
     // retombe et ORION répond au bruit ambiant.
-    audioBlobRef.current = null;
+    hasCapturedAudioRef.current = false;
 
     // L'ordre d'émission du WebSocket garantit que la prise arrive avant l'ordre qui la consomme.
     chunksRef.current += 1;
@@ -503,7 +505,7 @@ const App: React.FC = () => {
   useEffect(() => {
     if (
       !isSpeaking && // Fin de parole détectée
-      audioBlobRef.current && // Audio prêt
+      hasCapturedAudioRef.current && // Audio prêt
       !isInputVisible &&
       !isTurnActive && // Don't start new turn while ORION is responding (echo protection)
       !window.speechSynthesis?.speaking && // Don't trigger during Web Speech TTS (notifs, etc.)
@@ -655,7 +657,6 @@ const App: React.FC = () => {
       <SlideInput
         isVisible={isInputVisible}
         onSubmit={handleSubmit}
-        onVoiceEnd={() => setState('idle')}
         onClose={handleCloseInput}
         disabled={entityState === 'thinking'}
         state={entityState}

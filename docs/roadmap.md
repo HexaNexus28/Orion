@@ -17,7 +17,12 @@
   n'est plus proposé au modèle** — affiné en J6a : le tri se fait par *utilité différée*, pas par
   disponibilité. 15 tests de prompt.
 - **J3 ✅ Cerveau** — client OpenAI-compatible (NVIDIA NIM), cascade explicite NIM → local.
-- **J4 ✅ Mémoire** — écriture auto à chaque tour, consolidation, schéma fermé 4 slots, garde-fous.
+- **J4 ⚠️ Mémoire** — schéma fermé 4 slots, consolidation, garde-fous. **L'écriture automatique
+  annoncée ici n'existait pas** : `ConversationAgent` n'utilisait les embeddings que pour LIRE,
+  et `MemoryConsolidator` n'était déclenché par aucun service d'arrière-plan. Les seuls chemins
+  d'écriture étaient les outils `memory_save` / `memory_reflect` — donc si le modèle y pensait.
+  La table restait quasi vide, ce qui affamait aussi le briefing et l'écran mémoire.
+  Corrigé en J12 : écriture d'un épisode à chaque tour + planificateur de consolidation.
   ⚠️ Livré sur embeddings **locaux** — dette RÉSORBÉE par J6b (mistral-embed distant).
 - **J5 ✅ Proactivité** — watchers daemon → scoring d'urgence → prise de parole, 5 étages.
 - **J6a ✅ File d'actions différées** — `IToolInvoker` devient le point d'application

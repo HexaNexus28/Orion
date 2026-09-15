@@ -1,11 +1,18 @@
 import { useRef, useCallback, useState, useEffect } from 'react';
 import { MicVAD } from '@ricky0123/vad-web';
-import { encodeWav } from '../services/voiceApi';
 
 interface UseVADOptions {
   onSpeechStart?: () => void;
   onSpeechEnd?: (audio: Float32Array) => void;
-  onAudioReady?: (blob: Blob) => void;
+  /**
+   * La prise est terminée et disponible. AUCUNE charge utile : l'audio part par
+   * `onAudioChunk`, et l'appelant n'a besoin ici que du FRONT qui déclenche le tour.
+   *
+   * Avant, ce rappel rendait un Blob WAV — encodé échantillon par échantillon en JavaScript, à
+   * chaque prise — dont l'appelant ne lisait jamais le contenu : il ne s'en servait que comme
+   * booléen « audio prêt ». On encodait donc toute l'énonciation pour la jeter.
+   */
+  onSpeechCaptured?: () => void;
   onAudioChunk?: (pcm16: Int16Array) => void;
   onAmplitude?: (amplitude: number) => void;
   onError?: (error: string) => void;
@@ -45,15 +52,41 @@ const ASSET_PATH = '/vad/';
 const POSITIVE_SPEECH_THRESHOLD = 0.5;
 const NEGATIVE_SPEECH_THRESHOLD = 0.35;
 
-// Silence toléré à l'intérieur d'une phrase avant de clore la prise. 24 tranches ≈ 770 ms : assez
-// pour respirer au milieu d'une phrase, assez peu pour faire attendre.
-const REDEMPTION_FRAMES = 24;
+// Silence toléré à l'intérieur d'une phrase avant de clore la prise.
+//
+// C'EST DU TEMPS MORT PUR : tu as fini de parler, et il ne se passe rien pendant toute cette
+// durée. Elle s'ajoute telle quelle à la latence perçue, AVANT même la transcription, le
+// modèle et la synthèse.
+//
+// 24 tranches (≈770 ms) était trop généreux — près d'une seconde d'attente à chaque phrase.
+// 14 tranches ≈ 450 ms : on garde de quoi respirer au milieu d'une phrase, on rend 320 ms.
+// Descendre plus bas coupe la parole de quelqu'un qui cherche son mot, ce qui est bien pire
+// qu'attendre.
+const REDEMPTION_FRAMES = 14;
 
 // En dessous, c'est un bruit bref classé parole par erreur — ignoré au lieu de lancer un tour
 // complet. 9 tranches ≈ 290 ms.
 const MIN_SPEECH_FRAMES = 9;
 
-const SAMPLE_RATE = 16000;
+// Audio conservé AVANT que Silero ne déclare « c'est de la parole ». 8 tranches ≈ 256 ms.
+//
+// La bibliothèque n'en garde qu'UNE seule par défaut, soit 32 ms. Or Silero met typiquement une
+// à trois tranches à franchir son seuil de confiance : l'attaque du premier mot était donc
+// coupée. « Ouvre Notepad » arrivait amputé de sa première syllabe — et un modèle de
+// transcription ne rend jamais du vide, il invente le mot le plus plausible. C'est la signature
+// de « il m'entend mais transcrit autre chose ».
+//
+// Ce pré-roll ne coûte rien : il n'allonge ni l'attente ni le tour, il ajoute seulement un
+// quart de seconde d'audio déjà capturé au début de la prise.
+const PRE_SPEECH_PAD_FRAMES = 8;
+
+// Silero impose 512 échantillons par tranche à 16 kHz — d'où les ≈32 ms qui servent d'unité
+// à tous les comptes ci-dessus.
+//
+// CONTRAT AVEC LE SERVEUR : MicVAD rééchantillonne lui-même à 16 kHz, et
+// `VoiceWebSocketHandler.EncodePcmToWav` suppose 16 kHz EN DUR. Les deux moitiés ne se parlent
+// pas — le WebSocket transporte du PCM brut, sans en-tête pour porter le taux. Changer l'un
+// sans l'autre ne lève aucune erreur : la transcription devient simplement fausse.
 
 export const useVAD = (options: UseVADOptions = {}) => {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -84,6 +117,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
         negativeSpeechThreshold: NEGATIVE_SPEECH_THRESHOLD,
         redemptionFrames: REDEMPTION_FRAMES,
         minSpeechFrames: MIN_SPEECH_FRAMES,
+        preSpeechPadFrames: PRE_SPEECH_PAD_FRAMES,
 
         onSpeechStart: () => {
           setIsSpeaking(true);
@@ -101,7 +135,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
           // états de plus.
           cbRef.current.onAudioChunk?.(floatTo16BitPCM(audio));
           cbRef.current.onSpeechEnd?.(audio);
-          cbRef.current.onAudioReady?.(encodeWav(audio, SAMPLE_RATE));
+          cbRef.current.onSpeechCaptured?.();
         },
 
         onVADMisfire: () => {
