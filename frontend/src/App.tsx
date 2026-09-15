@@ -257,7 +257,7 @@ const App: React.FC = () => {
     onAmplitude: () => {
       // NE PAS ecrire dans `amplitude` : cette mesure est celle de la voix qu ORION JOUE,
       // pas de ce que le micro entend. Les deux finissaient dans la meme variable, et le
-      // barge-in (amplitudeRef > 0,04) pouvait donc interrompre ORION en entendant ORION.
+      // barge-in pouvait donc interrompre ORION en entendant ORION.
       // Deux grandeurs differentes n ont rien a faire dans un seul etat.
     },
     onError: (err) => {
@@ -292,12 +292,22 @@ const App: React.FC = () => {
   // Ce qu'on garde : couper ORION pendant qu'il RÉFLÉCHIT (tour actif, aucun son émis).
   // Ce qu'on perd : le couper en pleine phrase, qui exige un casque ou une annulation d'écho
   // fonctionnelle — ni l'un ni l'autre n'est garanti sur un téléphone en haut-parleur.
-  const bargeInThreshold = 0.04;
+  //
+  // PLUS AUCUN SEUIL ICI. Il en restait un — `bargeInThreshold = 0,04` — devenu sans effet le
+  // jour où le VAD est passé à Silero : `amplitudeRef` ne porte plus une énergie RMS mais la
+  // PROBABILITÉ DE PAROLE du modèle, et cet effet ne s'exécute que si `isSpeaking` est déjà
+  // vrai, c'est-à-dire si cette probabilité a franchi 0,5. Comparer ensuite à 0,04 était donc
+  // toujours vrai.
+  //
+  // Un nombre qui ne décide rien mais qui RESSEMBLE à un réglage calibré est pire que son
+  // absence : le prochain lecteur l'ajuste, n'observe aucun changement, et va chercher la
+  // panne ailleurs. La question « est-ce de la parole humaine ? » est déjà tranchée, et mieux,
+  // par Silero — c'est `isSpeaking`.
   useEffect(() => {
     const orionEmet = isPlayingRef.current;
 
-    if (isSpeaking && isTurnActive && !orionEmet && amplitudeRef.current > bargeInThreshold) {
-      console.log('[App] Barge-in: interruption du tour ORION (amp:', amplitudeRef.current.toFixed(3), ')');
+    if (isSpeaking && isTurnActive && !orionEmet) {
+      console.log('[App] Barge-in: interruption du tour ORION (p(parole):', amplitudeRef.current.toFixed(3), ')');
       // Le barge-in est DÉCLARÉ : c'est ce drapeau, et lui seul, qui autorise une prise née
       // pendant qu'ORION parlait à devenir un vrai tour. Sans lui, elle est traitée comme
       // l'écho qu'elle est presque toujours.
@@ -431,9 +441,14 @@ const App: React.FC = () => {
   }, [isSpeaking, isInputVisible, isTurnActive, processVoiceTurn]);
 
   // ── Telemetrie du micro vers le serveur ──────────────────────────────────────
-  // Toutes les 5 s : etat du contexte audio, amplitude maximale vue, morceaux envoyes.
+  // Toutes les 5 s : etat du contexte audio, pic de PROBABILITE DE PAROLE vu, morceaux envoyes.
   // C est ce qui permet de trancher a distance entre les deux causes possibles du silence,
   // sans avoir a lire la console d un telephone.
+  //
+  // Depuis Silero, `maxAmpRef` n est plus un pic d energie mais la plus forte confiance du
+  // modele sur l intervalle. Un micro muet reste proche de 0 ; un micro qui capte sans que ce
+  // soit de la parole (ventilateur, musique) reste bas AUSSI — ce que l energie ne disait pas.
+  // Un pic voisin de 1 innocente donc definitivement la capture.
   useEffect(() => {
     const t = setInterval(() => {
       sendDiagnostic(contextState(), maxAmpRef.current, chunksRef.current);
