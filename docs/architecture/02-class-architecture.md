@@ -65,12 +65,16 @@ classDiagram
             +ErrorResponse(message, statusCode)
         }
         
-        class ILLMClient {
+        class ILLMAgentClient {
             <<interface>>
-            +CompleteAsync(request)
-            +StreamAsync(request, onChunk)
-            +IsAvailable()
-            +LLMProvider Provider
+            +StreamAsync(request, tools, ct)
+            +ProbeAsync(ct)
+            +string Name
+        }
+
+        class IAgentLoop {
+            <<interface>>
+            +RunAsync(request, invokeTool, ct)
         }
         
         class IUnitOfWork {
@@ -132,27 +136,45 @@ classDiagram
     }
 
     namespace Business {
-        class OllamaClient {
+        class OllamaAgentClient {
             -HttpClient _httpClient
-            -ILogger~OllamaClient~ _logger
+            -ILogger~OllamaAgentClient~ _logger
             -OllamaOptions _options
-            +CompleteAsync()
             +StreamAsync()
+            +ProbeAsync()
+        }
+
+        class NimAgentClient {
+            -HttpClient _httpClient
+            -ILogger~NimAgentClient~ _logger
+            -NimOptions _options
+            +StreamAsync()
+            +ProbeAsync()
+        }
+
+        class AgentLoop {
+            -ILLMAgentClient _llmClient
+            -ILogger~AgentLoop~ _logger
+            +RunAsync(request, invokeTool, ct)
         }
         
-        class LLMRouter {
-            -ILLMClient _ollamaClient
-            -ILLMClient _anthropicClient
-            -ILogger~LLMRouter~ _logger
-            +CompleteAsync()
-            +ActiveProvider
+        class LLMCascade {
+            -IReadOnlyList~ILLMAgentClient~ _clients
+            -ILogger~LLMCascade~ _logger
+            +StreamAsync()
+            +ProbeAsync()
         }
         
         class ConversationAgent {
-            -ILLMRouter _llmRouter
+            -IAgentLoop _agentLoop
+            -ILLMAgentClient _llmClient
             -IUnitOfWork _unitOfWork
+            -IEmbeddingService _embeddingService
+            -IToolRegistry _toolRegistry
+            -IToolInvoker _toolInvoker
+            -IMemoryService _memoryService
             -ILogger~ConversationAgent~ _logger
-            +ProcessAsync(request)
+            +StreamAsync(request, ct)
         }
         
         class ChatService {
@@ -165,8 +187,7 @@ classDiagram
         }
         
         class LLMService {
-            -ILLMRouter _llmRouter
-            -ILogger~LLMService~ _logger
+            -ILLMAgentClient _llmClient
             +CompleteAsync(request)
             +CompleteWithPromptAsync(systemPrompt, userMessage)
             +StreamAsync(request, onChunk)
@@ -218,8 +239,10 @@ classDiagram
     GenericRepository ..|> IGenericRepository
     UnitOfWork ..|> IUnitOfWork
     
-    OllamaClient ..|> ILLMClient
-    LLMRouter ..|> ILLMRouter
+    NimAgentClient ..|> ILLMAgentClient
+    OllamaAgentClient ..|> ILLMAgentClient
+    LLMCascade ..|> ILLMAgentClient
+    AgentLoop ..|> IAgentLoop
     ConversationAgent ..|> IConversationAgent
     ChatService ..|> IChatService
     LLMService ..|> ILLMService
@@ -227,12 +250,14 @@ classDiagram
     ChatController ..> IChatService
     HealthController ..> ILLMService
     ChatService ..> IConversationAgent
-    LLMService ..> ILLMRouter
+    LLMService ..> ILLMAgentClient
     
     UnitOfWork --> OrionDbContext : uses
     GenericRepository --> OrionDbContext : uses
     ConversationAgent --> IUnitOfWork : uses
-    ConversationAgent --> ILLMRouter : uses
+    ConversationAgent --> IAgentLoop : uses
+    AgentLoop --> ILLMAgentClient : uses
+    ConversationAgent --> IToolInvoker : uses
 ```
 
 ---
@@ -268,12 +293,15 @@ classDiagram
 ```
 Core/DTOs/Internal/LLM/
 ├── OllamaResponse.cs
-└── AnthropicResponse.cs
+└── LLMToolCall.cs
+
+Core/DTOs/Internal/Tools/
+└── ToolInvocationContext.cs
 ```
 
 Utilisés uniquement par :
-- `OllamaClient`
-- `AnthropicClient`
+- `OllamaAgentClient` / `NimAgentClient`
+- `AgentLoop` et `ToolInvoker`
 
 ### DTOs Publics (API)
 ```

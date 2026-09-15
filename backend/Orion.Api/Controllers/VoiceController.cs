@@ -1,8 +1,6 @@
-using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using Orion.Core.DTOs.Requests;
 using Orion.Core.DTOs.Responses;
-using Orion.Core.Interfaces.Agents;
 using Orion.Core.Interfaces.Services;
 
 namespace Orion.Api.Controllers;
@@ -17,24 +15,26 @@ public class VoiceController : ControllerBase
 {
     private readonly IWhisperService _whisperService;
     private readonly IVoiceNotificationService _voiceNotification;
-    private readonly IConversationAgent _conversationAgent;
     private readonly ILogger<VoiceController> _logger;
 
     public VoiceController(
         IWhisperService whisperService,
         IVoiceNotificationService voiceNotification,
-        IConversationAgent conversationAgent,
         ILogger<VoiceController> logger)
     {
         _whisperService = whisperService;
         _voiceNotification = voiceNotification;
-        _conversationAgent = conversationAgent;
         _logger = logger;
     }
 
     /// <summary>
     /// Synthèse vocale via Kokoro (daemon) — retourne WAV bytes pour AudioContext frontend.
-    /// 503 si daemon déconnecté ou Kokoro indisponible → frontend utilise Web Speech API.
+    ///
+    /// 503 si le daemon est déconnecté ou Kokoro indisponible. Il n'y a PAS de repli : le frontend
+    /// reste silencieux et le dit. Web Speech servait autrefois de filet ici — c'était un repli
+    /// pire que la panne, puisqu'il sortait par le moteur TTS du système, hors de portée de
+    /// l'annulation d'écho du navigateur. Un silence se diagnostique ; un écho se cherche des
+    /// heures.
     /// </summary>
     [HttpPost("synthesize")]
     [Consumes("application/json")]
@@ -170,149 +170,18 @@ public class VoiceController : ControllerBase
         }
     }
 
-    /// <summary>
-    /// Pipeline voix complet en streaming bout-en-bout :
-    /// Audio → Whisper STT → LLM stream → Kokoro TTS chunk par chunk → Audio stream
-    /// Latence perçue : ~800ms au lieu de 4-8s
-    /// Un seul appel réseau au lieu de 3
-    /// </summary>
-    [HttpPost("converse")]
-    [Consumes("multipart/form-data")]
-    public async Task Converse(
-        IFormFile audioFile,
-        [FromQuery] string? language = "fr",
-        [FromQuery] string? sessionId = null,
-        CancellationToken ct = default)
-    {
-        Response.ContentType = "audio/wav";
-        Response.Headers["X-Accel-Buffering"] = "no";
-        
+    // Le pipeline half-duplex POST /api/voice/converse vivait ici : audio -> STT -> LLM -> TTS,
+    // le tout dans une reponse HTTP unique. Il a ete SUPPRIME.
+    //
+    // C'etait la deuxieme moitie du probleme « deux moteurs » : deux pipelines voix complets et
+    // paralleles, l'un HTTP l'autre WebSocket, chacun avec sa propre decoupe de phrases, sa propre
+    // gestion d'echec Kokoro et son propre repli. Le frontend n'appelait plus que le WebSocket
+    // depuis des mois — ce chemin restait donc du code authentifie, non teste, et diverge.
+    //
+    // UN SEUL chemin voix : VoiceWebSocketHandler (/ws/voice), full-duplex, avec barge-in.
+    // Le half-duplex ne pouvait pas l'avoir : on ne peut pas interrompre une reponse qu'on recoit
+    // en un seul bloc.
 
-        if (audioFile == null || audioFile.Length == 0)
-        {
-            Response.StatusCode = 400;
-            return;
-        }
-
-        try
-        {
-            // ── Étape 1 : STT ──────────────────────────────────────────────
-            _logger.LogInformation("[Voice/Converse] STT start — {Size} bytes", audioFile.Length);
-            using var audioStream = audioFile.OpenReadStream();
-            var sttResult = await _whisperService.TranscribeAsync(audioStream, language);
-
-            if (!sttResult.Success || string.IsNullOrEmpty(sttResult.Data))
-            {
-                _logger.LogWarning("[Voice/Converse] STT failed: {Error}", sttResult.Message);
-                Response.StatusCode = 400;
-                return;
-            }
-
-            var transcript = sttResult.Data;
-            _logger.LogInformation("[Voice/Converse] STT done: {Text}", transcript);
-
-            // Envoie le transcript URL-encodé dans le header (HTTP headers = ASCII only)
-            Response.Headers["X-Transcript"] = Uri.EscapeDataString(transcript);
-
-            // ── Étape 2 : LLM stream + TTS phrase par phrase ───────────────
-            var buffer = new StringBuilder();
-            var fullResponse = new StringBuilder();
-            var audioFlushed = false;
-            var request = new ChatRequest
-            {
-                Message = transcript,
-                SessionId = sessionId != null && Guid.TryParse(sessionId, out var sid) ? sid : null
-            };
-
-            await foreach (var evt in _conversationAgent.StreamAsync(request, ct))
-            {
-                // Seuls les tokens alimentent la synthèse vocale ; les événements d'outils
-                // sont du signal pour l'UI, pas du texte à lire à voix haute.
-                if (evt.Type != AgentEventType.Token || string.IsNullOrEmpty(evt.Text)) continue;
-
-                var chunk = evt.Text;
-                buffer.Append(chunk);
-                fullResponse.Append(chunk);
-
-                // Dès qu'une phrase est complète → synthétise et envoie immédiatement
-                if (EndsWithSentence(buffer.ToString()))
-                {
-                    if (await TrySynthesizeAndFlushAsync(buffer.ToString().Trim(), ct))
-                        audioFlushed = true;
-                    buffer.Clear();
-                }
-            }
-
-            // Flush le reste du buffer (dernière phrase sans ponctuation finale)
-            if (buffer.Length > 0)
-            {
-                if (await TrySynthesizeAndFlushAsync(buffer.ToString().Trim(), ct))
-                    audioFlushed = true;
-            }
-
-            // Fallback : si aucun audio n'a été produit (Kokoro down), envoyer le texte
-            if (!audioFlushed && fullResponse.Length > 0)
-            {
-                _logger.LogWarning("[Voice/Converse] No audio produced — sending text fallback");
-                Response.ContentType = "text/plain; charset=utf-8";
-                var textBytes = Encoding.UTF8.GetBytes(fullResponse.ToString());
-                await Response.Body.WriteAsync(textBytes, ct);
-                await Response.Body.FlushAsync(ct);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogInformation("[Voice/Converse] Cancelled by client");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "[Voice/Converse] Error");
-            if (!Response.HasStarted)
-                Response.StatusCode = 500;
-        }
-    }
-
-    // ── Helpers privés ──────────────────────────────────────────────────────────
-
-    private static bool EndsWithSentence(string text)
-    {
-        var t = text.TrimEnd();
-        return t.EndsWith('.') || t.EndsWith('?') || t.EndsWith('!') || t.EndsWith('\n');
-    }
-
-    private async Task<bool> TrySynthesizeAndFlushAsync(string text, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(text)) return false;
-
-        try
-        {
-            var wav = await _voiceNotification.SynthesizeAsync(text, ct);
-            if (wav != null && wav.Length > 0)
-            {
-                await Response.Body.WriteAsync(wav, ct);
-                await Response.Body.FlushAsync(ct);
-
-                _logger.LogDebug("[Voice/Converse] Chunk flushed: '{Preview}' → {Kb}KB",
-                    text.Length > 30 ? text[..30] + "..." : text,
-                    wav.Length / 1024);
-                return true;
-            }
-
-            _logger.LogWarning("[Voice/Converse] No audio for: '{Preview}' (Kokoro unavailable?)",
-                text.Length > 30 ? text[..30] + "..." : text);
-            return false;
-        }
-        catch (OperationCanceledException)
-        {
-            _logger.LogWarning("[Voice/Converse] TTS timeout for: '{Preview}'",
-                text.Length > 30 ? text[..30] + "..." : text);
-            return false;
-        }
-    }
-
-    /// <summary>
-    /// Vérifie le statut du service Whisper
-    /// </summary>
     [HttpGet("status")]
     [ProducesResponseType(typeof(ApiResponse<VoiceStatusResponse>), StatusCodes.Status200OK)]
     public IActionResult GetStatus()

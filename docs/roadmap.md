@@ -17,7 +17,12 @@
   n'est plus proposé au modèle** — affiné en J6a : le tri se fait par *utilité différée*, pas par
   disponibilité. 15 tests de prompt.
 - **J3 ✅ Cerveau** — client OpenAI-compatible (NVIDIA NIM), cascade explicite NIM → local.
-- **J4 ✅ Mémoire** — écriture auto à chaque tour, consolidation, schéma fermé 4 slots, garde-fous.
+- **J4 ⚠️ Mémoire** — schéma fermé 4 slots, consolidation, garde-fous. **L'écriture automatique
+  annoncée ici n'existait pas** : `ConversationAgent` n'utilisait les embeddings que pour LIRE,
+  et `MemoryConsolidator` n'était déclenché par aucun service d'arrière-plan. Les seuls chemins
+  d'écriture étaient les outils `memory_save` / `memory_reflect` — donc si le modèle y pensait.
+  La table restait quasi vide, ce qui affamait aussi le briefing et l'écran mémoire.
+  Corrigé en J12 : écriture d'un épisode à chaque tour + planificateur de consolidation.
   ⚠️ Livré sur embeddings **locaux** — dette RÉSORBÉE par J6b (mistral-embed distant).
 - **J5 ✅ Proactivité** — watchers daemon → scoring d'urgence → prise de parole, 5 étages.
 - **J6a ✅ File d'actions différées** — `IToolInvoker` devient le point d'application
@@ -94,9 +99,14 @@ D'où l'invariant : **une prise = un tour = un envoi**, l'audio partant collé a
 consomme, depuis un seul endroit. Les prises nées pendant qu'ORION parle sans barge-in déclaré
 sont écartées, ce qui ferme la fenêtre résiduelle de la *queue* de sa réponse.
 
-L'annulation d'écho du navigateur ne pouvait pas y suffire : MicVAD demande bien
-`echoCancellation`, mais un navigateur n'annule que ce **qu'il joue lui-même** — or les réponses
-passent par `speechSynthesis`, donc par le moteur TTS du système.
+L'annulation d'écho du navigateur ne pouvait pas y suffire tant qu'une réponse passait par
+`speechSynthesis` : MicVAD demande bien `echoCancellation`, mais un navigateur n'annule que ce
+**qu'il joue lui-même**, et le moteur TTS du système lui échappe.
+
+**Cette sortie-là n'existe plus.** Web Speech a été retirée du dépôt — c'était le seul flux sonore
+hors de portée de l'annulation d'écho. Il reste UN chemin par destination : Kokoro pour la voix
+conversationnelle, le daemon pour les notifications proactives. Les seuils ne compensent plus une
+fuite, ils gardent une surface fermée.
 
 ⏸ **À valider à la voix, en conditions réelles** : c'est le seul juge.
 

@@ -73,7 +73,7 @@ public class MemoryConsolidatorTests
     {
         var consolidateur = Build(
             "decisions|1.5|Alex heberge le backend ORION sur un serveur dedie\n" +
-            "refs|1.0|La base ORION est le projet Supabase niwciampfbwppjpufbnz",
+            "refs|1.0|La base ORION est un projet Supabase dedie",
             Episode("Alex a parle de son hebergement"));
 
         var rapport = await consolidateur.ConsolidateAsync();

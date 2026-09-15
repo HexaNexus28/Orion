@@ -27,24 +27,25 @@ const App: React.FC = () => {
   const { daemonConnected } = useOrionStatus();
   const { lastNotification, isConnected: sseConnected } = useOrionNotifications();
   const deferredQueue = useDeferredQueue();
-  const spokenUpToRef = useRef(0);
-  const voiceWSResponseRef = useRef(false); // true = response from WS, skip Web Speech TTS
 
 
   const [isInputVisible, setIsInputVisible] = useState(false);
-  const [isMemoryOpen, setIsMemoryOpen] = useState(false);
-  const [isBriefingOpen, setIsBriefingOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [isDeferredOpen, setIsDeferredOpen] = useState(false);
+  // UNE SEULE SURFACE A LA FOIS.
+  //
+  // C'etaient quatre booleens independants, et rien n'empechait d'en ouvrir plusieurs : « m »
+  // puis « b » au clavier, ou deux clics de boutons, et deux panneaux pleins se superposaient —
+  // tous les quatre a z-30, donc empiles dans l'ordre du DOM, c'est-a-dire au hasard. Seul le
+  // swipe se protegeait ; ni les boutons ni les raccourcis ne le faisaient.
+  //
+  // Un etat unique rend l'exclusion STRUCTURELLE : ouvrir une surface ferme l'autre, sans avoir
+  // a penser a la fermer a chaque point d'appel. C'est le genre de garde qu'on n'oublie pas.
+  const [activeOverlay, setActiveOverlay] = useState<'memory' | 'briefing' | 'settings' | 'deferred' | null>(null);
+  const closeOverlay = useCallback(() => setActiveOverlay(null), []);
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const isPassiveListeningRef = useRef(false);
   const isProcessingVoiceRef = useRef(false);
   const touchStartYRef = useRef<number | null>(null);
-  const speechUnlockedRef = useRef(false);
-  const pendingUtterancesRef = useRef(0);
-
-  const [isTTSSpeaking, setIsTTSSpeaking] = useState(false);
 
   // ── Swipe detection ──────────────────────────────────────────────────────────
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
@@ -57,111 +58,26 @@ const App: React.FC = () => {
     touchStartYRef.current = null;
 
     // Only trigger swipe when no overlay/input is open
-    if (isInputVisible || isMemoryOpen || isBriefingOpen || isSettingsOpen || isDeferredOpen) return;
+    if (isInputVisible || activeOverlay) return;
 
     if (deltaY > SWIPE_THRESHOLD) {
-      setIsMemoryOpen(true);       // swipe up → mémoire
+      setActiveOverlay('memory');   // swipe up → mémoire
     } else if (deltaY < -SWIPE_THRESHOLD) {
-      setIsBriefingOpen(true);     // swipe down → briefing
+      setActiveOverlay('briefing'); // swipe down → briefing
     }
-  }, [isInputVisible, isMemoryOpen, isBriefingOpen, isSettingsOpen]);
+  }, [isInputVisible, activeOverlay]);
 
-  // ── Sélection de voix française — préférence voix neurales/naturelles ───────
-  const getBestFrenchVoice = useCallback((): SpeechSynthesisVoice | undefined => {
-    const voices = window.speechSynthesis.getVoices();
-    const fr = voices.filter(v => v.lang.startsWith('fr'));
-    if (!fr.length) return undefined;
-    // 1. Voix neurales Windows Edge (Eva, Denise, Elsa = Natural)
-    const natural = fr.find(v => v.name.includes('Natural') || v.name.includes('Eva') || v.name.includes('Denise') || v.name.includes('Elsa'));
-    if (natural) return natural;
-    // 2. Google Français (Chrome — qualité correcte)
-    const google = fr.find(v => v.name.includes('Google'));
-    if (google) return google;
-    // 3. N'importe quelle voix féminine sauf Hortense (très robotique)
-    const decent = fr.find(v => !v.name.includes('Hortense'));
-    return decent ?? fr[0];
-  }, []);
-
-  // ── Déverrouillage Web Speech API (Chrome exige un geste utilisateur) ────────
-  const unlockSpeech = useCallback(() => {
-    if (speechUnlockedRef.current || !('speechSynthesis' in window)) return;
-    speechUnlockedRef.current = true;
-    // Utterance silencieuse pour débloquer l'API
-    const unlock = new SpeechSynthesisUtterance('');
-    unlock.volume = 0;
-    unlock.onend = () => window.speechSynthesis.cancel();
-    window.speechSynthesis.speak(unlock);
-    // Charger les voix si pas encore disponibles
-    if (!window.speechSynthesis.getVoices().length) {
-      window.speechSynthesis.onvoiceschanged = () => {
-        window.speechSynthesis.onvoiceschanged = null;
-      };
-    }
-  }, []);
-
-  // Arrêt TTS complet + reset état
-  const stopTTS = useCallback(() => {
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-    pendingUtterancesRef.current = 0;
-    setIsTTSSpeaking(false);
-  }, []);
-
-  const speakSentence = useCallback((text: string) => {
-    if (!('speechSynthesis' in window) || !text) return;
-
-    pendingUtterancesRef.current++;
-    setIsTTSSpeaking(true); // VAD bloqué pendant qu'ORION parle
-
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'fr-FR';
-    utterance.rate = 1.35;
-    utterance.pitch = 1.0;
-    utterance.volume = 1;
-    const voice = getBestFrenchVoice();
-    if (voice) utterance.voice = voice;
-
-    const onDone = () => {
-      pendingUtterancesRef.current = Math.max(0, pendingUtterancesRef.current - 1);
-      if (pendingUtterancesRef.current === 0 && !window.speechSynthesis.speaking) {
-        // Attendre que l'écho meure avant de réécouter
-        setTimeout(() => setIsTTSSpeaking(false), 1200);
-      }
-    };
-    utterance.onend = onDone;
-    utterance.onerror = onDone;
-
-    window.speechSynthesis.speak(utterance);
-  }, [getBestFrenchVoice]);
-
-  // ── TTS : parle phrase par phrase pendant le stream (Web Speech API) ────────
-  // Only active for TEXT input mode. When voice WS pipeline is active (isTurnActive),
-  // TTS audio comes from Kokoro via WebSocket — don't double-speak.
-  useEffect(() => {
-    if (!responseText) {
-      spokenUpToRef.current = 0; // Reset cursor only on new conversation (empty text)
-      return;
-    }
-    if (isTTSSpeaking || voiceWSResponseRef.current) return; // Don't reset cursor here!
-
-    const unspoken = responseText.slice(spokenUpToRef.current);
-    const sentenceRegex = /[^.!?\n]+[.!?\n]+/g;
-    let match: RegExpExecArray | null;
-    let lastMatchEnd = 0;
-
-    while ((match = sentenceRegex.exec(unspoken)) !== null) {
-      const sentence = match[0].trim().replace(/[*_`#>|]/g, '').trim();
-      if (sentence.length > 3) speakSentence(sentence);
-      lastMatchEnd = match.index + match[0].length;
-    }
-
-    if (lastMatchEnd > 0) spokenUpToRef.current += lastMatchEnd;
-
-    if (!isStreaming) {
-      const remaining = responseText.slice(spokenUpToRef.current).trim().replace(/[*_`#>|]/g, '').trim();
-      if (remaining.length > 3) speakSentence(remaining);
-      spokenUpToRef.current = responseText.length;
-    }
-  }, [responseText, isStreaming, isTTSSpeaking, speakSentence]);
+  // ORION PARLE QUAND ON LUI PARLE. Le mode texte ne declenche plus de synthese.
+  //
+  // Web Speech API a ete retiree d'ORION. Elle passe par le moteur TTS du SYSTEME, hors de
+  // portee de l'annulation d'echo du navigateur — qui n'annule que ce qu'IL joue. Sa voix
+  // repartait donc dans le micro et ORION se re-ecoutait : c'est la cause qu'aucun reglage de
+  // seuil ne pouvait fermer, parce qu'il n'existe aucun signal de reference pour distinguer
+  // son echo de ta voix.
+  //
+  // Reste UN seul chemin sonore dans le navigateur : les WAV du WebSocket vocal, joues par
+  // AudioContext — que l'annulation d'echo, elle, voit. Ecris a ORION, il repond par ecrit ;
+  // parle-lui, il repond de vive voix.
 
   // ── Voice error handling ─────────────────────────────────────────────────────
   const handleVoiceError = useCallback((error: string) => {
@@ -183,18 +99,18 @@ const App: React.FC = () => {
   const handleSpeechStart = useCallback(() => {
     takeStartedDuringTurnRef.current = isTurnActiveRef.current;
     bargeInDeclaredRef.current = false;
-    unlockSpeech();
     setVoiceError(null);
     setState('listening');
     setAmplitude(0.6);
-    stopTTS(); // Coupe Web Speech TTS
-  }, [unlockSpeech, setState, setAmplitude, stopTTS]);
+  }, [setState, setAmplitude]);
 
   // Ref pour stocker l'audio reçu du VAD
-  const audioBlobRef = useRef<Blob | null>(null);
+  // FRONT déclencheur du tour, rien de plus. Ce booléen portait un Blob WAV dont le contenu
+  // n'était jamais lu — encodé échantillon par échantillon à chaque prise, pour être jeté.
+  const hasCapturedAudioRef = useRef(false);
 
-  const handleAudioReady = useCallback((blob: Blob) => {
-    audioBlobRef.current = blob;
+  const handleSpeechCaptured = useCallback(() => {
+    hasCapturedAudioRef.current = true;
     setAmplitude(0); // Reset le pulse quand la parole se termine
   }, [setAmplitude]);
 
@@ -212,21 +128,24 @@ const App: React.FC = () => {
 
   // Telemetrie du micro : le serveur ne peut pas distinguer « contexte en pause » de « parole
   // trop faible » — les deux donnent le meme silence. On mesure donc ici et on rapporte.
-  // Le micro ne démarre QUE sur un geste. Ce n’est pas un choix ergonomique, c’est la
-  // plateforme : un navigateur refuse la capture audio tant que l’utilisateur n’a rien touché,
-  // et il le refuse EN SILENCE — AudioContext « suspended », zéro octet, aucune erreur.
-  // Démarrer au montage revenait à espérer que le navigateur ferait une exception.
   //
-  // Google Assistant ne fait pas autrement dans un navigateur : le mot-clé « OK Google » est
-  // détecté par une couche NATIVE, dont une PWA ne dispose pas.
+  // LE GESTE EST OBLIGATOIRE, LA CÉRÉMONIE NE L'EST PAS. Un navigateur refuse la capture audio
+  // tant que l'utilisateur n'a rien touché, et il le refuse EN SILENCE — AudioContext
+  // « suspended », zéro octet, aucune erreur. Cette contrainte ne se contourne pas.
+  //
+  // Mais elle n'exige pas un voile plein écran « touche pour activer » : n'importe quelle
+  // interaction satisfait le navigateur. On arme donc au PREMIER CONTACT avec la surface —
+  // le tap sur l'entité que l'utilisateur fait de toute façon. Demander un geste dédié
+  // ajoutait une étape qui ne servait qu'à nous.
   const [micArmed, setMicArme] = useState(false);
+  const micArmedRef = useRef(false);
 
   const maxAmpRef = useRef(0);
   const chunksRef = useRef(0);
 
   const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD, contextState } = useVAD({
     onSpeechStart: handleSpeechStart,
-    onAudioReady: handleAudioReady,
+    onSpeechCaptured: handleSpeechCaptured,
     // On RETIENT la prise au lieu de l'émettre. C'est `processVoiceTurn` qui décide de son
     // sort, et qui l'envoie collée à son `end_audio`. Une prise non retenue par la décision
     // (écho d'ORION, bruit ambiant pendant qu'il répond) est simplement écrasée par la
@@ -247,17 +166,26 @@ const App: React.FC = () => {
    * contexte d’exécution qui autorise le navigateur à démarrer l’audio.
    */
   const armMicrophone = useCallback(() => {
-    unlockSpeech();      // débloque aussi la synthèse vocale, soumise à la même règle
+    if (micArmedRef.current) return;
+    micArmedRef.current = true;
     setMicArme(true);
     setVoiceError(null);
-  }, [unlockSpeech]);
+    console.log('[App] Micro armé par le premier geste');
+  }, []);
+
+  // Le clavier compte comme geste : sans ça, qui ouvre la saisie au clavier resterait muet.
+  useEffect(() => {
+    if (micArmed) return;
+    const surPremiereTouche = () => armMicrophone();
+    window.addEventListener('keydown', surPremiereTouche, { once: true });
+    return () => window.removeEventListener('keydown', surPremiereTouche);
+  }, [micArmed, armMicrophone]);
 
   const handleOpenInput = useCallback(() => {
-    unlockSpeech(); // Déverrouillle TTS dès le premier tap
     setIsInputVisible(true);
-  }, [unlockSpeech]);
+  }, []);
   const handleCloseInput = useCallback(() => setIsInputVisible(false), []);
-  const handleOpenSettings = useCallback(() => setIsSettingsOpen(true), []);
+  const handleOpenSettings = useCallback(() => setActiveOverlay('settings'), []);
 
   // ── Passive listening (ref-based to avoid re-render loops) ─────────────────────
   const startPassiveListeningRef = useRef<() => Promise<void>>(undefined);
@@ -267,7 +195,7 @@ const App: React.FC = () => {
     }
     console.log('[App] startPassiveListening → démarrage VAD');
     try {
-      audioBlobRef.current = null;
+      hasCapturedAudioRef.current = false;
       await startVAD();
       isPassiveListeningRef.current = true;
       setVoiceError(null);
@@ -292,7 +220,6 @@ const App: React.FC = () => {
   const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic, isPlayingRef } = useVoiceWS({
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
-      voiceWSResponseRef.current = true; // Mark: this response comes from voice WS
       reset();
       setState('thinking');
       setStreaming(true);
@@ -315,20 +242,16 @@ const App: React.FC = () => {
     },
     onLLMDone: (fullText) => {
       console.log('[App] LLM done:', fullText.substring(0, 60) + '...');
-      // Keep isStreaming=true until TTS finishes — text stays "live" while ORION speaks
-      // setStreaming(false) will be called by onOrionSpeaking(false) via isTurnActive
-      spokenUpToRef.current = fullText.length;
+      // isStreaming reste vrai jusqu'a la fin de la lecture : le texte demeure « vivant »
+      // pendant qu'ORION parle. C'est onOrionSpeaking(false) qui le fige.
     },
     onOrionSpeaking: (speaking) => {
       if (speaking) {
         setState('responding');
-        setIsTTSSpeaking(true);
-        setStreaming(true); // Keep text in "streaming" mode during audio playback
+        setStreaming(true); // Le texte reste « en cours » pendant la lecture audio
       } else {
         setState('idle');
-        setIsTTSSpeaking(false);
-        setStreaming(false); // Text locks when ORION finishes speaking
-        voiceWSResponseRef.current = false;
+        setStreaming(false); // Il se fige quand ORION a fini de parler
       }
     },
     onAmplitude: () => {
@@ -371,7 +294,7 @@ const App: React.FC = () => {
   // fonctionnelle — ni l'un ni l'autre n'est garanti sur un téléphone en haut-parleur.
   const bargeInThreshold = 0.04;
   useEffect(() => {
-    const orionEmet = isPlayingRef.current || window.speechSynthesis?.speaking;
+    const orionEmet = isPlayingRef.current;
 
     if (isSpeaking && isTurnActive && !orionEmet && amplitudeRef.current > bargeInThreshold) {
       console.log('[App] Barge-in: interruption du tour ORION (amp:', amplitudeRef.current.toFixed(3), ')');
@@ -380,7 +303,7 @@ const App: React.FC = () => {
       // l'écho qu'elle est presque toujours.
       bargeInDeclaredRef.current = true;
       interrupt();
-      audioBlobRef.current = null; // Discard echo audio
+      hasCapturedAudioRef.current = false; // Discard echo audio
     }
   }, [isSpeaking, isTurnActive, interrupt]); // amplitudeRef is a ref — not a dep
 
@@ -404,7 +327,7 @@ const App: React.FC = () => {
     if (takeStartedDuringTurnRef.current && !bargeInDeclaredRef.current) {
       console.log('[App] Prise écartée — écho d\'ORION');
       takeStartedDuringTurnRef.current = false;
-      audioBlobRef.current = null;
+      hasCapturedAudioRef.current = false;
       return;
     }
     takeStartedDuringTurnRef.current = false;
@@ -413,9 +336,9 @@ const App: React.FC = () => {
     isProcessingVoiceRef.current = true;
     setState('thinking');
 
-    // Le déclencheur doit être un FRONT : laissé non-nul, il repart dès que `isTurnActive`
+    // Le déclencheur doit être un FRONT : laissé vrai, il repart dès que `isTurnActive`
     // retombe et ORION répond au bruit ambiant.
-    audioBlobRef.current = null;
+    hasCapturedAudioRef.current = false;
 
     // L'ordre d'émission du WebSocket garantit que la prise arrive avant l'ordre qui la consomme.
     chunksRef.current += 1;
@@ -432,7 +355,6 @@ const App: React.FC = () => {
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
-    voiceWSResponseRef.current = false; // Text input → allow Web Speech TTS
     reset();
     setState('thinking');
     try {
@@ -458,14 +380,9 @@ const App: React.FC = () => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
 
       switch (e.key.toLowerCase()) {
-        case 'm': setIsMemoryOpen(v => !v); break;
-        case 'b': setIsBriefingOpen(v => !v); break;
-        case 'escape':
-          setIsMemoryOpen(false);
-          setIsBriefingOpen(false);
-          setIsSettingsOpen(false);
-          setIsDeferredOpen(false);
-          break;
+        case 'm': setActiveOverlay(v => (v === 'memory' ? null : 'memory')); break;
+        case 'b': setActiveOverlay(v => (v === 'briefing' ? null : 'briefing')); break;
+        case 'escape': setActiveOverlay(null); break;
       }
     };
     window.addEventListener('keydown', onKey);
@@ -503,10 +420,9 @@ const App: React.FC = () => {
   useEffect(() => {
     if (
       !isSpeaking && // Fin de parole détectée
-      audioBlobRef.current && // Audio prêt
+      hasCapturedAudioRef.current && // Audio prêt
       !isInputVisible &&
       !isTurnActive && // Don't start new turn while ORION is responding (echo protection)
-      !window.speechSynthesis?.speaking && // Don't trigger during Web Speech TTS (notifs, etc.)
       isPassiveListeningRef.current &&
       !isProcessingVoiceRef.current
     ) {
@@ -558,37 +474,23 @@ const App: React.FC = () => {
     }
   }, [lastNotification, refreshDeferred]);
 
+  // ── ÉCHELLE DES PLANS, et elle n'a qu'un seul endroit ────────────────────────
+  //   z-0   la scène 3D
+  //   z-10  l'ambiance (indice d'état vocal)
+  //   z-20  ce qui reste affiché : boutons, badges, bande d'outils, notification
+  //   z-30  les surfaces modales — UNE SEULE ouverte à la fois
+  //   z-40  le voile de la saisie
+  //   z-50  la saisie elle-même, et la panne micro qui doit passer devant tout
+  //
+  // Les quatre overlays partageaient z-30 AVEC la bande d'outils et la notification, qui
+  // passaient donc par-dessus un panneau ouvert. À égalité, c'est l'ordre du DOM qui tranche.
   return (
     <div
       className="fixed inset-0 overflow-hidden bg-orion-darker"
+      onPointerDown={armMicrophone}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Voile d’armement du micro.
-
-          Tant qu’aucun geste n’a eu lieu, le navigateur REFUSE la capture audio — en silence.
-          Plutôt que de tenter et d’échouer sans rien dire, on demande explicitement le geste.
-          C’est aussi ce qui débloque la synthèse vocale, soumise à la même règle. */}
-      {!micArmed && (
-        <button
-          onClick={armMicrophone}
-          className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-4
-                     bg-orion-darker/80 backdrop-blur-sm"
-        >
-          <span className="relative flex h-20 w-20 items-center justify-center rounded-full
-                           border border-cyan-400/40 text-3xl">
-            <span className="absolute inset-0 animate-ping rounded-full bg-cyan-400/10" />
-            🎙️
-          </span>
-          <span className="text-sm tracking-[0.2em] uppercase text-cyan-300/80">
-            Touche pour activer
-          </span>
-          <span className="max-w-[15rem] text-center text-[11px] leading-relaxed text-cyan-100/40">
-            Le navigateur exige un geste avant d’ouvrir le micro.
-          </span>
-        </button>
-      )}
-
       {/* Panne micro — affichée EN GRAND, au centre.
 
           Le message existait déjà, mais discret : « Écoute passive active » s’affichait juste
@@ -636,7 +538,7 @@ const App: React.FC = () => {
         <DeferredQueueBadge
           enAttente={deferredQueue.enAttente.length}
           aConfirmer={deferredQueue.aConfirmer.length}
-          onOpen={() => setIsDeferredOpen(true)}
+          onOpen={() => setActiveOverlay('deferred')}
         />
       )}
 
@@ -655,7 +557,6 @@ const App: React.FC = () => {
       <SlideInput
         isVisible={isInputVisible}
         onSubmit={handleSubmit}
-        onVoiceEnd={() => setState('idle')}
         onClose={handleCloseInput}
         disabled={entityState === 'thinking'}
         state={entityState}
@@ -670,7 +571,7 @@ const App: React.FC = () => {
       <div className="fixed top-4 left-4 z-20 flex gap-2">
         <button
           type="button"
-          onClick={() => setIsMemoryOpen(true)}
+          onClick={() => setActiveOverlay('memory')}
           title="Mémoire (M) — ou glisse vers le haut"
           className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
         >
@@ -678,7 +579,7 @@ const App: React.FC = () => {
         </button>
         <button
           type="button"
-          onClick={() => setIsBriefingOpen(true)}
+          onClick={() => setActiveOverlay('briefing')}
           title="Briefing (B) — ou glisse vers le bas"
           className="px-3 py-1.5 rounded-lg text-xs bg-black/40 backdrop-blur border border-white/10 text-white/70 hover:text-white hover:border-white/30 transition"
         >
@@ -686,13 +587,13 @@ const App: React.FC = () => {
         </button>
       </div>
 
-      {/* Overlays — z-30 */}
-      <MemoryOverlay isOpen={isMemoryOpen} onClose={() => setIsMemoryOpen(false)} />
-      <BriefingOverlay isOpen={isBriefingOpen} onClose={() => setIsBriefingOpen(false)} />
-      <SettingsOverlay isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+      {/* Overlays — z-30, et UN SEUL ouvert a la fois (cf. `activeOverlay`). */}
+      <MemoryOverlay isOpen={activeOverlay === 'memory'} onClose={closeOverlay} />
+      <BriefingOverlay isOpen={activeOverlay === 'briefing'} onClose={closeOverlay} />
+      <SettingsOverlay isOpen={activeOverlay === 'settings'} onClose={closeOverlay} />
       <DeferredQueueOverlay
-        isOpen={isDeferredOpen}
-        onClose={() => setIsDeferredOpen(false)}
+        isOpen={activeOverlay === 'deferred'}
+        onClose={closeOverlay}
         queue={deferredQueue}
       />
 
@@ -703,7 +604,7 @@ const App: React.FC = () => {
 
       {/* Notification proactive du daemon */}
       {lastNotification && !isInputVisible && (
-        <div className="absolute top-6 left-4 right-4 z-30 animate-fade-in">
+        <div className="absolute top-6 left-4 right-4 z-20 animate-fade-in">
           <div className={`rounded-xl px-4 py-3 backdrop-blur-md border ${
             lastNotification.priority === 'critical' ? 'bg-red-500/20 border-red-500/40 text-red-200' :
             lastNotification.priority === 'high' ? 'bg-orange-500/20 border-orange-500/40 text-orange-200' :

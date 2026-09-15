@@ -1,6 +1,6 @@
 # ORION — base de données de développement local.
 #
-# Pourquoi local et pas Supabase Cloud : le projet gratuit `niwciampfbwppjpufbnz` a été supprimé
+# Pourquoi local et pas Supabase Cloud : le projet gratuit precedent a ete supprime
 # après inactivité (NXDOMAIN le 2026-08-20) — un palier gratuit recommencera. Et ORION est un
 # assistant PERSONNEL qui pilote ce PC : sa mémoire n'a pas de raison d'être distante.
 #

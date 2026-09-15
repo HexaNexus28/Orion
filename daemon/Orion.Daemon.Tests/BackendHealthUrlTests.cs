@@ -16,9 +16,9 @@ namespace Orion.Daemon.Tests;
 public class BackendHealthUrlTests
 {
     [Theory]
-    [InlineData("wss://orion.shift-star.app/daemon", "https://orion.shift-star.app/api/health")]
+    [InlineData("wss://exemple.test/daemon", "https://exemple.test/api/health")]
     [InlineData("ws://localhost:5107/daemon", "http://localhost:5107/api/health")]
-    [InlineData("wss://orion.shift-star.app:8443/daemon", "https://orion.shift-star.app:8443/api/health")]
+    [InlineData("wss://exemple.test:8443/daemon", "https://exemple.test:8443/api/health")]
     public void BackendHealthUrl_DerivedFromWebSocketUrl(string ws, string attendu)
     {
         var options = new DaemonOptions { RenderWsUrl = ws };

@@ -27,8 +27,10 @@ Niveau   : Développeur avancé — pas d'explications basiques
           → Transport : ILLMAgentClient (LLMCascade : NIM -> Ollama local)
           → L'ORDRE du tableau de la cascade EST la politique de repli
 
-[RULE-02] Ne jamais utiliser ILLMClient / ILLMRouter pour du nouveau code
-          → Ancien chemin, SANS outils : ils ne portent pas de tool_call
+[RULE-02] L'ancien chemin LLM n'existe plus — ne pas le recreer
+          → ILLMClient / ILLMRouter / LLMRouter / OllamaClient ont ete SUPPRIMES
+          → Ils ne portaient pas de tool_call : les reintroduire rendrait ORION
+            incapable d'agir, en silence
 
 [RULE-03] Ne jamais exécuter une action Daemon sans whitelist check
           → DaemonActionValidator.cs, avant tout Process.Start
@@ -75,11 +77,14 @@ Niveau   : Développeur avancé — pas d'explications basiques
           → Endpoint: /api/proactivenotification/stream
           → Sérialisation camelCase obligatoire (JsonNamingPolicy.CamelCase)
 
-[RULE-14] Voice WebSocket: anti-écho obligatoire
-          → Endpoint: /ws/voice (full-duplex)
-          → voiceWSResponseRef bloque Web Speech TTS pendant pipeline WS
-          → Vérifier window.speechSynthesis.speaking avant trigger VAD
-          → Ne jamais activer Web Speech TTS et Kokoro TTS simultanément
+[RULE-14] UN SEUL chemin sonore par destination — c'est ça, l'anti-écho
+          → conversation : WAV du WebSocket /ws/voice, joués par AudioContext
+          → proactif : action `speak` du daemon, sur les haut-parleurs du PC
+          → Web Speech API est BANNIE. Elle passe par le moteur TTS du système,
+            hors de portée de l'annulation d'écho du navigateur : sa voix repart
+            dans le micro et ORION se ré-écoute. Aucun seuil ne ferme ça, il
+            n'existe pas de signal de référence pour l'en distinguer.
+          → ORION parle quand on lui PARLE. Le mode texte ne synthétise pas.
 
 [RULE-15] HologramResponsePanel: pur Three.js, zéro HTML
           → Texte via drei Text (SDF), pas via drei Html
@@ -308,8 +313,6 @@ Orion.Core/                       # Ne dépend de rien
 │   │   └── IBriefingAgent.cs
 │   ├── LLM/
 │   │   ├── ILLMAgentClient.cs    # chemin ACTUEL — streaming AVEC outils
-│   │   ├── ILLMClient.cs         # ancien chemin, SANS outils — ne pas réutiliser
-│   │   └── ILLMRouter.cs         # idem
 │   ├── Services/
 │   │   ├── IEmbeddingService.cs · IWhisperService.cs · IMemoryService.cs
 │   │   └── IChatService.cs · IBriefingService.cs · IAuditService.cs · IHealthService.cs
@@ -348,88 +351,81 @@ Orion.Data/
 ```
 
 ### Frontend
+
+Généré depuis le dépôt — si un fichier listé ici n'existe pas, c'est ce bloc qui a tort.
+
 ```
 frontend/src/
+├── App.tsx                       # SURFACE UNIQUE — pas de Router, pas de pages/
+├── main.tsx
 ├── algorithms/
-│   ├── vadProcessor.ts           # Voice Activity Detection (Phase 4)
-│   ├── audioAnalyser.ts          # Web Audio API → amplitude → entité
-│   ├── particleEngine.ts         # Canvas API — moteur particules fond vivant
-│   └── handTracker.ts            # MediaPipe — détection gestes mains (Phase 5)
-│                                  # 21 points par main, 30fps, 0 serveur
+│   └── handTracker.ts            # MediaPipe — gestes mains (Phase 5), 21 pts/main, 0 serveur
 ├── components/
-│   ├── entity/
-│   │   ├── OrionEntity.tsx       # Entité 3D centrale (Three.js)
-│   │   │                         # tap court=input | appui long=voix
-│   │   ├── EntityRings.tsx       # Anneaux 3D rotatifs
-│   │   ├── EntityCore.tsx        # Noyau qui pulse
-│   │   └── SoundWaves.tsx        # Ondes sonores mode voix
-│   ├── hologram/                 # Données holographiques 3D flottantes (Phase 5)
-│   │   ├── HologramCard.tsx      # Carte 3D flottante (Float + Billboard drei)
-│   │   ├── HologramText.tsx      # Texte 3D SDF dans l'espace
-│   │   ├── HologramChart.tsx     # Graphique 3D flottant
-│   │   ├── HologramResponsePanel.tsx  # Panneau réponse holographique
-│   │   │                              # Pure Three.js : GLSL shader, SDF Text,
-│   │   │                              # particules, wireframe, anneaux orbitaux
-│   │   └── index.ts              # Exports
-│   ├── response/
-│   │   ├── ResponseText.tsx      # Texte SSE mot par mot
-│   │   ├── DataFloat.tsx         # Orchestrateur données holographiques
-│   │   └── ToolCallHint.tsx      # Indicateur tool en cours
+│   ├── auth/
+│   │   ├── AuthGate.tsx          # Barriere : rien ne s'affiche sans session
+│   │   └── LoginScreen.tsx
+│   ├── canvas/
+│   │   ├── OrionCore3D.tsx       # Entite 3D centrale (Three.js)
+│   │   ├── Scene3D.tsx           # Scene @react-three/fiber
+│   │   └── index.ts
+│   ├── hologram/                 # Donnees holographiques 3D flottantes (Phase 5)
+│   │   ├── HologramCard.tsx
+│   │   ├── HologramChart.tsx
+│   │   ├── HologramText.tsx      # Texte 3D SDF
+│   │   ├── HologramResponsePanel.tsx  # GLSL shader, SDF Text, particules, anneaux
+│   │   ├── ResponseText3D.tsx    # Reponse streamee, dans la scene 3D
+│   │   └── index.ts
 │   ├── input/
-│   │   ├── SlideInput.tsx        # Input caché — slide up sur tap entité
-│   │   └── VoiceWave.tsx         # Onde amplitude enregistrement
+│   │   └── SlideInput.tsx        # Saisie CLAVIER uniquement — pas de micro (cf. RULE-14)
 │   ├── overlay/
 │   │   ├── MemoryOverlay.tsx     # Swipe up
 │   │   ├── BriefingOverlay.tsx   # Swipe down
-│   │   └── SettingsOverlay.tsx   # Double tap entité
-│   └── canvas/
-│       ├── ParticleCanvas.tsx    # Fond particules 2D
-│       └── Scene3D.tsx           # Scène Three.js principale (@react-three/fiber)
+│   │   ├── SettingsOverlay.tsx   # Double tap entite
+│   │   ├── DeferredQueueOverlay.tsx   # Ce qu'ORION fera au reveil du PC
+│   │   ├── DeferredQueueBadge.tsx     # Pastille compteur (meme source que l'overlay)
+│   │   ├── ToolActivityStrip.tsx      # Outil en cours
+│   │   └── VoiceStatusHint.tsx        # Etat du micro, en clair
+│   └── ui/
+│       └── HudZones.tsx
 ├── config/
-│   └── endpoints.ts
+│   └── endpoints.ts              # TOUTE route passe ici — jamais d'URL en dur
 ├── context/
 │   ├── EntityContext.tsx
-│   ├── OrionStatusContext.tsx
-│   └── ThemeContext.tsx
+│   ├── HudCardsContext.tsx
+│   └── OrionStatusContext.tsx
 ├── hooks/
-│   ├── useOrionEntity.ts
-│   ├── useAudioAmplitude.ts
-│   ├── useChat.ts
-│   ├── useStream.ts              # appendChunk/setStreaming pour WS + HTTP
-│   ├── useVoice.ts               # LEGACY — remplacé par useVoiceWS
-│   ├── useVoiceWS.ts             # Full-duplex WebSocket voice pipeline
-│   ├── useVAD.ts                 # @ricky0123/vad-web + PCM streaming
-│   ├── useGestures.ts            # tap, long press, swipe
+│   ├── useStream.ts              # SSE /api/chat/stream — texte
+│   ├── useVoiceWS.ts             # /ws/voice full-duplex — SEUL pipeline vocal
+│   ├── useVAD.ts                 # Silero v5 (@ricky0123/vad-web) + PCM 16 kHz
+│   ├── useGestureControl.ts      # tap, appui long, swipe
 │   ├── useHandTracking.ts        # MediaPipe Phase 5
-│   ├── useOrionNotifications.ts  # SSE proactive notifs + Web Speech TTS
-│   ├── usePushNotif.ts
-│   └── useOrionStatus.ts
+│   └── useOrionNotifications.ts  # SSE proactif → `speak` du daemon
+├── props/                        # Props de composants — JAMAIS inline
+│   ├── DeferredQueueBadge.props.ts
+│   ├── DeferredQueueOverlay.props.ts
+│   └── LoginScreen.props.ts
 ├── services/
-│   ├── api.ts                    # Axios instance centralisée
+│   ├── api.ts                    # Instance axios centralisee
+│   ├── authService.ts            # Session + billets de flux (60 s)
 │   ├── chatService.ts
 │   ├── memoryService.ts
-│   ├── toolsService.ts
+│   ├── toolService.ts
 │   ├── briefingService.ts
 │   ├── daemonService.ts
+│   ├── deferredService.ts
 │   ├── healthService.ts
-│   ├── voiceApi.ts               # LEGACY HTTP voice
-│   └── voiceWebSocket.ts         # WebSocket client /ws/voice
-├── types/
+│   └── voiceWebSocket.ts         # Client /ws/voice — SEUL client vocal
+├── types/                        # TypeScript strict — ni `any` ni `as unknown`
+│   ├── index.ts
 │   ├── api/apiResponse.ts
-│   ├── dto/
-│   │   ├── chatDto.ts
-│   │   ├── memoryDto.ts
-│   │   ├── briefingDto.ts
-│   │   ├── toolDto.ts
-│   │   └── voiceDto.ts
+│   ├── dto/                      # agent · briefing · chat · daemon · deferred
+│   │   └──                       # health · memory · tool · voice
 │   └── models/
 │       ├── entityState.ts        # 'idle'|'listening'|'thinking'|'responding'
 │       ├── message.ts
 │       └── orionStatus.ts
 └── utils/
-    ├── animationUtils.ts
-    ├── audioUtils.ts
-    └── dateUtils.ts
+    └── animationUtils.ts
 # Pas de pages/ — surface unique, overlays uniquement
 # App.tsx = surface unique sans Router
 ```
@@ -521,8 +517,8 @@ memory/
 // le fournisseur : `ollama list` ne prouve rien.
 ```
 
-⚠️ `ILLMClient` / `ILLMRouter` existent encore mais sont l'**ancien chemin, SANS outils**. Ils ne
-portent pas de `tool_call`. Aucun nouveau développement ne doit les utiliser (RULE-02).
+⚠️ `ILLMClient` / `ILLMRouter` ont été **supprimés du dépôt**. Ils ne portaient pas de
+`tool_call` : les recréer rendrait ORION incapable d'agir, sans que rien ne le signale (RULE-02).
 
 ### ITool — quatre membres, trois décisions
 
@@ -1137,7 +1133,7 @@ Phase 4 — Voix ✅
   [x] VAD @ricky0123/vad-web + PCM streaming
   [x] WebSocket /ws/voice full-duplex bidirectionnel
   [x] Barge-in (interrupt + CancellationToken)
-  [x] Anti-écho (voiceWSResponseRef + speechSynthesis.speaking)
+  [~] Anti-écho par seuils          → remplacé : Web Speech RETIRÉE (la cause)
   [x] ConversationAgent: PrepareStreamAsync + StreamLLMAsync
 
 Phase 5 — 3D holographique + gestes 🚧 EN COURS

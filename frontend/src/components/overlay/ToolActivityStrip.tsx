@@ -20,7 +20,7 @@ export const ToolActivityStrip = ({ tools }: ToolActivityStripProps) => {
   if (tools.length === 0) return null;
 
   return (
-    <div className="absolute top-20 left-4 right-4 z-30 flex flex-col gap-1.5 pointer-events-none">
+    <div className="absolute top-20 left-4 right-4 z-20 flex flex-col gap-1.5 pointer-events-none">
       {tools.map((activity, index) => (
         <div
           key={`${activity.tool}-${index}`}

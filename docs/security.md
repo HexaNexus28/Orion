@@ -117,8 +117,8 @@ les documents de travail, **pas** `C:\Users\<toi>`, qui contient `.ssh`, les coo
 plutôt que sur le cas passant : remontée par `..`, racine voisine au nom plus long, casse, nom
 sensible enfoui, racine de volume, entrée blanche dans la liste.
 
-**Ce que ça ne couvre pas** : `write_file` (C2) partage le même besoin mais n'est pas encore câblé
-sur `PathScope` — il reste protégé par la seule confirmation.
+`write_file` partage le même besoin et a été câblé dans la foulée, sur une liste **distincte** —
+voir C2 juste en dessous.
 
 ---
 

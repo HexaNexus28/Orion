@@ -3,6 +3,15 @@
 > Document de diagnostic. Établi par lecture du code + builds réels, pas par lecture de la doc.
 > Toute affirmation ici est adossée à un `fichier:ligne`.
 
+⚠️ **INSTANTANÉ DATÉ — ne pas lire comme l'état courant.** Ce document décrit le dépôt **au moment
+du diagnostic** (dernier commit analysé : `5cf070b`). Les `fichier:ligne` ne pointent plus au bon
+endroit, et plusieurs symboles cités ont depuis été supprimés — `useChat`, `useVoice`, `LLMRouter`,
+`OllamaClient`, `ILLMClient`, `IMemoryAgent`, `IToolAgent`.
+
+C'est voulu : **la valeur de ce fichier est le diagnostic, pas l'inventaire.** Il explique POURQUOI
+ORION ne tenait pas debout. Le corriger au fil des commits effacerait justement ce qu'il documente.
+Pour l'état courant, voir [`architecture.md`](architecture.md) et [`roadmap.md`](roadmap.md).
+
 ## 0. Mesures d'entrée (état réel, pas déclaré)
 
 | Mesure | Résultat |
@@ -113,8 +122,8 @@ la mémoire projet annoncent un modèle frontier. Chaque tour paie en plus un al
 Aucun log ne dit « ton modèle principal est inaccessible » — juste un `LogWarning` noyé.
 
 **1.12 — Le matériel ne permet pas de compenser en local.**
-Mesuré sur cette machine : **15,7 Go RAM** (2,6 Go libres au moment du test), GPU **Intel Iris Xe
-intégré, 2 Go de VRAM partagée** — pas de GPU dédié. Inférence CPU.
+Mesuré sur la machine de développement : **~16 Go de RAM**, un GPU **intégré sans VRAM dédiée** —
+donc pas de GPU exploitable pour l'inférence. Tout tourne en CPU.
 
 Débit réel mesuré, modèle déjà chargé (`llama3.2:3b`) :
 **140 tokens en 16,8 s → ≈ 8 tokens/seconde.**
@@ -137,7 +146,8 @@ Ce que ça implique, chiffré :
 | Réponse de 3 phrases | ~17 s | **102 s** |
 
 **4,3× plus lent** — pire que l'estimation prudente de 3 tokens/s. Une seule réponse courte prend
-plus d'une minute et demie. Le VPS IONOS (16 Go, sans GPU) ne change rien à ce plafond.
+plus d'une minute et demie. Un VPS sans GPU ne change rien à ce plafond : c'est la bande passante
+mémoire qui borne, pas la quantité de RAM.
 
 > **Conclusion 1bis** : le cerveau de Jarvis ne peut pas être local sur ce matériel.
 > Ce n'est pas un avis, c'est une mesure.
@@ -176,10 +186,10 @@ La panne est **intermittente et dépend de ce qui tourne à côté**, ce qui la 
 attribuer. Corrigé : `NumCtx` (8192) désormais obligatoire et envoyé à chaque appel.
 
 **1.15 — La base de données d'ORION n'existe plus.**
-`db.niwciampfbwppjpufbnz.supabase.co` → **NXDOMAIN**, API REST injoignable (`status=000`).
-Le projet Supabase a disparu — comportement attendu du palier gratuit après une longue inactivité
-(dernier commit produit : 2026-06-05). Conséquence : `PrepareStreamAsync` renvoie
-`503 Base de donnees inaccessible` et **aucun tour de conversation ne peut aboutir en HTTP**.
+L'hôte `db.<ref-projet>.supabase.co` → **NXDOMAIN**, API REST injoignable (`status=000`).
+Le projet Supabase a disparu — comportement attendu du palier gratuit après une longue inactivité.
+Conséquence : `PrepareStreamAsync` renvoie `503 Base de donnees inaccessible` et **aucun tour de
+conversation ne peut aboutir en HTTP**.
 C'est le dernier verrou avant le e2e complet — et une décision d'hébergement, pas un bug.
 
 **1.16 — Le daemon renvoyait ses erreurs à une adresse inexistante.**
@@ -246,7 +256,7 @@ Un Jarvis tient sur trois piliers. État réel :
 | Pilier | Attendu | État ORION |
 |---|---|---|
 | **Agentivité** — décider et exécuter des actions en chaîne | boucle agent multi-tours | ❌ inexistante dans le chemin utilisé |
-| **Mémoire** — se souvenir sans qu'on le lui demande | écriture auto + consolidation | ❌ table vide par construction |
+| **Mémoire** — se souvenir sans qu'on le lui demande | écriture auto + consolidation | ✅ épisode à chaque tour + consolidation planifiée (corrigé le 2026-09-15 ; la table est restée vide bien après que J4 ait été déclaré fait) |
 | **Proactivité** — initier sans être sollicité | watchers → scoring → parole | ⚠️ watchers daemon présents, aucune boucle de décision |
 
 Le reste (voix, 3D, PWA, daemon, tools, 4 couches) est **du solide déjà payé**.
@@ -319,8 +329,10 @@ la boucle n'est pas branchée.
 
 ## 5. Dette annexe relevée (hors chemin critique)
 
-- `orionfix.md` / `frontfix.md` (32 Ko) : briefs Windsurf/Kimi périmés (Kimi K2 Moonshot en primary,
-  `Task.Delay(50)` de faux streaming). **Contredisent le code actuel** → à supprimer, pas à maintenir.
+- ~~`orionfix.md` / `frontfix.md` (32 Ko)~~ : **supprimés.** Briefs Windsurf/Kimi périmés (Kimi K2
+  Moonshot en primary, `Task.Delay(50)` de faux streaming, `useVoice.ts` qui n'existe plus) posés à
+  la racine d'un dépôt public. Ils contredisaient le code actuel : le premier fichier qu'un lecteur
+  ouvre ne doit pas décrire une architecture morte.
 - `docs/roadmap.md` : Phase 7 « Capacités Jarvis » listée après la 3D et la vision. **Inversion de
   priorité** — l'agentivité est la fondation, pas la cerise.
 - README annonce « fallback Claude », « ConversationAgent → MemoryAgent → ToolAgent », « 33 tests » :

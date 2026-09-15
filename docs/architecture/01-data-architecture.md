@@ -169,7 +169,7 @@ Log d'audit pour traçabilité complète.
 
 ## Schéma SQL
 
-Voir [memory/schema.sql](../memory/schema.sql) pour le script complet.
+Voir [memory/schema.sql](../../memory/schema.sql) pour le script complet.
 
 Points clés :
 - Extension `pgvector` pour les embeddings

@@ -299,8 +299,7 @@ public class VoiceWebSocketHandler
             // ── Step 3: Stream LLM + TTS (sentence-level pipelining) ──
             var sentenceBuffer = new StringBuilder();
             var fullResponse = new StringBuilder();
-            var ttsTasks = new List<Task>(); // Pipeline: TTS runs in parallel with LLM stream
-            var isFirstChunk = true;
+            var ttsTasks = new List<Task>(); // Pipeline : la synthese tourne pendant que le modele ecrit
 
             await foreach (var evt in conversationAgent.StreamLLMAsync(streamContext, turnToken))
             {
@@ -349,11 +348,23 @@ public class VoiceWebSocketHandler
                     var trimmed = sentence.Trim();
                     if (trimmed.Length >= 3)
                     {
-                        // Pipeline: fire TTS without awaiting (but await before sending next)
+                        // La synthese precedente doit etre FINIE avant de lancer la suivante :
+                        // les WAV partent dans l'ordre ou ils sont produits, et le navigateur les
+                        // joue dans l'ordre d'arrivee. Deux syntheses en vol se doubleraient.
                         if (ttsTasks.Count > 0) await Task.WhenAll(ttsTasks);
                         ttsTasks.Clear();
                         ttsTasks.Add(SynthesizeAndSendAsync(trimmed, voiceNotification, turnToken));
-                        if (isFirstChunk) { await Task.WhenAll(ttsTasks); ttsTasks.Clear(); isFirstChunk = false; }
+
+                        // L'ATTENTE SUPPLEMENTAIRE SUR LE PREMIER MORCEAU A ETE RETIREE.
+                        //
+                        // Elle bloquait la boucle de streaming du modele jusqu'a ce que la
+                        // premiere phrase soit synthetisee ET envoyee. Or elle n'avancait pas
+                        // d'une milliseconde le moment ou l'utilisateur entend cette premiere
+                        // phrase : la synthese demarre au meme instant dans les deux cas. Elle
+                        // retardait seulement la GENERATION de la deuxieme phrase, donc tout le
+                        // reste de la reponse.
+                        //
+                        // L'ordre reste garanti par l'attente ci-dessus, qui suffit a elle seule.
                     }
                     sentenceBuffer.Clear();
                 }

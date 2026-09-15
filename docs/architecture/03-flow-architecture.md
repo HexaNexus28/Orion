@@ -1,46 +1,57 @@
 # ORION - Flux et Séquences
 
-## Diagramme de Séquence - Requête Chat
+## Diagramme de Séquence — Requête Chat (streamée, avec outils)
+
+Le flux réel est **streamé et agentique** : la réponse part token par token, et le modèle peut
+décider d'appeler un outil au milieu. Une séquence « requête → réponse complète » ne décrirait
+plus rien de ce qui se passe.
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant ChatController
-    participant ChatService
     participant ConversationAgent
-    participant LLMRouter
-    participant OllamaClient
+    participant IEmbeddingService
+    participant AgentLoop
+    participant LLMCascade
+    participant IToolInvoker
+    participant IMemoryService
     participant UnitOfWork
-    participant Supabase
 
-    Client->>ChatController: POST /api/chat {message}
-    ChatController->>ChatService: SendMessageAsync(request)
-    ChatService->>ConversationAgent: ProcessAsync(request)
-    
-    ConversationAgent->>UnitOfWork: Conversations.GetByIdAsync()
-    UnitOfWork->>Supabase: SELECT conversation
-    Supabase-->>UnitOfWork: Conversation
-    UnitOfWork-->>ConversationAgent: Conversation
-    
-    ConversationAgent->>LLMRouter: CompleteAsync(prompt)
-    LLMRouter->>OllamaClient: IsAvailable()
-    OllamaClient-->>LLMRouter: true
-    
-    LLMRouter->>OllamaClient: POST /api/chat
-    OllamaClient->>Supabase: (Ollama local)
-    Supabase-->>OllamaClient: response
-    OllamaClient-->>LLMRouter: LLMResponse
-    LLMRouter-->>ConversationAgent: ApiResponse~LLMResponse~
-    
-    ConversationAgent->>UnitOfWork: Messages.AddAsync()
-    ConversationAgent->>UnitOfWork: SaveChangesAsync()
-    UnitOfWork->>Supabase: INSERT message
-    Supabase-->>UnitOfWork: OK
-    
-    ConversationAgent-->>ChatService: ApiResponse~ChatResponse~
-    ChatService-->>ChatController: ApiResponse~ChatResponse~
-    ChatController-->>Client: 200 + response
+    Client->>ChatController: POST /api/chat/stream {message}
+    ChatController->>ConversationAgent: StreamAsync(request, ct)
+
+    Note over ConversationAgent,IEmbeddingService: Contexte — souvenirs proches de la demande
+    ConversationAgent->>IEmbeddingService: EmbedAsync(userMessage)
+    IEmbeddingService-->>ConversationAgent: vecteur
+    ConversationAgent->>UnitOfWork: Memory.SearchAsync(vecteur)
+    UnitOfWork-->>ConversationAgent: souvenirs
+
+    ConversationAgent->>AgentLoop: RunAsync(request, invokeTool, ct)
+
+    loop Tant que le modèle demande un outil
+        AgentLoop->>LLMCascade: StreamAsync(request, tools, ct)
+        Note over LLMCascade: NIM d'abord, Ollama local en repli
+        LLMCascade-->>AgentLoop: tokens / tool_call
+        AgentLoop->>IToolInvoker: InvokeAsync(nom, args, ct)
+        Note over IToolInvoker: SEUL point qui exécute, diffère (PC éteint) ou REFUSE
+        IToolInvoker-->>AgentLoop: ToolOutcome
+    end
+
+    AgentLoop-->>ConversationAgent: AgentEvent (Token, ToolCall, …)
+    ConversationAgent-->>ChatController: AgentEvent
+    ChatController-->>Client: SSE data: … (au fil de l'eau)
+
+    Note over ConversationAgent,IMemoryService: Après le tour — la trace, jamais avant
+    ConversationAgent->>UnitOfWork: Messages.AddAsync() + SaveChangesAsync()
+    ConversationAgent->>IMemoryService: SaveMemoryAsync(épisode, Episode)
 ```
+
+Deux invariants se lisent directement sur ce diagramme :
+
+- **Aucune flèche ne va d'un agent vers un client LLM.** Tout passe par `AgentLoop`.
+- **Aucune flèche ne va d'un agent vers un outil.** Tout passe par `IToolInvoker` — c'est là, dans
+  le code et APRÈS la décision du modèle, que vit le garde-fou. Pas dans une phrase du prompt.
 
 ---
 
@@ -51,75 +62,90 @@ flowchart TB
     subgraph "Presentation Layer (API)"
         C[ChatController]
         H[HealthController]
+        V["VoiceWebSocketHandler<br/>/ws/voice"]
     end
-    
+
     subgraph "Application Services (Business)"
         CS[ChatService]
         LS[LLMService]
         MS[MemoryService]
-        TS[ToolService]
         BS[BriefingService]
         AS[AuditService]
     end
-    
+
     subgraph "Agents (Business Internals)"
         CA[ConversationAgent]
-        MA[MemoryAgent]
-        TA[ToolAgent]
-        LR[LLMRouter]
-        OC[OllamaClient]
-        AC[AnthropicClient]
+        BA[BriefingAgent]
+        AL[AgentLoop]
+        TI["ToolInvoker<br/>execute | differe | REFUSE"]
+        TR[ToolRegistry]
+        LC[LLMCascade]
+        NIM[NimAgentClient]
+        OAC[OllamaAgentClient]
     end
-    
+
     subgraph "Domain Layer (Core)"
         E[Entities]
         D[DTOs]
         I[Interfaces]
     end
-    
+
     subgraph "Infrastructure Layer (Data)"
         UoW[UnitOfWork]
         R[Repositories]
         DB[OrionDbContext]
     end
-    
+
     subgraph "External"
+        NV[NVIDIA NIM]
         OLL[Ollama Local]
-        ANT[Anthropic API]
         SUP[Supabase/pgvector]
+        DAE[Daemon Windows]
     end
-    
+
     C --> CS
+    V --> CA
     H --> LS
     CS --> CA
-    LS --> LR
-    MS --> MA
-    TS --> TA
-    CA --> LR
+    LS --> LC
+    MS --> UoW
+    BS --> BA
+    CA --> AL
+    BA --> AL
+    CA --> MS
     CA --> UoW
-    LR --> OC
-    LR --> AC
-    OC --> OLL
-    AC --> ANT
+    AL --> LC
+    AL --> TI
+    TI --> TR
+    TI --> DAE
+    LC --> NIM
+    LC --> OAC
+    NIM --> NV
+    OAC --> OLL
     UoW --> R
     R --> DB
     DB --> SUP
-    
+
     CS -.-> I
     LS -.-> I
     CA -.-> I
-    LR -.-> I
+    AL -.-> I
     UoW -.-> I
     R -.-> E
 ```
 
+⚠️ **Ce diagramme a longtemps montré `MemoryAgent`, `ToolAgent` et `AnthropicClient`.** Aucun des
+trois n'a jamais existé dans le dépôt. Un schéma qui invente des classes est pire qu'un schéma
+absent : on cherche le fichier, on ne le trouve pas, et on conclut qu'on a mal lu.
+
 ### Flux de données
 
-1. **Controller** reçoit la requête HTTP
+1. **Controller / WebSocket** reçoit la requête
 2. **Service** orchestre la logique métier
-3. **Agent** exécute la logique spécifique (LLM, mémoire, tools)
-4. **Repository** persiste les données
-5. **External** (Ollama/Anthropic/Supabase) fournit les ressources
+3. **Agent** construit le contexte (souvenirs, profil, prompt) et délègue à `AgentLoop`
+4. **AgentLoop** est le SEUL à parler au modèle ; **ToolInvoker** le seul à exécuter un outil
+5. **Repository** persiste les données
+6. **External** (NIM → Ollama en cascade, Supabase, daemon) fournit les ressources
 
 ---
 
@@ -215,9 +241,11 @@ public class ToolResult
 Orion.Core/
 ├── DTOs/
 │   ├── Internal/           ← DTOs Business uniquement
-│   │   └── LLM/
-│   │       ├── OllamaResponse.cs
-│   │       └── AnthropicResponse.cs
+│   │   ├── LLM/
+│   │   │   ├── OllamaResponse.cs
+│   │   │   └── LLMToolCall.cs
+│   │   └── Tools/
+│   │       └── ToolInvocationContext.cs
 │   ├── Requests/           ← Entrées API
 │   │   ├── ChatRequest.cs
 │   │   └── LLMRequest.cs
@@ -233,14 +261,19 @@ Orion.Business/
 ├── Services/              ← Interface avec API
 │   ├── ChatService.cs
 │   ├── LLMService.cs
-│   └── MemoryService.cs
+│   ├── MemoryService.cs
+│   ├── MemoryConsolidator.cs
+│   └── AuditService.cs
 ├── Agents/                ← Logique interne
+│   ├── AgentLoop.cs       ← SEUL à parler au modèle
 │   ├── ConversationAgent.cs
-│   ├── MemoryAgent.cs
-│   └── ToolAgent.cs
+│   └── BriefingAgent.cs
+├── Tools/                 ← ITool + ToolInvoker (exécute | diffère | REFUSE)
 └── LLM/
-    ├── OllamaClient.cs
-    └── AnthropicClient.cs
+    ├── LLMCascade.cs      ← NIM d'abord, Ollama en repli
+    ├── NimAgentClient.cs
+    ├── OllamaAgentClient.cs
+    └── PromptBuilder.cs
 ```
 
 ### API - Controllers
@@ -250,6 +283,9 @@ Orion.Api/
 ├── Controllers/           ← Uniquement Services ici
 │   ├── ChatController.cs  (IChatService)
 │   └── HealthController.cs (ILLMService)
+├── WebSockets/
+│   └── VoiceWebSocketHandler.cs   ← /ws/voice full-duplex
+├── Services/              ← BackgroundService (briefing, consolidation)
 └── Middleware/
     └── ErrorHandlingMiddleware.cs
 ```
@@ -261,7 +297,7 @@ Orion.Api/
 1. **Controllers** → injectent uniquement des **Services**
 2. **Services** → orchestrent les **Agents** et **Repositories**
 3. **Agents** → logique métier spécifique (LLM, mémoire, tools)
-4. **Clients LLM** → communiquent avec Ollama/Anthropic
+4. **Clients LLM** → communiquent avec NIM puis Ollama, en cascade
 5. **Repositories** → accès données via EF Core
 
 ### Anti-patterns à éviter

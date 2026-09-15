@@ -41,15 +41,18 @@ export const ENDPOINTS = {
     history: '/api/briefing/history',
   },
 
-  // VoiceController - api/voice (HTTP legacy)
+  // VoiceController - api/voice
+  //
+  // Primitives HTTP UNITAIRES. Elles ne forment PAS un pipeline : la conversation vocale passe
+  // entierement par voiceWS ci-dessous. `/api/voice/converse` — un second pipeline complet,
+  // half-duplex, plus appele par personne — a ete supprime du backend.
   voice: {
     transcribe: '/api/voice/transcribe',
     synthesize: '/api/voice/synthesize',
     status: '/api/voice/status',
-    converse: '/api/voice/converse',     // POST — legacy half-duplex pipeline
   },
 
-  // WebSocket Voice — full-duplex pipeline (replaces /converse)
+  // WebSocket Voice — SEUL pipeline conversationnel vocal (full-duplex, barge-in)
   voiceWS: '/ws/voice',
 
   // DeferredActionsController - api/deferred-actions

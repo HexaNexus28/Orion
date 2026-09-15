@@ -8,7 +8,11 @@ namespace Orion.Api.Services;
 
 /// <summary>
 /// Déclenche automatiquement le briefing matinal à 8h chaque jour.
-/// Broadcast via SSE → frontend lit à voix haute via TTS Kokoro/Web Speech.
+/// Broadcast via SSE → le frontend AFFICHE le briefing ; il ne le lit pas.
+///
+/// Le briefing arrive quand il arrive, pas quand on parle à ORION. Le faire parler seul supposait
+/// l'application ouverte et le son autorisé — deux conditions rarement réunies à 8h. La voix
+/// proactive passe désormais par le `speak` du daemon (cf. useOrionNotifications.ts).
 /// </summary>
 public class BriefingScheduler : BackgroundService
 {

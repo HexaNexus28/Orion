@@ -83,15 +83,6 @@ export type {
 // =============================================================================
 // COMPONENT PROPS
 // =============================================================================
-export interface OrionEntityProps {
-  state: OrionState;
-  amplitude?: number;
-  onTap?: () => void;
-  onLongPress?: () => void;
-  onLongPressEnd?: () => void;
-  onDoubleTap?: () => void;
-}
-
 export interface VoiceStatusHintProps {
   state: OrionState;
   isListening: boolean;
@@ -105,17 +96,9 @@ export interface ToolActivityStripProps {
   tools: ToolActivity[];
 }
 
-export interface ResponseTextProps {
-  text: string;
-  isStreaming?: boolean;
-  speed?: 'slow' | 'normal' | 'fast';
-}
-
 export interface SlideInputProps {
   isVisible: boolean;
   onSubmit: (text: string) => void;
-  onVoiceStart?: () => void;
-  onVoiceEnd?: (transcript: string) => void;
   disabled?: boolean;
   state: OrionState;
   onClose: () => void;
