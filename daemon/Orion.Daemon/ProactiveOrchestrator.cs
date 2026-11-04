@@ -51,7 +51,7 @@ public class ProactiveOrchestrator
 
         // Dériver l'URL HTTP depuis l'URL WebSocket
         // ws://localhost:5107/daemon  → http://localhost:5107
-        // wss://orion-api.onrender.com/daemon → https://orion-api.onrender.com
+        // wss://example.com/daemon → https://example.com
         _backendHttpUrl = daemonOptions.RenderWsUrl
             .Replace("wss://", "https://")
             .Replace("ws://", "http://")

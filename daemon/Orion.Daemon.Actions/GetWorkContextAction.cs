@@ -16,7 +16,7 @@ namespace Orion.Daemon.Actions;
 /// ProcessWatcher connaissait déjà l'application active, mais ne remontait que son nom de
 /// processus : « Code ». ORION savait donc que l'utilisateur codait, sans savoir sur quoi.
 ///
-/// Le titre de fenêtre change cela : « useVAD.ts - ShiftCore - Visual Studio Code » donne le
+/// Le titre de fenêtre change cela : « useVAD.ts - mon-projet - Visual Studio Code » donne le
 /// fichier ET le projet. À partir de là ORION peut lire le bon diff, lancer les tests du bon
 /// dépôt, proposer le bon message de commit. C'est la différence entre un indicateur d'activité
 /// et un assistant qui travaille avec toi.

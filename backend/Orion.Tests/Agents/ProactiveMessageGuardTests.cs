@@ -31,7 +31,7 @@ public class ProactiveMessageGuardTests
     [InlineData("Ton CPU tourne à 97 % depuis deux minutes.")]
     [InlineData("Le backend ne répond plus depuis cinq minutes.")]
     [InlineData("Trois heures de travail continu, une pause serait raisonnable.")]
-    [InlineData("Le dépôt ShiftCore a douze commits non poussés.")]
+    [InlineData("Le dépôt mon-projet a douze commits non poussés.")]
     [InlineData("Il est 23 h passées.")]
     public void PromisesAction_PlainStatement_IsAccepted(string message)
     {

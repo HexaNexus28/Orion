@@ -45,4 +45,4 @@ Si le LLM est indisponible, l'orchestrateur utilise un message de repli.
 | `POST /api/proactivenotification/notify` | diffuse une notification |
 | `POST /api/proactivenotification/trigger` | génère un message à partir d'un signal |
 | `GET /api/proactivenotification/weights` | pénalités apprises |
-| `POST /api/proactivenotification/action` | retour sur une notification |
+| `POST /api/proactivenotification/action` | transmet une action au daemon |

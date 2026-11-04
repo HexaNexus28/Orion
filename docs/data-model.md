@@ -47,4 +47,5 @@ Changer de modèle impose `POST /api/memory/revectorize`.
 
 ## Migrations
 
-Voir [memory/migrations/README.md](../memory/migrations/README.md).
+Les fichiers `memory/migrations/NNN_description.sql` s'appliquent dans l'ordre, après
+`memory/schema.sql`. Une nouvelle table active RLS, et les clés d'API restent hors de la base.

@@ -196,11 +196,11 @@ public class PromptBuilderTests
     public void Build_ProfileAndMemories_Injected()
     {
         var prompt = Build(
-            profile: new Dictionary<string, string> { ["name"] = "Alex", ["role"] = "Fondateur" },
+            profile: new Dictionary<string, string> { ["name"] = "Alex", ["role"] = "Developpeur" },
             memories: new List<MemoryVector> { new() { Content = "Prefere les reponses courtes" } });
 
         Assert.Contains("assistant IA personnel de Alex", prompt);
-        Assert.Contains("role : Fondateur", prompt);
+        Assert.Contains("role : Developpeur", prompt);
         Assert.Contains("CE DONT TU TE SOUVIENS", prompt);
         Assert.Contains("Prefere les reponses courtes", prompt);
     }

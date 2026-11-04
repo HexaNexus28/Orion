@@ -86,18 +86,17 @@ Actions sans outil associé : `open_file`, `launch_claude`, `proactive_deferred`
 
 ## Créer un outil
 
-1. Ajouter le contrat dans `tools/definitions/{tool_name}.json`.
-2. Implémenter `ITool` dans `Orion.Business/Tools/{Catégorie}/`.
-3. Enregistrer le type concret, puis `ITool`, dans `Program.cs` :
+1. Implémenter `ITool` dans `Orion.Business/Tools/{Catégorie}/`.
+2. Enregistrer le type concret, puis `ITool`, dans `Program.cs` :
 
    ```csharp
    builder.Services.AddScoped<MyTool>();
    builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MyTool>());
    ```
 
-4. Pour une action système, l'implémenter dans `Orion.Daemon.Actions` et ajouter son nom à
+3. Pour une action système, l'implémenter dans `Orion.Daemon.Actions` et ajouter son nom à
    `DaemonActionValidator`.
-5. Décider `IsDeferrable` et l'inscrire dans `ToolDeferrabilityTests`.
-6. Décider `IsDestructive`. En cas de doute, choisir `true`.
-7. Définir le périmètre si l'outil touche au disque, au réseau interne ou aux processus.
-8. Mettre à jour ce document.
+4. Décider `IsDeferrable` et l'inscrire dans `ToolDeferrabilityTests`.
+5. Décider `IsDestructive`. En cas de doute, choisir `true`.
+6. Définir le périmètre si l'outil touche au disque, au réseau interne ou aux processus.
+7. Mettre à jour ce document.

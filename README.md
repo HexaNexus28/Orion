@@ -67,9 +67,8 @@ daemon/
   Orion.Daemon.Actions/  actions système
   Orion.Daemon.Tests/    tests du daemon
 frontend/src/       composants, hooks, services, types
-memory/             schéma SQL, données initiales, migrations
+memory/             schéma SQL, migrations
 scripts/            installation du daemon
-tools/definitions/  contrats JSON d'outils
 docs/               documentation
 ```
 
@@ -88,7 +87,6 @@ docs/               documentation
 
 ```bash
 psql "$CONNECTION_STRING" -f memory/schema.sql
-psql "$CONNECTION_STRING" -f memory/seed.sql
 ```
 
 Appliquer ensuite les fichiers de `memory/migrations/` dans l'ordre.

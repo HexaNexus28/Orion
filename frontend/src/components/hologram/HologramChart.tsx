@@ -18,7 +18,7 @@ export interface HologramChartProps {
 /**
  * HologramChart - Graphique 3D flottant pour visualiser des données
  * Types supportés : bar chart (par défaut), pie chart
- * Utilisé pour afficher des statistiques ShiftStar ou métriques système
+ * Utilisé pour afficher des statistiques ou métriques système
  */
 export const HologramChart: React.FC<HologramChartProps> = ({
   data,

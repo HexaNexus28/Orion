@@ -4,7 +4,7 @@ using Orion.Core.DTOs.Responses;
 namespace Orion.Core.Interfaces.Services;
 
 /// <summary>
-/// Service pour l'exécution des tools (ShiftStar, Système, etc.)
+/// Service pour l'exécution des tools (système, Internet, mémoire)
 /// </summary>
 public interface IToolService
 {

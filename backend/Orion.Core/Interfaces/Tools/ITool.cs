@@ -5,7 +5,7 @@ namespace Orion.Core.Interfaces.Tools;
 
 public interface ITool
 {
-    string Name { get; }           // snake_case: "get_shiftstar_stats"
+    string Name { get; }           // snake_case: "get_work_context"
     string Description { get; }   // For the LLM
     JsonObject InputSchema { get; }
 

@@ -53,13 +53,13 @@ public class HudCardTests
     [Fact]
     public void GitRepo_Dirty_WarnsAndCarriesRepoName()
     {
-        var charge = "{\"path\":\"C:\\\\Projets\\\\ShiftCore\",\"branch\":\"main\",\"changes\":[\" M a.cs\",\" M b.cs\"],\"hasChanges\":true}";
+        var charge = "{\"path\":\"C:\\\\Projets\\\\mon-projet\",\"branch\":\"main\",\"changes\":[\" M a.cs\",\" M b.cs\"],\"hasChanges\":true}";
 
         var carte = new GitStatusTool(new Mock<IDaemonClient>().Object).BuildCard(ToolResult.SuccessResult(charge));
 
         Assert.NotNull(carte);
         // Identifiant porte le DEPOT, pas l outil : deux depots = deux cartes, pas un ecrasement.
-        Assert.Equal("git.ShiftCore", carte!.Id);
+        Assert.Equal("git.mon-projet", carte!.Id);
         Assert.Equal("main", carte.Value);
         Assert.Equal(HudCardState.Warn, carte.State);
         Assert.Equal(2, carte.Items!.Count);

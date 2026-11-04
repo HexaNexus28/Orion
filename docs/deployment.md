@@ -58,7 +58,6 @@ contiennent le billet de flux.
 
 ```bash
 psql "$CONNECTION_STRING" -f memory/schema.sql
-psql "$CONNECTION_STRING" -f memory/seed.sql
 ```
 
 Appliquer ensuite `memory/migrations/` dans l'ordre.

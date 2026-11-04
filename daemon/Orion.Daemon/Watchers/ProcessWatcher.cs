@@ -129,7 +129,7 @@ public class ProcessWatcher : IWatcher
     }
 
     /// <summary>
-    /// Titre de la fenetre active — « useVAD.ts - ShiftCore - Visual Studio Code ».
+    /// Titre de la fenetre active — « useVAD.ts - mon-projet - Visual Studio Code ».
     ///
     /// POURQUOI CA COMPTE. Le nom du processus seul dit « Code » : ORION sait que tu codes, pas
     /// SUR QUOI. Avec le titre il connait le fichier et le projet, donc il peut lire le diff,

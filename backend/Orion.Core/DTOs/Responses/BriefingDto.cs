@@ -21,6 +21,6 @@ public class BriefingSource
     public string Url { get; set; } = string.Empty;
     public string Source { get; set; } = string.Empty;
 
-    /// <summary>« local », « africa » ou « world ».</summary>
+    /// <summary>« local », « regional » ou « world ».</summary>
     public string Circle { get; set; } = string.Empty;
 }
