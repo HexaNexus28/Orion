@@ -4,7 +4,7 @@
 FRONTEND (VAD)                          BACKEND (VoiceWebSocketHandler)
 ─────────────                           ──────────────────────────────
 VAD détecte parole    ──PCM Int16──►    accumule _audioBuffer
-end_audio (silence)   ──JSON───────►    Whisper.net STT (local)
+end_audio (silence)   ──JSON───────►    TranscriptionCascade (Voxtral, repli Whisper)
                       ◄──JSON────       transcript
                       ◄──JSON────       llm_chunk (token/token, StreamLLMAsync)
                       ◄──JSON────       llm_done
@@ -20,9 +20,9 @@ barge-in (interrupt)  ──JSON───────►    CancellationToken an
 
 ## Stack
 
-Whisper.net (STT local ~1.5GB) · KokoroSharp.CPU (TTS local ~320MB, voix `ff_siwis`) ·
-@ricky0123/vad-web côté frontend — mais l'implémentation actuelle (`useVAD.ts`) utilise un VAD
-maison par **RMS** (Web Audio `ScriptProcessorNode`) : seuil `0.015`, silence `700ms`, min parole `250ms`.
+STT : `TranscriptionCascade` — Voxtral (Mistral) en tête, Whisper.net local en repli ·
+KokoroSharp.CPU (TTS local ~320MB, voix `ff_siwis`) · VAD : `MicVAD` Silero v5 (`useVAD.ts`) —
+silence de clôture ≈450 ms, parole minimale ≈290 ms, pré-roll ≈256 ms.
 
 ## Latence (Phase 4.5)
 
@@ -55,7 +55,20 @@ Gardes qui subsistent côté prise :
 
 - une prise n'est ÉMISE que par `processVoiceTurn`, jamais par `onAudioChunk` : on n'envoie de
   l'audio que si on envoie aussi le `end_audio` qui le consomme ;
-- une prise née pendant qu'ORION parle n'est gardée que si un barge-in a été **déclaré**.
+- une prise née pendant qu'ORION parle n'est gardée que si un barge-in a été **déclaré** ;
+- `isPlayingRef` reste vrai jusqu'au `onended` du dernier son : programmer un son rend la main
+  aussitôt, seul `onended` dit qu'il s'est tu. Couper ORION en pleine phrase n'est donc **pas**
+  possible : ce que le micro capte pendant la lecture est traité comme de l'écho.
+
+## Phrases coupées par une hésitation
+
+La prise se clôt après ≈450 ms de silence. Si la parole reprend dans les 3 s
+(`PHRASE_RESUME_WINDOW_MS`) et qu'ORION n'a ni lancé d'outil ni fini de répondre, le tour en cours
+est annulé et le serveur reçoit les deux prises recollées. Un bruit bref (`onMisfire`) renvoie la
+prise d'origine telle quelle. L'envoi reste immédiat : aucune latence ajoutée.
+
+⚠️ Le message utilisateur est écrit dès `PrepareStreamAsync` : un fragment annulé après cette
+étape reste dans l'historique, suivi de la phrase complète.
 
 ## Flow frontend voix (App.tsx)
 
@@ -63,17 +76,14 @@ Gardes qui subsistent côté prise :
    ⚠️ L'`AudioContext` peut démarrer **suspended** jusqu'au 1er geste utilisateur → le VAD ne
    capte rien tant qu'on n'a pas tap/cliqué une fois.
 2. `useVoiceWS` ouvre la connexion `/ws/voice` au mount (une seule fois, callbacks via ref).
-3. VAD `onAudioChunk(pcm16)` → `sendAudioRef.current(pcm16)` → `ws.sendAudio` (streaming temps réel
-   pendant la parole uniquement).
-4. VAD détecte fin de parole → `processVoiceTurn()` → `endAudio()` (JSON `end_audio`).
+3. Fin de prise : `onAudioChunk(pcm16)` la RETIENT dans `pendingAudioRef`, rien ne part encore.
+4. `processVoiceTurn()` décide de son sort, puis envoie la prise collée à son `end_audio`.
 5. Backend : STT → `PrepareStreamAsync` → `StreamLLMAsync` → TTS phrase par phrase.
-6. Callbacks WS : `onTranscript` (reset + thinking) → `onLLMChunk` (`appendChunk`) →
-   `onLLMDone` → `onOrionSpeaking(true/false)` pilote l'état entité + `isTTSSpeaking`.
-7. Barge-in : si `isSpeaking && isTurnActive && amplitude > 0.04` → `interrupt()`.
+6. Callbacks WS : `onTranscript` (affiche « Compris : … », reset + thinking) → `onLLMChunk`
+   (`appendChunk`) → `onLLMDone` → `onOrionSpeaking(true/false)` pilote l'état entité.
+7. Barge-in : si `isSpeaking && !isPlayingRef && (isTurnActive || phrase reprise)` → `interrupt()`.
 
 ## Points de vigilance connus
 
 - AudioContext suspended au 1er chargement (cf. point 1) — un tap initial débloque.
-- Pendant la lecture TTS, le VAD continue de streamer du PCM au backend (pas de gating sur
-  `isTurnActive` dans `sendAudioRef`) → l'écho peut s'accumuler dans `_audioBuffer` côté serveur.
 - `npm run build` (tsc strict) doit passer — pas de variables non utilisées.
