@@ -1,49 +1,19 @@
-# ORION Database Migrations
+# Migrations
 
-Ce dossier contient les migrations SQL pour la base de données Supabase PostgreSQL.
+Migrations SQL de la base PostgreSQL, à appliquer dans l'ordre après `memory/schema.sql`.
 
-## Convention de nommage
+Convention de nommage : `NNN_description.sql`.
 
-```
-XXX_description_courte.sql
-```
+| Fichier | Description |
+|---|---|
+| `001_add_behavior_patterns.sql` | table `behavior_patterns` |
+| `002_add_internet_tools_config.sql` | notes sur les outils Internet |
+| `003_align_embedding_dimension.sql` | dimension de `memory_vectors.embedding` |
+| `004_deferred_actions.sql` | table `deferred_actions` |
+| `005_embedding_1024_mistral.sql` | embeddings `mistral-embed`, 1024 dimensions |
 
-Exemples:
-- `001_add_behavior_patterns.sql`
-- `002_add_internet_tools_config.sql`
-- `003_add_user_preferences.sql`
+## Règles
 
-## Comment appliquer une migration
-
-### Option 1: Supabase SQL Editor (développement)
-
-1. Ouvrir https://app.supabase.com
-2. Aller dans "SQL Editor"
-3. Créer une "New query"
-4. Copier/coller le contenu de la migration
-5. Run
-
-### Option 2: Schema complet (reset)
-
-Pour réinstaller from scratch (⚠️ perd toutes les données):
-
-```sql
--- Lire et exécuter schema.sql
-\i ../schema.sql
-```
-
-## Migrations existantes
-
-| Fichier | Description | Date |
-|---------|-------------|------|
-| `001_add_behavior_patterns.sql` | Table behavior_patterns pour la détection de patterns utilisateur | 2025-04-07 |
-| `002_add_internet_tools_config.sql` | Documentation tools Phase 3 (config reste en appsettings) | 2025-04-07 |
-| `003_align_embedding_dimension.sql` | Aligne `memory_vectors.embedding` sur 768 dims (réalité vs doc) | 2026-08-20 |
-| `004_deferred_actions.sql` | File d'actions différées — ce que le PC éteint fera au réveil | 2026-08-21 |
-
-## Notes
-
-- `DROP TABLE IF EXISTS ... CASCADE` permet de réexécuter une migration sans erreur
-- Toujours ajouter les index après la création de table
-- Toujours activer RLS sur les nouvelles tables
-- Les clés API (Brave, SerpAPI, Anthropic) restent dans appsettings.json, jamais en DB
+- Ajouter les index après la création de la table.
+- Activer RLS sur les nouvelles tables.
+- Les clés d'API restent dans la configuration, jamais en base.
