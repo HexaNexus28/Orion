@@ -50,6 +50,17 @@ public class VoiceWebSocketMiddleware
             context.RequestServices.GetRequiredService<Orion.Core.Interfaces.Services.IWhisperService>()
         );
 
-        await handler.HandleAsync(webSocket, context.RequestAborted);
+        var registry = context.RequestServices.GetRequiredService<VoiceConnectionRegistry>();
+        var previous = registry.Replace(handler);
+        if (previous != null) await previous.SupersedeAsync();
+
+        try
+        {
+            await handler.HandleAsync(webSocket, context.RequestAborted);
+        }
+        finally
+        {
+            registry.Release(handler);
+        }
     }
 }

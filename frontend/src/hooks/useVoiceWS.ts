@@ -11,6 +11,7 @@ interface UseVoiceWSOptions {
   onOrionSpeaking?: (speaking: boolean) => void;
   onAmplitude?: (amplitude: number) => void;
   onError?: (error: string) => void;
+  onSuperseded?: () => void;
 }
 
 /** Marge au-delà de la fin prévue de l'audio, si `onended` ne se déclenche jamais. */
@@ -256,6 +257,14 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       onDisconnect: () => {
         setIsConnected(false);
       },
+
+      onSuperseded: () => {
+        stopPlayback();
+        setIsConnected(false);
+        setIsTurnActive(false);
+        cbRef.current.onOrionSpeaking?.(false);
+        cbRef.current.onSuperseded?.();
+      },
     });
 
     ws.connect();
@@ -286,6 +295,10 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
     cbRef.current.onOrionSpeaking?.(false);
   }, [stopPlayback]);
 
+  const reconnect = useCallback(() => {
+    void wsRef.current?.connect();
+  }, []);
+
   /** Telemetrie du micro — voir VoiceWebSocket.sendDiagnostic. */
   const sendDiagnostic = useCallback((ctx: string, maxAmp: number, chunks: number) => {
     wsRef.current?.sendDiagnostic(ctx, maxAmp, chunks);
@@ -298,6 +311,7 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
     sendAudio,
     endAudio,
     interrupt,
+    reconnect,
     stopPlayback,
 
     /**

@@ -1,129 +1,102 @@
-# Tools — ORION
+# Outils
 
-> État réel du catalogue au 2026-08-27. Les phases historiques listaient des outils
-> (`get_shiftstar_stats`, `get_emails`, `send_whatsapp`, `check_render_deploy`…) qui n'ont
-> **jamais été implémentés** : ils ont été retirés de cette page. Ce qui suit est ce que
-> `ToolRegistry` expose réellement au modèle — 24 outils.
+`ToolRegistry` expose 24 outils au modèle.
 
-## Fonctionnement
+## Exécution
 
 ```
-User  → AgentLoop → tool_call({...}) ─┐
-                                      ├→ IToolInvoker → [exécute | diffère | refuse] → résultat
-HUD   → POST /api/tools/{name} ───────┘
+Modèle → AgentLoop → tool_call ─┐
+                                ├─► IToolInvoker → exécute, diffère ou refuse
+HUD → POST /api/tools/{name} ───┘
 ```
 
-**Deux entrées, un seul chemin.** Un geste du HUD n'est pas un second mécanisme à sécuriser :
-il emprunte le même `IToolInvoker`, donc le même garde-fou. Un bouton « commit » part en file de
-confirmation exactement comme si le modèle l'avait demandé. Seule l'`Origin` diffère (`hud` vs
-`chat`), pour qu'ORION sache d'où vient une action mise en attente.
+Le modèle et le HUD empruntent le même `IToolInvoker`, donc les mêmes contrôles.
 
-Tout outil implémente `ITool` (`Orion.Core/Interfaces/Tools/ITool.cs`) et est découvert par
-`ToolRegistry` via l'enregistrement DI `AddScoped<ITool>(…)` dans `Program.cs`. Jamais de logique
-inline dans les agents.
+| Situation | Résultat |
+|---|---|
+| outil sans daemon, non destructif | exécution |
+| daemon requis, poste éteint, outil différable | mise en file |
+| daemon requis, poste éteint, outil non différable | refus expliqué |
+| outil destructif | mise en attente de confirmation |
 
-**L'exécution passe TOUJOURS par `IToolInvoker`** — jamais `tool.ExecuteAsync` en direct. C'est
-lui, et lui seul, qui décide d'exécuter, de différer ou de refuser. Avant lui, la boucle agent et
-l'API outils exécutaient chacune de leur côté et le garde « daemon absent » était recopié dans les
-treize outils système : treize endroits où l'oublier.
+Au retour du poste, les actions destructives passent en attente de confirmation et les autres
+s'exécutent.
 
-### Les quatre membres de `ITool`
+## Membres de `ITool`
 
 | Membre | Défaut | Signification |
 |---|---|---|
-| `RequiresDaemon` | `false` | passe par le PC de l'utilisateur ; retiré du catalogue si le PC est éteint, sauf si différable |
-| `IsDestructive` | `false` | écrit, supprime ou exécute → **confirmation exigée, PC allumé compris** |
-| `IsDeferrable` | `false` | garde un sens exécuté **plus tard** → mis en file au lieu d'échouer |
+| `RequiresDaemon` | `false` | passe par le poste de l'utilisateur |
+| `IsDestructive` | `false` | écrit, supprime ou exécute : confirmation exigée |
+| `IsDeferrable` | `false` | garde un sens s'il est exécuté plus tard |
 | `BuildCard(result)` | `null` | carte du HUD produite à partir du résultat |
 
-`IsDeferrable` se juge sur l'**utilité différée**, pas sur la disponibilité : « ouvre VS Code » ou
-« commit le travail » attendent très bien le matin ; « qu'y a-t-il dans ce dossier ? » ne vaut plus
-rien demain. Défaut = `false` — un nouvel outil daemon fait rougir `ToolDeferrabilityTests` tant que
-son cas n'a pas été tranché ; l'oubli ne doit pas valoir « différable ».
+`ToolDeferrabilityTests` échoue tant qu'un nouvel outil daemon n'a pas été classé.
 
-⚠️ **`run_script` n'est PAS différable**, alors qu'il agit. Un script est arbitraire : impossible de
-savoir s'il lit ou s'il écrit. Quand il l'était, le modèle s'en servait pour contourner le retrait
-de `list_files` (`Get-ChildItem`) et promettait pour demain une lecture voulue tout de suite.
+## Catalogue
 
-### `IsDestructive` est un garde-fou de CODE, pas de prompt
-
-Depuis `b011dbe`, `ToolInvoker` met en file **toute** action destructive, même PC allumé. Le
-garde-fou vivait auparavant dans une phrase du prompt système — c'est-à-dire une suggestion. Un
-modèle qui décide d'agir agit. Le contrôle est désormais placé **après** la décision du modèle,
-seul endroit où il puisse tenir face à une injection de prompt (cf. [security.md](security.md) §1).
-
-## Catalogue réel — 24 outils
-
-### Système — 14 outils, tous `RequiresDaemon`
-
-⚠️ `read_file`, `list_files` et `write_file` refusent tout tant que `Daemon:AllowedRoots` n'est
-pas renseigné côté daemon (défaut fail-closed). L'écriture a son propre périmètre,
-`Daemon:AllowedWriteRoots`, qui retombe sur le premier s'il est vide — lire et écrire ne sont pas
-la même permission. Cf. [security.md](security.md).
+### Système
 
 | Outil | Destructif | Différable | Rôle |
 |---|:---:|:---:|---|
-| `get_system_status` | | | CPU, RAM, disque, uptime |
-| `get_work_context` | | ❌ explicite | app au premier plan + fichier/projet ouvert (widget HUD permanent) |
+| `get_system_status` | | | CPU, RAM, disque, durée de fonctionnement |
+| `get_work_context` | | | application au premier plan et fichier ouvert |
 | `git_status` | | | état du dépôt |
-| `git_commit` | ✅ | ✅ | commit du travail en cours |
-| `open_app` | | ✅ | lance une application |
-| `open_browser_url` | | ✅ | ouvre une URL |
-| `read_file` | | | lit un fichier — périmètre `AllowedRoots` ✅ |
-| `write_file` | ✅ | ✅ | écrit un fichier — périmètre `AllowedWriteRoots` ✅ |
-| `run_script` | ✅ | ❌ | PowerShell arbitraire — `-EncodedCommand`, plafond de durée |
-| `list_files` | | | liste un répertoire — périmètre `AllowedRoots` ✅ |
-| `kill_process` | ✅ | | termine un processus — refuse et énumère si le nom est ambigu |
-| `clipboard` | ✅ | | lit / écrit le presse-papiers |
-| `type_text` | ✅ | | frappe du texte au clavier |
+| `git_commit` | oui | oui | commit du travail en cours |
+| `open_app` | | oui | lance une application |
+| `open_browser_url` | | oui | ouvre une URL |
+| `read_file` | | | lit un fichier dans `AllowedRoots` |
+| `write_file` | oui | oui | écrit un fichier dans `AllowedWriteRoots` |
+| `list_files` | | | liste un répertoire dans `AllowedRoots` |
+| `run_script` | oui | | exécute un script PowerShell |
+| `kill_process` | oui | | termine un processus |
+| `clipboard` | oui | | lit ou écrit le presse-papiers |
+| `type_text` | oui | | saisit du texte au clavier |
 | `capture_screen` | | | capture l'écran |
 
-### Internet — 4 outils, aucun daemon
+`run_script` n'est pas différable : un script étant arbitraire, son utilité différée ne peut pas
+être évaluée.
 
-`web_search` · `web_fetch` · `web_browse` (Playwright) · `screenshot_page`
+`kill_process` refuse un nom ambigu et liste les processus correspondants. Le modèle vise alors un
+`pid`, ou demande explicitement `all: true`.
 
-⚠️ **`web_fetch` et `web_browse` restent la porte d'entrée de l'injection de prompt** : ce
-qu'ils rapportent entre dans le contexte du modèle. Le garde-fou correspondant n'est pas chez eux,
-il est dans `IToolInvoker`.
+### Internet
 
-Côté réseau, les trois outils qui vont chercher une page (`web_fetch`, `web_browse`,
-`screenshot_page`) passent par **`UrlScope`** : schéma fermé à http/https, adresses internes
-refusées après résolution DNS, `BlockedDomains` appliqué, redirections revalidées saut par saut.
+`web_search`, `web_fetch`, `web_browse` (Playwright), `screenshot_page`.
 
-### Mémoire — 6 outils, ORION se gère lui-même
+`web_fetch`, `web_browse` et `screenshot_page` passent par `UrlScope`.
 
-`memory_save` · `memory_update` · `memory_forget` · `memory_reflect` (dimanche 23h) ·
-`profile_update` · `proactive_feedback`
+### Mémoire
 
-## Correspondance outil → action daemon
+`memory_save`, `memory_update`, `memory_forget`, `memory_reflect`, `profile_update`,
+`proactive_feedback`.
 
-Les noms **ne coïncident pas** de part et d'autre du WebSocket, et c'est volontaire : chaque côté
-définit ses propres types (pas de DLL partagée). Toute action doit figurer dans la whitelist de
-`DaemonActionValidator` — sinon l'endpoint direct `/api/daemon/action` la refuse.
+## Correspondance avec les actions du daemon
 
-| Outil backend | Action daemon |
+| Outil | Action daemon |
 |---|---|
 | `get_system_status` | `system_status` |
 | `get_work_context` | `work_context` |
 | `open_browser_url` | `open_url` |
-| `clipboard` | `get_clipboard` / `set_clipboard` |
-| *(les autres)* | même nom |
+| `clipboard` | `get_clipboard`, `set_clipboard` |
+| autres outils système | même nom |
 
-Actions daemon **sans outil backend** : `open_file`, `launch_claude`, `proactive_deferred`,
-`speak`, `synthesize` (ces deux dernières sont locales au daemon, pas dans la whitelist).
+Actions sans outil associé : `open_file`, `launch_claude`, `proactive_deferred`, `speak`,
+`synthesize`.
 
-## Créer un nouveau tool
+## Créer un outil
 
-1. Définir le contrat JSON dans `tools/definitions/{tool_name}.json`
-2. Implémenter `ITool` dans `Orion.Business/Tools/{Catégorie}/{ToolName}Tool.cs`
-3. **Enregistrer DEUX fois** dans `Program.cs` : `AddScoped<MonTool>()` puis
-   `AddScoped<ITool>(sp => sp.GetRequiredService<MonTool>())` — sans la seconde ligne,
-   `ToolRegistry` ne le découvre pas et le modèle ne le voit jamais
-4. Si action système → implémenter aussi dans `daemon/Orion.Daemon.Actions/` **et** ajouter le nom
-   à `DaemonActionValidator._allowedActions` (cf. [daemon.md](daemon.md))
-5. **Trancher `IsDeferrable`** : cet outil garde-t-il un sens exécuté au réveil du PC ? Le test
-   `ToolDeferrabilityTests` échoue tant que la réponse n'est pas inscrite dans sa liste
-6. **Trancher `IsDestructive`** : écrit-il, supprime-t-il, exécute-t-il ? Dans le doute → `true`
-7. **Trancher le PÉRIMÈTRE** : s'il touche au disque, au réseau interne ou aux processus, quelles
-   racines / quels hôtes sont autorisés ? Le refus doit être le défaut — cf. [security.md](security.md) §5
-8. Documenter dans `tools/definitions/README.md`
+1. Implémenter `ITool` dans `Orion.Business/Tools/{Catégorie}/`.
+2. Enregistrer le type concret, puis `ITool`, dans `Program.cs` :
+
+   ```csharp
+   builder.Services.AddScoped<MyTool>();
+   builder.Services.AddScoped<ITool>(sp => sp.GetRequiredService<MyTool>());
+   ```
+
+3. Pour une action système, l'implémenter dans `Orion.Daemon.Actions` et ajouter son nom à
+   `DaemonActionValidator`.
+4. Décider `IsDeferrable` et l'inscrire dans `ToolDeferrabilityTests`.
+5. Décider `IsDestructive`. En cas de doute, choisir `true`.
+6. Définir le périmètre si l'outil touche au disque, au réseau interne ou aux processus.
+7. Mettre à jour ce document.

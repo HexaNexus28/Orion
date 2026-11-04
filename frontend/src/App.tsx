@@ -22,9 +22,11 @@ const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'tru
 const SWIPE_THRESHOLD = 80;
 
 /**
- * Délai après l'envoi d'une prise pendant lequel reprendre la parole CONTINUE la phrase.
- * Au-delà, c'est une nouvelle demande. Sans borne, une prise restée sans réponse (coupure
- * réseau) se recollerait à une phrase dite une heure plus tard.
+ * Délai après l'envoi de la PREMIÈRE prise pendant lequel reprendre la parole continue la phrase.
+ * Au-delà, c'est une nouvelle demande.
+ *
+ * Il ne repart pas à chaque recollage. Observé le 2026-11-04 : une voix de fond continue
+ * recollait prise après prise (38, 75, 138… 284 Ko) et annulait ORION à chaque fois.
  */
 const PHRASE_RESUME_WINDOW_MS = 3000;
 
@@ -52,6 +54,9 @@ const App: React.FC = () => {
   // Ce qu'ORION a compris. Sans ça, une erreur de transcription et une erreur du modèle se
   // ressemblent : dans les deux cas il répond à côté, et rien ne dit où chercher.
   const [heardText, setHeardText] = useState('');
+  // Un seul appareil écoute à la fois. La ref sert aux chemins qui relancent le micro tout seuls.
+  const [isVoiceElsewhere, setIsVoiceElsewhere] = useState(false);
+  const voiceElsewhereRef = useRef(false);
 
   const isPassiveListeningRef = useRef(false);
   const isProcessingVoiceRef = useRef(false);
@@ -149,7 +154,7 @@ const App: React.FC = () => {
    * `mergeBaseRef` : cette prise, une fois annulée, en attente de sa suite.
    */
   const unansweredTakeRef = useRef<{ pcm: Int16Array; sentAt: number } | null>(null);
-  const mergeBaseRef = useRef<Int16Array | null>(null);
+  const mergeBaseRef = useRef<{ pcm: Int16Array; sentAt: number } | null>(null);
 
   // Telemetrie du micro : le serveur ne peut pas distinguer « contexte en pause » de « parole
   // trop faible » — les deux donnent le meme silence. On mesure donc ici et on rapporte.
@@ -223,7 +228,12 @@ const App: React.FC = () => {
   // ── Passive listening (ref-based to avoid re-render loops) ─────────────────────
   const startPassiveListeningRef = useRef<() => Promise<void>>(undefined);
   startPassiveListeningRef.current = async () => {
-    if (isInputVisible || isProcessingVoiceRef.current || isPassiveListeningRef.current) {
+    if (
+      isInputVisible ||
+      isProcessingVoiceRef.current ||
+      isPassiveListeningRef.current ||
+      voiceElsewhereRef.current
+    ) {
       return;
     }
     console.log('[App] startPassiveListening → démarrage VAD');
@@ -250,7 +260,12 @@ const App: React.FC = () => {
 
 
   // ── useVoiceWS — Full-duplex WebSocket voice pipeline ─────────────────────
-  const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic, isPlayingRef } = useVoiceWS({
+  const { isTurnActive, sendAudio, endAudio, interrupt, reconnect, sendDiagnostic, isPlayingRef } = useVoiceWS({
+    onSuperseded: () => {
+      voiceElsewhereRef.current = true;
+      setIsVoiceElsewhere(true);
+      stopPassiveListeningRef.current?.();
+    },
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
       setHeardText(transcript);
@@ -354,7 +369,7 @@ const App: React.FC = () => {
     if (isSpeaking && (isTurnActive || isResumingPhrase) && !orionEmet) {
       console.log('[App] Barge-in: interruption du tour ORION (p(parole):', amplitudeRef.current.toFixed(3), ')');
       if (isResumingPhrase) {
-        mergeBaseRef.current = unanswered.pcm;
+        mergeBaseRef.current = unanswered;
         unansweredTakeRef.current = null;
       }
       // Le barge-in est DÉCLARÉ : c'est ce drapeau, et lui seul, qui autorise une prise née
@@ -401,8 +416,8 @@ const App: React.FC = () => {
 
     const mergeBase = mergeBaseRef.current;
     mergeBaseRef.current = null;
-    const audio = mergeBase ? concatPcm16(mergeBase, take) : take;
-    unansweredTakeRef.current = { pcm: audio, sentAt: Date.now() };
+    const audio = mergeBase ? concatPcm16(mergeBase.pcm, take) : take;
+    unansweredTakeRef.current = { pcm: audio, sentAt: mergeBase?.sentAt ?? Date.now() };
 
     // L'ordre d'émission du WebSocket garantit que la prise arrive avant l'ordre qui la consomme.
     chunksRef.current += 1;
@@ -576,6 +591,23 @@ const App: React.FC = () => {
             <p className="text-[10px] uppercase tracking-[0.2em] text-amber-300/70">Micro indisponible</p>
             <p className="mt-1 text-xs leading-relaxed text-amber-100/90">{voiceError}</p>
             <p className="mt-2 text-[10px] text-amber-300/60">Touche ce message pour réessayer.</p>
+          </button>
+        </div>
+      )}
+
+      {isVoiceElsewhere && (
+        <div className="absolute inset-x-0 top-16 z-50 flex justify-center p-4">
+          <button
+            onClick={() => {
+              voiceElsewhereRef.current = false;
+              setIsVoiceElsewhere(false);
+              reconnect();
+              void startPassiveListeningRef.current?.();
+            }}
+            className="max-w-md rounded-xl border border-orion-accent/30 bg-black/70 px-4 py-3 text-left backdrop-blur-sm"
+          >
+            <p className="text-xs leading-relaxed text-orion-light/90">ORION écoute sur un autre appareil.</p>
+            <p className="mt-1 text-[10px] text-orion-light/60">Touche ce message pour reprendre ici.</p>
           </button>
         </div>
       )}

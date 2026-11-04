@@ -134,13 +134,13 @@ public class GetWorkContextTool : ITool
     /// Repere le FICHIER dans un titre de fenetre. Ne devine rien d autre.
     ///
     /// Le decoupage par POSITION ne peut pas fonctionner : chaque application a son ordre.
-    /// Titres reels releves le 2026-08-27 :
-    ///   Devin    « tiktok-workflow - Devin - .env.cloudflare »   projet - app - fichier
-    ///   Notepad  « supabase-shiftstar-dev.env - Bloc-notes »     fichier - app
-    ///   VS Code  « useVAD.ts - ShiftCore - Visual Studio Code »  fichier - projet - app
+    /// Exemples de titres :
+    ///   Devin    « mon-projet - Devin - .env.local »             projet - app - fichier
+    ///   Notepad  « notes.txt - Bloc-notes »                      fichier - app
+    ///   VS Code  « useVAD.ts - mon-projet - Visual Studio Code » fichier - projet - app
     ///
     /// Une premiere version prenait le premier segment comme fichier et l avant-dernier comme
-    /// projet : sur Devin elle annoncait « fichier : tiktok-workflow, projet : Devin ». Un
+    /// projet : sur Devin elle annoncait « fichier : mon-projet, projet : Devin ». Un
     /// contexte FAUX est pire qu un contexte absent — il ferait proposer une action sur le
     /// mauvais fichier.
     ///

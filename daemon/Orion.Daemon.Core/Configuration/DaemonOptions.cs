@@ -2,7 +2,7 @@ namespace Orion.Daemon.Core.Configuration;
 
 public class DaemonOptions
 {
-    public string RenderWsUrl { get; set; } = "wss://orion-api.onrender.com/daemon";
+    public string RenderWsUrl { get; set; } = "ws://localhost:5107/daemon";
 
     /// <summary>
     /// URL de sante du backend, DEDUITE de <see cref="RenderWsUrl"/>.

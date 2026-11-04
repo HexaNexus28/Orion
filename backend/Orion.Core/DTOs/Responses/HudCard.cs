@@ -65,7 +65,7 @@ public class HudCardItem
 /// <summary>
 /// Carte du HUD, produite par un OUTIL a partir de son resultat reel — donc deterministe.
 ///
-/// L identifiant est STABLE et porte le sujet (« git.ShiftStar »), jamais le moment : rappeler
+/// L identifiant est STABLE et porte le sujet (« git.mon-depot »), jamais le moment : rappeler
 /// le meme outil MET A JOUR la carte au lieu d en empiler une seconde.
 /// </summary>
 public class HudCard

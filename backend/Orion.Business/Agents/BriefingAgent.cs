@@ -284,8 +284,8 @@ public class BriefingAgent : IBriefingAgent
             {
                 var cercle = item.Circle switch
                 {
-                    NewsCircle.Local => "France/ESIEA/EDF",
-                    NewsCircle.Africa => "Togo/Afrique",
+                    NewsCircle.Local => "local",
+                    NewsCircle.Regional => "regional",
                     _ => "monde"
                 };
                 sb.AppendLine($"- [{cercle}] {item.Title} ({item.Source})");
@@ -297,8 +297,8 @@ public class BriefingAgent : IBriefingAgent
         sb.AppendLine("Parle à la deuxième personne, comme si tu me parlais maintenant.");
         sb.AppendLine("Rappelle les priorités ou projets en cours si tu les connais.");
         sb.AppendLine("Mentionne ce qui a été signalé sans interrompre — c'est précisément le moment.");
-        sb.AppendLine("Sur la veille : retiens au plus trois sujets, ceux qui servent vraiment un etudiant");
-        sb.AppendLine("en informatique travaillant avec EDF. N'INVENTE AUCUNE actualite : si un sujet");
+        sb.AppendLine("Sur la veille : retiens au plus trois sujets, ceux qui servent vraiment");
+        sb.AppendLine("l'utilisateur d'apres son profil. N'INVENTE AUCUNE actualite : si un sujet");
         sb.AppendLine("n'est pas dans la liste ci-dessus, il n'existe pas. Cite la source.");
         sb.AppendLine("Termine par une note motivante si pertinent.");
         sb.AppendLine("Pas de markdown, pas de titres, pas de listes — texte continu pour être lu à voix haute.");

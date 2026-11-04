@@ -59,7 +59,7 @@ public class GitStatusTool : ITool
     }
 
     /// <summary>
-    /// Carte « depot ». Identifiant porte le NOM DU DEPOT (git.ShiftStar) et non l outil :
+    /// Carte « depot ». Identifiant porte le NOM DU DEPOT (git.mon-depot) et non l outil :
     /// interroger deux depots doit produire deux cartes, pas ecraser la premiere.
     /// </summary>
     public HudCard? BuildCard(ToolResult result)
@@ -75,10 +75,10 @@ public class GitStatusTool : ITool
             var chemin = r.TryGetProperty("path", out var p) ? p.GetString() ?? "" : "";
             // Séparateurs EN DUR, jamais ceux de la plateforme.
             //
-            // `chemin` vient du daemon WINDOWS (« C:\Projets\ShiftCore »), mais ce code tourne
+            // `chemin` vient du daemon WINDOWS (« C:\Projets\mon-projet »), mais ce code tourne
             // dans le backend, c'est-à-dire un conteneur LINUX. Là, `Path.DirectorySeparatorChar`
             // vaut « / » : le découpage ne coupait rien et l'identifiant de carte devenait
-            // « git.C:\Projets\ShiftCore » au lieu de « git.ShiftCore ».
+            // « git.C:\Projets\mon-projet » au lieu de « git.mon-projet ».
             //
             // Deux dépôts continuaient bien à donner deux cartes, donc rien ne se voyait — mais
             // l'identifiant n'était plus stable ni lisible. Le test le disait depuis toujours ;

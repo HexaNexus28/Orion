@@ -8,7 +8,7 @@ public class ApiResponse<T>
     public int StatusCode { get; set; }
     public Dictionary<string, string[]>? Errors { get; set; }
 
-    // Factory methods - ShadowCat pattern
+    // Factory methods
     public static ApiResponse<T> SuccessResponse(T data, string? message = null)
         => new() { Success = true, Data = data, Message = message, StatusCode = 200 };
 

@@ -128,7 +128,7 @@ public class AuditServiceTests
     public async Task LogToolCallAsync_Should_Include_Input_Output_In_Metadata()
     {
         // Arrange
-        var toolName = "get_shiftstar_stats";
+        var toolName = "get_work_context";
         var input = "{ \"metric\": \"active_users\" }";
         var output = "{ \"count\": 42 }";
 

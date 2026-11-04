@@ -145,3 +145,6 @@ todo.md
 
 # Graphify — graphe de connaissance local, regenerable
 graphify-out/
+
+# Notes locales non versionnées
+.private/

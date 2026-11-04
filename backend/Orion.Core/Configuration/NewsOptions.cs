@@ -1,16 +1,16 @@
 namespace Orion.Core.Configuration;
 
 /// <summary>
-/// Cercle de proximite d'une source. Sert de POIDS au classement : a fraicheur egale, ce qui
-/// touche l'ecole ou l'employeur passe avant une actualite mondiale.
+/// Cercle de proximite d'une source. Sert de poids au classement : a fraicheur egale, une source
+/// proche passe avant une source lointaine.
 /// </summary>
 public enum NewsCircle
 {
-    /// <summary>ESIEA, EDF, ecosysteme francilien.</summary>
+    /// <summary>Sources les plus proches de l'utilisateur.</summary>
     Local = 0,
 
-    /// <summary>Togo et Afrique.</summary>
-    Africa = 1,
+    /// <summary>Sources regionales.</summary>
+    Regional = 1,
 
     /// <summary>Le reste.</summary>
     World = 2,
@@ -78,7 +78,7 @@ public class NewsOptions
         "https://news.google.com/rss/search?q={query}&hl=fr&gl=FR&ceid=FR:fr";
 
     /// <summary>
-    /// Certains serveurs refusent un client sans navigateur (Techpoint Africa repond 403).
+    /// Certains serveurs repondent 403 a un client sans navigateur.
     /// </summary>
     public string UserAgent { get; set; } = "OrionNewsBot/1.0";
 
@@ -87,30 +87,18 @@ public class NewsOptions
     /// donc absent de l'image Docker : la veille y serait vide en production sans aucun message.
     /// La configuration peut surcharger cette liste, elle n'a pas besoin de la fournir.
     ///
-    /// Toutes ces URL ont ete sondees le 2026-09-01 (HTTP 200). Techpoint Africa est absent :
-    /// il repond 403 a un client non-navigateur.
     /// </summary>
     public List<NewsFeed> Feeds { get; set; } = new()
     {
-        // ── Cercle 1 : ESIEA, EDF, ecosysteme francilien
-        new() { Name = "ESIEA", Circle = NewsCircle.Local, Tags = ["ecole", "formation"],
-                Url = "https://www.esiea.fr/feed/" },
-        new() { Name = "EDF (presse & recrutement)", Circle = NewsCircle.Local, Tags = ["edf", "emploi"],
-                Url = "https://news.google.com/rss/search?q=EDF+(num%C3%A9rique+OR+informatique+OR+recrutement)&hl=fr&gl=FR&ceid=FR:fr" },
+        // Cercle local
         new() { Name = "Le Monde Informatique", Circle = NewsCircle.Local, Tags = ["it", "entreprises"],
                 Url = "https://www.lemondeinformatique.fr/flux-rss/thematique/toutes-les-actualites/rss.xml" },
-        new() { Name = "Maddyness", Circle = NewsCircle.Local, Tags = ["startups", "levees", "idf"],
+        new() { Name = "Maddyness", Circle = NewsCircle.Local, Tags = ["startups", "levees"],
                 Url = "https://www.maddyness.com/feed/" },
         new() { Name = "Les Numeriques", Circle = NewsCircle.Local, Tags = ["tech", "materiel"],
                 Url = "https://www.lesnumeriques.com/rss.xml" },
 
-        // ── Cercle 2 : Togo et Afrique
-        new() { Name = "Togo numerique", Circle = NewsCircle.Africa, Tags = ["togo"],
-                Url = "https://news.google.com/rss/search?q=Togo+(num%C3%A9rique+OR+technologie+OR+startup)&hl=fr&gl=FR&ceid=FR:fr" },
-        new() { Name = "Afrique tech", Circle = NewsCircle.Africa, Tags = ["afrique", "startups"],
-                Url = "https://news.google.com/rss/search?q=Afrique+(tech+OR+startup+OR+num%C3%A9rique)&hl=fr&gl=FR&ceid=FR:fr" },
-
-        // ── Cercle 3 : le monde
+        // Cercle mondial
         new() { Name = "Hacker News", Circle = NewsCircle.World, Tags = ["code", "ingenierie"],
                 Url = "https://hnrss.org/frontpage" },
         new() { Name = "Ars Technica", Circle = NewsCircle.World, Tags = ["tech", "entreprises"],

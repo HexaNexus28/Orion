@@ -1,89 +1,109 @@
-# Voice Pipeline — Full-Duplex WebSocket `/ws/voice` (OPÉRATIONNEL)
+# Pipeline vocal
+
+La conversation vocale passe par le WebSocket `/ws/voice`.
 
 ```
-FRONTEND (VAD)                          BACKEND (VoiceWebSocketHandler)
-─────────────                           ──────────────────────────────
-VAD détecte parole    ──PCM Int16──►    accumule _audioBuffer
-end_audio (silence)   ──JSON───────►    TranscriptionCascade (Voxtral, repli Whisper)
-                      ◄──JSON────       transcript
-                      ◄──JSON────       llm_chunk (token/token, StreamLLMAsync)
-                      ◄──JSON────       llm_done
-AudioContext 24kHz    ◄──Binary───      Kokoro TTS (daemon) WAV raw bytes
-barge-in (interrupt)  ──JSON───────►    CancellationToken annule le tour
+Frontend                                Backend
+────────                                ───────
+VAD Silero (fin de prise)
+  PCM 16 kHz + end_audio   ───────────► TranscriptionCascade
+                           ◄─────────── transcript
+                           ◄─────────── llm_start, llm_chunk, tool_start, tool_result
+AudioContext 24 kHz        ◄─────────── WAV par phrase (SpeechCascade)
+                           ◄─────────── llm_done, tts_done
+interrupt                  ───────────► annulation du tour
 ```
 
-## Protocole WebSocket
+## Protocole
 
-- **Client→Server** : Binary (PCM Int16 16kHz mono) | JSON `{type: config|end_audio|interrupt}`
-- **Server→Client** : JSON `{type: ready|session|transcript|llm_start|llm_chunk|llm_done|tts_done|error|interrupted}` | Binary (WAV complets)
-- **TTS daemon↔backend** : `[36-byte requestId UTF-8] + [raw WAV bytes]` (pas de base64)
+Client vers serveur :
 
-## Stack
+| Message | Rôle |
+|---|---|
+| binaire | PCM Int16, 16 kHz, mono |
+| `config` | langue et session |
+| `end_audio` | déclenche le tour sur l'audio reçu |
+| `interrupt` | annule le tour en cours |
+| `diag` | télémétrie du micro : état, confiance maximale, nombre de prises |
 
-STT : `TranscriptionCascade` — Voxtral (Mistral) en tête, Whisper.net local en repli ·
-KokoroSharp.CPU (TTS local ~320MB, voix `ff_siwis`) · VAD : `MicVAD` Silero v5 (`useVAD.ts`) —
-silence de clôture ≈450 ms, parole minimale ≈290 ms, pré-roll ≈256 ms.
+Serveur vers client :
 
-## Latence (Phase 4.5)
+| Message | Rôle |
+|---|---|
+| `ready`, `session` | connexion établie, identifiant de conversation |
+| `transcript`, `no_speech` | texte reconnu, ou aucune parole |
+| `llm_start`, `llm_chunk`, `llm_done` | réponse en streaming |
+| `tool_start`, `tool_result` | activité des outils |
+| binaire | fichier WAV complet, une phrase |
+| `tts_done` | fin de l'audio du tour |
+| `interrupted`, `error` | tour annulé, ou erreur |
+| `superseded` | un autre client a pris la main |
 
-Prompt voix dédié (`ChatRequest.VoiceMode` → réponses courtes orales sans markdown) · smart sentence
-split (`.!?` min 20 chars, weak break `, : ;` à 80, force à 150) · TTS pipeliné en parallèle du LLM
-stream (`Task.WhenAll`) · frontend pre-decode chunk N+1 pendant lecture N (`useVoiceWS.ts`).
+Le protocole transporte du PCM sans en-tête. `MicVAD` rééchantillonne à 16 kHz et
+`VoiceWebSocketHandler.EncodePcmToWav` suppose cette fréquence.
 
-## Anti-écho — un seul chemin sonore, pas un réglage
+## Composants
 
-**Web Speech API a été retirée d'ORION.** C'était elle, la cause.
+| Fonction | Composant |
+|---|---|
+| Détection de parole | `MicVAD`, Silero v5 (`useVAD.ts`) |
+| Transcription | `TranscriptionCascade` : Voxtral, puis Whisper.net |
+| Synthèse | `SpeechCascade` : Voxtral TTS, puis Kokoro via le daemon |
+| Lecture | `useVoiceWS.ts`, `AudioContext` |
 
-Elle passe par le moteur TTS du **système**. Or un navigateur n'annule à l'écho que ce qu'**il**
-joue lui-même : la voix d'ORION sortait du haut-parleur, rentrait par le micro, et aucun signal
-de référence n'existait pour la distinguer de la parole de l'utilisateur. Sur un téléphone en
-haut-parleur, sa voix est souvent **plus forte** que celle de l'utilisateur — le volume ne peut
-donc rien trancher. Aucun seuil ne ferme ça.
+Réglages de `useVAD.ts` :
 
-Ce qui reste, une destination par chemin :
+| Paramètre | Valeur |
+|---|---|
+| Seuil de parole | 0,5 |
+| Seuil de fin de parole | 0,35 |
+| Silence de clôture | environ 450 ms |
+| Parole minimale | environ 290 ms |
+| Pré-roll | environ 256 ms |
 
-| | Chemin | Pourquoi |
-|---|---|---|
-| Conversation | WAV du WebSocket, joués par `AudioContext` | l'annulation d'écho du navigateur, elle, les voit |
-| Proactif | action `speak` du daemon, haut-parleurs du PC | la notification naît des watchers du daemon : elle vient de la machine, elle sonne sur la machine — y compris application fermée |
+La synthèse Voxtral renvoie un WAV 24 kHz mono 16 bits, comme Kokoro. Elle prend environ 0,4 s pour
+une phrase courte et 1,2 s pour 130 caractères. Le texte des réponses vocales est donc envoyé à
+Mistral.
 
-**ORION parle quand on lui PARLE.** Le mode texte ne déclenche plus de synthèse : écris-lui, il
-répond par écrit. C'est le prix assumé — il n'existait aucun moyen de faire parler le mode texte
-dans le navigateur sans réintroduire le moteur système.
+## Déroulement d'un tour
 
-Gardes qui subsistent côté prise :
+1. Le VAD clôt une prise. `onAudioChunk` la retient dans `pendingAudioRef`.
+2. `processVoiceTurn` décide de son sort, puis envoie l'audio avec `end_audio`.
+3. Le backend transcrit, prépare le contexte et lance `StreamLLMAsync`.
+4. Le texte est découpé en phrases. Chaque phrase est synthétisée et envoyée dans l'ordre.
+5. Le frontend affiche « Compris : … » et joue l'audio à la suite.
 
-- une prise n'est ÉMISE que par `processVoiceTurn`, jamais par `onAudioChunk` : on n'envoie de
-  l'audio que si on envoie aussi le `end_audio` qui le consomme ;
-- une prise née pendant qu'ORION parle n'est gardée que si un barge-in a été **déclaré** ;
-- `isPlayingRef` reste vrai jusqu'au `onended` du dernier son : programmer un son rend la main
-  aussitôt, seul `onended` dit qu'il s'est tu. Couper ORION en pleine phrase n'est donc **pas**
-  possible : ce que le micro capte pendant la lecture est traité comme de l'écho.
+Découpage du texte : fin de phrase à partir de 20 caractères, ponctuation faible à partir de 80,
+coupure forcée à 150.
 
-## Phrases coupées par une hésitation
+## Écho
 
-La prise se clôt après ≈450 ms de silence. Si la parole reprend dans les 3 s
-(`PHRASE_RESUME_WINDOW_MS`) et qu'ORION n'a ni lancé d'outil ni fini de répondre, le tour en cours
-est annulé et le serveur reçoit les deux prises recollées. Un bruit bref (`onMisfire`) renvoie la
-prise d'origine telle quelle. L'envoi reste immédiat : aucune latence ajoutée.
+- Une prise n'est émise que par `processVoiceTurn`, avec le `end_audio` qui la consomme.
+- `isPlayingRef` reste vrai jusqu'au `onended` du dernier son.
+- Une prise commencée pendant un tour est écartée, sauf si une interruption a été déclarée.
+- ORION ne peut pas être interrompu pendant qu'il parle : ce que le micro capte est traité comme de
+  l'écho. Il peut l'être pendant qu'il réfléchit.
 
-⚠️ Le message utilisateur est écrit dès `PrepareStreamAsync` : un fragment annulé après cette
-étape reste dans l'historique, suivi de la phrase complète.
+Le mode texte ne déclenche aucune synthèse vocale.
 
-## Flow frontend voix (App.tsx)
+## Phrases interrompues
 
-1. Mount → `useEffect([isInputVisible])` → `startPassiveListeningRef` → `startVAD()` (getUserMedia).
-   ⚠️ L'`AudioContext` peut démarrer **suspended** jusqu'au 1er geste utilisateur → le VAD ne
-   capte rien tant qu'on n'a pas tap/cliqué une fois.
-2. `useVoiceWS` ouvre la connexion `/ws/voice` au mount (une seule fois, callbacks via ref).
-3. Fin de prise : `onAudioChunk(pcm16)` la RETIENT dans `pendingAudioRef`, rien ne part encore.
-4. `processVoiceTurn()` décide de son sort, puis envoie la prise collée à son `end_audio`.
-5. Backend : STT → `PrepareStreamAsync` → `StreamLLMAsync` → TTS phrase par phrase.
-6. Callbacks WS : `onTranscript` (affiche « Compris : … », reset + thinking) → `onLLMChunk`
-   (`appendChunk`) → `onLLMDone` → `onOrionSpeaking(true/false)` pilote l'état entité.
-7. Barge-in : si `isSpeaking && !isPlayingRef && (isTurnActive || phrase reprise)` → `interrupt()`.
+La prise se clôt après environ 450 ms de silence. Si la parole reprend dans les 3 s suivant l'envoi
+de la première prise (`PHRASE_RESUME_WINDOW_MS`), et si ORION n'a ni lancé d'outil ni fini de
+répondre, le tour est annulé et les prises sont renvoyées ensemble.
 
-## Points de vigilance connus
+Si la reprise n'était qu'un bruit bref (`onMisfire`), la prise d'origine est renvoyée telle quelle.
 
-- AudioContext suspended au 1er chargement (cf. point 1) — un tap initial débloque.
-- `npm run build` (tsc strict) doit passer — pas de variables non utilisées.
+Le message utilisateur est écrit dès `PrepareStreamAsync` : un fragment annulé après cette étape
+reste dans l'historique.
+
+## Un seul client
+
+`VoiceConnectionRegistry` n'autorise qu'une connexion vocale active. La dernière connexion remplace
+la précédente, qui reçoit `superseded`, coupe son micro et propose de reprendre.
+
+## Contraintes navigateur
+
+- La capture audio exige une interaction utilisateur. Le micro s'arme au premier contact avec
+  l'interface.
+- `/vad/silero_vad_v5.onnx` doit être servi avec un type MIME reconnu.

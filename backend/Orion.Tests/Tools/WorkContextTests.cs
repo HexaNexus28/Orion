@@ -8,7 +8,7 @@ namespace Orion.Tests.Tools;
 /// <summary>
 /// Le widget « Contexte ». Ces cas viennent de titres REELS releves le 2026-08-27 : chaque
 /// application ordonne ses segments differemment, et une premiere version basee sur la position
-/// annoncait « fichier : tiktok-workflow, projet : Devin ». Un contexte faux ferait proposer une
+/// annoncait « fichier : mon-projet, projet : Devin ». Un contexte faux ferait proposer une
 /// action sur le mauvais fichier.
 /// </summary>
 public class WorkContextTests
@@ -20,11 +20,11 @@ public class WorkContextTests
 
     [Theory]
     // Devin place l application AU MILIEU et le fichier en dernier.
-    [InlineData("tiktok-workflow - Devin - .env.cloudflare", "Devin", ".env.cloudflare")]
+    [InlineData("mon-projet - Devin - .env.local", "Devin", ".env.local")]
     // Notepad : fichier puis nom affiche de l application, qui differe du nom de processus.
-    [InlineData("supabase-shiftstar-dev.env - Bloc-notes", "Notepad", "supabase-shiftstar-dev.env")]
+    [InlineData("notes.txt - Bloc-notes", "Notepad", "notes.txt")]
     // VS Code : fichier, projet, application.
-    [InlineData("useVAD.ts - ShiftCore - Visual Studio Code", "Code", "useVAD.ts")]
+    [InlineData("useVAD.ts - mon-projet - Visual Studio Code", "Code", "useVAD.ts")]
     // Pastille de modification non enregistree.
     [InlineData("● Program.cs - Orion.Api - Visual Studio", "devenv", "Program.cs")]
     public void WorkContext_FileAnywhereInTitle_Recognised(string title, string app, string attendu)

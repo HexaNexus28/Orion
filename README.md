@@ -1,210 +1,149 @@
 # ORION
 
-Assistant IA personnel **agentique**, auto-hébergé : il ne se contente pas de répondre — il
-exécute des actions sur la machine de son propriétaire, garde une mémoire à long terme, et prend
-la parole de lui-même quand le contexte le justifie.
+ORION est un assistant IA personnel agentique. Il converse à l'écrit et à la voix, exécute des
+actions sur un poste Windows, conserve une mémoire à long terme et peut prendre l'initiative
+d'une notification.
 
-Stack .NET 9 + React 19, conversation texte et **voix full-duplex**, cascade LLM distant → local
-pour survivre hors-ligne.
+Le projet est en développement actif : l'API et les schémas peuvent évoluer.
 
-> **Statut** : projet personnel en développement actif. L'API et les schémas bougent encore.
+## Fonctionnalités
 
----
-
-## Ce qui distingue ORION d'un client de chat
-
-| | |
+| Domaine | Description |
 |---|---|
-| **Agentique** | boucle multi-tours (`AgentLoop`) : le modèle enchaîne des outils jusqu'à aboutir, en streaming |
-| **Incarné** | un daemon Windows lui donne des mains sur la machine : fichiers, git, processus, presse-papiers, écran |
-| **Persistant** | mémoire vectorielle pgvector, consolidation automatique, profil utilisateur qui se met à jour seul |
-| **Proactif** | des watchers observent l'activité, un scoring d'urgence décide s'il vaut la peine d'interrompre |
-| **Résilient** | cascades explicites sur le LLM et la transcription : un fournisseur qui tombe dégrade, n'arrête pas |
-| **Hors-ligne dégradé** | PC éteint → les actions qui gardent un sens sont mises en file et rejouées au réveil |
+| Agent | boucle multi-tours (`AgentLoop`) qui enchaîne des outils en streaming |
+| Actions | un daemon Windows donne accès aux fichiers, à git, aux processus, au presse-papiers et à l'écran |
+| Mémoire | recherche vectorielle pgvector, consolidation automatique, profil utilisateur |
+| Voix | conversation full-duplex par WebSocket, détection de parole Silero |
+| Proactivité | des watchers observent l'activité, un décideur choisit de notifier, de différer ou de se taire |
+| Résilience | cascades de fournisseurs pour le LLM, la transcription et la synthèse vocale |
+| File différée | les actions demandées quand le poste est éteint s'exécutent à son retour |
 
 ## Architecture
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│  Frontend — React 19 + Vite (PWA, surface unique)                 │
-│    Entité 3D (Three.js) · HUD à zones · VAD Silero                │
-│    SSE token par token · WS /ws/voice full-duplex · anti-écho     │
-├───────────────────────────────────────────────────────────────────┤
-│  Backend — .NET 9, Clean Architecture                             │
-│    IAgentLoop ─► ILLMAgentClient (LLMCascade)                     │
-│                    ├── NVIDIA NIM   (distant, qualité)            │
-│                    └── Ollama       (local, repli hors-ligne)     │
-│    IToolInvoker ─► exécute │ diffère │ refuse   ← point UNIQUE    │
-│    RAG : pgvector + mistral-embed (1024 dims)                     │
-│    Auth : JWT propriétaire + secret partagé daemon, fermé par déf.│
-├───────────────────────────────────────────────────────────────────┤
-│  Daemon — .NET 9 Worker Service (Windows, session utilisateur)    │
-│    WSS vers le backend (le daemon initie) · 20 actions            │
-│    Watchers proactifs · TTS Kokoro ONNX + repli SAPI              │
-├───────────────────────────────────────────────────────────────────┤
-│  Données — PostgreSQL + pgvector (Supabase)                       │
-│    conversations · messages · memory_vectors · user_profile       │
-│    behavior_patterns · deferred_actions · audit_logs              │
-└───────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  Frontend : React 19, Vite, PWA                              │
+│    Scène 3D · HUD · VAD Silero · SSE · WebSocket /ws/voice   │
+├──────────────────────────────────────────────────────────────┤
+│  Backend : .NET 9, Clean Architecture                        │
+│    IAgentLoop → ILLMAgentClient (LLMCascade)                 │
+│    IToolInvoker : exécute, diffère ou refuse                 │
+│    Mémoire : pgvector + mistral-embed                        │
+│    Authentification : JWT et secret partagé du daemon        │
+├──────────────────────────────────────────────────────────────┤
+│  Daemon : .NET 9 Worker, session utilisateur Windows         │
+│    Connexion sortante vers le backend · 20 actions           │
+│    Watchers · notifications · synthèse Kokoro locale         │
+├──────────────────────────────────────────────────────────────┤
+│  Données : PostgreSQL + pgvector (Supabase)                  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-**Règle des 4 couches, immuable** : `Core` (ne dépend de rien) ← `Business` / `Data` ← `Api`.
-
-## Stack technique
+## Stack
 
 | Couche | Technologies |
 |---|---|
-| **Frontend** | React 19, Vite, TypeScript strict, TailwindCSS, Three.js |
-| **Backend** | .NET 9, Clean Architecture, EF Core |
-| **LLM** | NVIDIA NIM (compatible OpenAI) → Ollama local, cascade explicite |
-| **Embeddings** | `mistral-embed` (1024 dims), fournisseur compatible OpenAI |
-| **Voix** | STT Voxtral → Whisper local · TTS Kokoro ONNX · VAD Silero v5 |
-| **Base** | PostgreSQL + pgvector (Supabase) |
-| **Daemon** | .NET 9 Worker Service, WebSocket, Kokoro TTS |
-| **Recherche web** | DuckDuckGo (sans clé), Brave, SerpAPI |
+| Frontend | React 19, Vite, TypeScript strict, TailwindCSS, Three.js |
+| Backend | .NET 9, EF Core |
+| LLM | NVIDIA NIM (compatible OpenAI), repli Ollama |
+| Embeddings | `mistral-embed`, 1024 dimensions |
+| Transcription | Voxtral, repli Whisper.net |
+| Synthèse vocale | Voxtral TTS, repli Kokoro |
+| Base de données | PostgreSQL 15+ avec pgvector |
+| Recherche web | DuckDuckGo, Brave, SerpAPI |
 
-## Structure
+## Structure du dépôt
 
 ```
-Orion/
-├── backend/
-│   ├── Orion.Api/            Controllers · Auth · WebSockets · Middleware · DI
-│   ├── Orion.Business/       Agents · LLM · Tools · Daemon · Services
-│   ├── Orion.Core/           Entities · DTOs · Interfaces · Configuration
-│   ├── Orion.Data/           Repositories · UnitOfWork · OrionDbContext
-│   └── Orion.Tests/          xUnit + Moq
-├── frontend/src/             components · hooks · services · types (strict)
-├── daemon/
-│   ├── Orion.Daemon/         Worker · Watchers · Notifiers · Orchestrateur
-│   ├── Orion.Daemon.Core/    Interfaces · Entities · Configuration
-│   └── Orion.Daemon.Actions/ 20 actions système
-├── memory/                   schema.sql · seed.sql (pgvector)
-├── tools/definitions/        contrats JSON des outils
-└── docs/                     documentation détaillée
+backend/
+  Orion.Api/        contrôleurs, authentification, WebSockets, composition
+  Orion.Business/   agents, LLM, outils, services
+  Orion.Core/       entités, DTOs, interfaces, configuration
+  Orion.Data/       repositories, unit of work, DbContext
+  Orion.Tests/      tests xUnit et Moq
+daemon/
+  Orion.Daemon/          worker, watchers, notificateurs
+  Orion.Daemon.Core/     interfaces, entités, configuration, périmètre disque
+  Orion.Daemon.Actions/  actions système
+  Orion.Daemon.Tests/    tests du daemon
+frontend/src/       composants, hooks, services, types
+memory/             schéma SQL, migrations
+scripts/            installation du daemon
+docs/               documentation
+```
+
+## Prérequis
+
+- SDK .NET 9
+- Node.js 20 ou supérieur
+- PostgreSQL 15 ou supérieur avec l'extension pgvector
+- Une clé Mistral pour les embeddings, la transcription et la synthèse vocale
+- Une clé NVIDIA NIM, ou Ollama pour un fonctionnement local
+- Windows pour le daemon
+
+## Démarrage
+
+### Base de données
+
+```bash
+psql "$CONNECTION_STRING" -f memory/schema.sql
+```
+
+Appliquer ensuite les fichiers de `memory/migrations/` dans l'ordre.
+
+### Backend
+
+```bash
+cp .env.example .env
+dotnet run --project backend/Orion.Api
+```
+
+L'API écoute sur `http://localhost:5107`. Les variables sont décrites dans
+[docs/deployment.md](docs/deployment.md).
+
+### Frontend
+
+```bash
+cd frontend
+cp .env.example .env
+npm install
+npm run dev
+```
+
+L'interface est servie sur `http://localhost:3000`.
+
+### Daemon
+
+```powershell
+powershell -File scripts/install-daemon.ps1
+```
+
+Voir [docs/daemon.md](docs/daemon.md).
+
+## Tests
+
+```bash
+dotnet test backend/Orion.sln
+dotnet test daemon/Orion.Daemon.sln
+cd frontend && npm run build
 ```
 
 ## Documentation
 
 | Document | Contenu |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | 4 couches, LLM en cascade, embeddings, modèle d'authentification |
-| [docs/security.md](docs/security.md) | **audit de sécurité**, modèle de menace, injection de prompt |
-| [docs/tools.md](docs/tools.md) | catalogue des 24 outils + procédure de création |
-| [docs/daemon.md](docs/daemon.md) | Worker Service, watchers, notifiers, installation |
-| [docs/voice.md](docs/voice.md) | pipeline voix full-duplex, anti-écho, latence |
-| [docs/frontend.md](docs/frontend.md) | PWA, surface unique, flux texte et voix |
-| [docs/deployment.md](docs/deployment.md) | déploiement, développement local, variables d'environnement |
-| [docs/roadmap.md](docs/roadmap.md) | phases et état d'avancement |
-| [AGENTS.md](AGENTS.md) | règles de contribution, contrats immuables, ADRs |
-
-## Prérequis
-
-- **.NET 9 SDK**
-- **Node.js 20+**
-- **PostgreSQL 15+ avec pgvector** (Supabase free tier suffit)
-- **Ollama** *(optionnel)* — uniquement pour le repli LLM hors-ligne
-- Une clé API pour un fournisseur compatible OpenAI (embeddings + transcription)
-
-## Démarrage rapide
-
-### 1. Base de données
-
-```bash
-psql "$CONNECTION_STRING" -f memory/schema.sql
-psql "$CONNECTION_STRING" -f memory/seed.sql
-```
-
-### 2. Backend
-
-```bash
-cp .env.example .env          # à la racine, puis renseigner les valeurs
-dotnet run --project backend/Orion.Api
-```
-
-⚠️ `appsettings.json` et `appsettings.Development.json` sont **gitignorés** : aucune configuration
-réelle ne vit dans le dépôt. Voir [docs/deployment.md](docs/deployment.md) pour la liste complète
-des variables et leur origine en production.
-
-Trois valeurs sont **fail-closed** — absentes, le service refuse de démarrer ou refuse l'accès :
-
-| Variable | Effet si absente |
-|---|---|
-| `Auth__Password` / `Auth__JwtSecret` | connexion refusée (503) |
-| `DAEMON_WS_TOKEN` | WebSocket daemon refusé |
-| `AllowedOrigins__0` | **refus de démarrer** (liste vide = toute origine acceptée) |
-
-### 3. Frontend
-
-```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev            # http://localhost:5173
-npm run build          # doit passer : zéro variable/import non utilisé
-```
-
-### 4. Daemon (Windows)
-
-```powershell
-powershell -File scripts/install-daemon.ps1
-```
-
-À rejouer à chaque changement du code du daemon. Le script publie, transporte les voix Kokoro,
-conserve la configuration et relance — voir [docs/daemon.md](docs/daemon.md).
-
-## API
-
-Toutes les routes exigent une session (`Authorization: Bearer …`), **sauf** `/api/auth/login`,
-`/health` et la coquille de la PWA. C'est un défaut, pas une énumération : une route sans attribut
-est refusée.
-
-| Méthode | Route | Description |
-|---|---|---|
-| POST | `/api/auth/login` | mot de passe → jeton de session |
-| POST | `/api/auth/stream-ticket` | billet de 60 s pour SSE / WebSocket |
-| POST | `/api/chat` · `/api/chat/stream` | message · streaming SSE |
-| GET | `/api/chat/{sessionId}` · `/api/chat/history` | conversation · historique |
-| GET/POST/DELETE | `/api/memory` · `/search` · `/{id}` · `/revectorize` | mémoire long terme |
-| GET/POST | `/api/deferred-actions` · `/{id}/confirm` · `/{id}/cancel` | file d'actions différées |
-| GET/POST | `/api/daemon/status` · `/action` · `/tools` | état et actions machine |
-| GET/POST | `/api/tools` · `/api/tools/{name}` | catalogue et exécution d'un outil (gestes du HUD) |
-| POST/GET | `/api/voice/transcribe` · `/synthesize` · `/converse` · `/status` | voix |
-| GET/POST | `/api/proactivenotification/stream` · `/notify` · `/weights` | proactivité (SSE) |
-| GET | `/api/briefing/today` · `/history` | briefing |
-| GET | `/health` | sonde conteneur / façade |
-
-WebSockets : `/ws/voice` (billet de flux) · `/daemon` (`X-Daemon-Token`).
-
-## Sécurité
-
-Le modèle d'authentification est **fermé par défaut** et **fail-closed** : une route oubliée est
-refusée, un secret absent refuse au lieu d'ouvrir.
-
-Mais l'authentification ne couvre que la moitié du problème. ORION est authentifié comme son
-propriétaire **et** agit sur sa machine : une fois la session ouverte, ce que le modèle décide part
-avec les droits complets de l'utilisateur. Comme ORION lit le web, une page peut contenir des
-instructions qui le détournent — et la requête résultante est parfaitement authentifiée.
-
-C'est pourquoi le garde-fou vit dans le **code** (`IToolInvoker` + `ITool.IsDestructive`), après la
-décision du modèle, et non dans une phrase du prompt système.
-
-**[docs/security.md](docs/security.md) est la référence sur ce sujet** : modèle de menace, audit
-daté, constats ouverts et leur sévérité. Ce dépôt documente ses failles connues plutôt que de les
-taire — les lire avant d'exposer une instance.
-
-## Tests
-
-```bash
-cd backend && dotnet test          # 154 méthodes de test sur 21 fichiers
-cd daemon  && dotnet test
-cd frontend && npm run build       # tsc strict
-```
-
-## Écosystème
-
-ORION est conçu comme un assistant autonome, destiné à devenir le moteur IA de l'écosystème
-**HexaNexus** une fois mature.
+| [docs/architecture.md](docs/architecture.md) | couches, cascades, mémoire, authentification |
+| [docs/data-model.md](docs/data-model.md) | tables et migrations |
+| [docs/tools.md](docs/tools.md) | catalogue d'outils et création d'un outil |
+| [docs/voice.md](docs/voice.md) | pipeline vocal |
+| [docs/proactivity.md](docs/proactivity.md) | watchers et décision proactive |
+| [docs/daemon.md](docs/daemon.md) | daemon Windows |
+| [docs/frontend.md](docs/frontend.md) | PWA |
+| [docs/deployment.md](docs/deployment.md) | configuration, déploiement, CI |
+| [docs/security.md](docs/security.md) | modèle de menace, contrôles, signalement |
+| [docs/roadmap.md](docs/roadmap.md) | état et prochaines étapes |
+| [AGENTS.md](AGENTS.md) | règles de contribution et décisions d'architecture |
 
 ## Licence
 
-Projet personnel — écosystème HexaNexus. Tous droits réservés.
+Distribué sous licence MIT. Voir [LICENSE](LICENSE).

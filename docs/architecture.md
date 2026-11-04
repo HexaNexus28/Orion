@@ -1,154 +1,121 @@
-# Architecture — ORION
+# Architecture
 
-## Règle 4 couches — IMMUABLE
-
-```
-Orion.Core      → ne dépend de rien            (entities, DTOs, interfaces)
-Orion.Business  → dépend de Core               (services, agents, LLM, tools)
-Orion.Data      → dépend de Core               (repositories, DbContext, migrations)
-Orion.Api       → dépend de Business           (controllers, middleware, WS handlers)
-
-Orion.Daemon.Core    → ne dépend de rien
-Orion.Daemon.Actions → dépend de Daemon.Core
-Orion.Daemon         → dépend de Daemon.Core + Daemon.Actions
-
-Retour par couche :
-  Data        → T? / IEnumerable<T>     (données brutes)
-  Business    → ApiResponse<T>          (sens métier de l'erreur)
-  Controller  → IActionResult           (unwrap StatusCode uniquement)
-  Result<T>   → usage interne Data → Business (Orion.Core/Common)
-```
-
-Contrat backend ↔ daemon = JSON + Binary sur WebSocket (pas de DLL partagée). Chaque côté
-définit ses propres types `DaemonCommand` / `DaemonResponse`.
-
-## Structure Backend
+## Couches
 
 ```
-Orion.Core/        Entities · DTOs (Requests, Responses: ApiResponse<T>, StreamContext, HudCard, …) ·
-                   Interfaces (Repositories, Agents: IAgentLoop, LLM: ILLMAgentClient, Services,
-                   Tools: ITool/IToolInvoker/IToolRegistry, Daemon) · Common/Result.cs ·
-                   Configuration (Ollama/Nim/Embedding/Transcription/Auth/Daemon/Internet Options)
-Orion.Business/    Agents (AgentLoop, ConversationAgent, BriefingAgent) · LLM (LLMCascade,
-                   NimAgentClient, OllamaAgentClient, PromptBuilder) · Tools (System/Internet/
-                   Memory + ToolRegistry + ToolInvoker) · Daemon (DaemonWebSocketClient,
-                   DaemonActionValidator, DeferredActionService) · Services (Memory, Chat,
-                   Briefing, Audit, Health, Embedding, Transcription, Voice)
-Orion.Data/        Repositories (Generic + Conversation/Message/Memory/UserProfile/DeferredAction) ·
-                   UnitOfWork · Context/OrionDbContext · Migrations
-Orion.Api/         Controllers (Auth, Chat, Memory, Daemon, DeferredActions, Briefing, Voice,
-                   ProactiveNotification, Health) · Authentication (OrionAuth,
-                   DaemonAuthenticationHandler) · WebSockets (VoiceWebSocketHandler + Middleware) ·
-                   Middleware (ErrorHandling, DaemonWebSocket) · Services (SseClientRegistry,
-                   BriefingScheduler, DeferredActionWatcher, HudBroadcastService) · Program.cs
+Orion.Core      entités, DTOs, interfaces, configuration ; aucune dépendance
+Orion.Business  agents, LLM, outils, services ; dépend de Core
+Orion.Data      repositories, unit of work, DbContext ; dépend de Core
+Orion.Api       contrôleurs, WebSockets, composition ; dépend de Business et Data
+
+Orion.Daemon.Core     interfaces, entités, configuration ; aucune dépendance
+Orion.Daemon.Actions  actions système ; dépend de Daemon.Core
+Orion.Daemon          worker, watchers, notificateurs ; dépend des deux
 ```
 
-Contrats clés (signatures exactes dans `Orion.Core/Interfaces`) :
-- `IGenericRepository<T,TId>` : CRUD + `GetPagedAsync` + `GetWithIncludesAsync` + `SaveChangesAsync`
-- `IMemoryRepository : IGenericRepository<MemoryVector,Guid>` + `SearchSimilarAsync(float[], topK)`
-- `IUnitOfWork` : repos + transactions + `ExecuteInTransactionAsync`
-- `IConversationAgent` : `PrepareStreamAsync → ApiResponse<StreamContext>` puis
-  `StreamLLMAsync(StreamContext) → IAsyncEnumerable<string>`
+| Couche | Type de retour |
+|---|---|
+| Data | `T?` ou `IEnumerable<T>` |
+| Business | `ApiResponse<T>` |
+| Contrôleur | `IActionResult` |
 
-## LLM — cascade, et un seul chemin
+Le backend et le daemon échangent du JSON et du binaire sur WebSocket. Chaque côté définit ses
+propres types.
 
-```
-IAgentLoop (AgentLoop)          ← TOUT passe par là. Jamais d'appel LLM direct.
-   └── ILLMAgentClient (LLMCascade)   ← streaming AVEC outils
-         ├── NimAgentClient      NVIDIA NIM, compatible OpenAI   ← distant, qualité
-         └── OllamaAgentClient   local                            ← repli hors-ligne, dégradé
-```
-
-**L'ORDRE DU TABLEAU EST LA POLITIQUE** — rien d'autre ne la décide (`Program.cs`). Distant
-d'abord pour la qualité, local en dernier pour survivre hors-ligne.
-
-⚠️ `ILLMClient` / `ILLMRouter` ont été **supprimés** : ils ne portaient pas de
-`tool_call` et ne doivent plus être utilisés pour un nouveau développement. L'ancienne cascade
-« Ollama Cloud → local » et le client Anthropic ont disparu du code — il n'existe **pas** de
-`AnthropicClient` dans le dépôt.
-
-Le modèle réellement servi est **élu au démarrage par `ProbeAsync`**, en APPELANT le fournisseur.
-`ollama list` ne prouve rien : il affiche les `:cloud` en cache local même retirés ou verrouillés
-par abonnement (vérifié le 2026-08-20 : 7 modèles listés, 7 inutilisables).
-
-`NumCtx` est **obligatoire** : sans elle Ollama dimensionne le cache KV sur le contexte maximum du
-modèle (128k) et réclame ~15 Go pour un modèle de 2 Go → HTTP 500 intermittent.
-
-### Embeddings — un espace vectoriel, jamais deux
+## Traitement d'une requête
 
 ```
-IEmbeddingService → OpenAiCompatibleEmbeddingService → mistral-embed, 1024 dims
+Message utilisateur
+  → ConversationAgent.PrepareStreamAsync   persistance, profil, souvenirs, prompt
+  → ConversationAgent.StreamLLMAsync
+      → AgentLoop                           boucle multi-tours
+          → LLMCascade                      génération en streaming
+          → IToolInvoker                    exécute, diffère ou refuse
+  → réponse persistée, épisode enregistré en mémoire
 ```
 
-Ollama a été **retiré du chemin de production** : il n'existe pas sur le VPS, la mémoire y serait
-morte en silence. Contrairement au cerveau, un embedding **ne bascule pas à chaud** : chaque modèle
-projette dans son propre espace. Changer de fournisseur impose de revectoriser toute la table
-(`MemoryRevectorizer`). Modèle et dimension sont écrits À CÔTÉ de chaque vecteur et vérifiés au
-démarrage — mélanger deux espaces ne lève aucune erreur et renvoie des résultats absurdes.
+`AgentLoop` émet des événements typés : `Token`, `ToolStart`, `ToolResult`, `Done`, `Error`.
 
-### Transcription — même motif
+## Cascades de fournisseurs
 
-```
-IWhisperService → TranscriptionCascade → [ VoxtralTranscriptionService (Mistral), WhisperService (local) ]
-```
+Chaque cascade essaie ses fournisseurs dans l'ordre déclaré dans `Program.cs`.
 
-Voxtral : 0,35 s contre 5,0 s en local sur le même audio (mesure du 2026-08-27), et transcrit
-mieux. Le local reste DERRIÈRE pour que la voix survive à une panne du fournisseur.
+| Fonction | Interface | Ordre |
+|---|---|---|
+| LLM | `ILLMAgentClient` (`LLMCascade`) | `NimAgentClient`, puis `OllamaAgentClient` |
+| Transcription | `IWhisperService` (`TranscriptionCascade`) | `VoxtralTranscriptionService`, puis `WhisperService` |
+| Synthèse vocale | `ISpeechSynthesizer` (`SpeechCascade`) | `VoxtralSpeechService`, puis `VoiceNotificationService` (Kokoro) |
 
-Configuration : `backend/Orion.Api/appsettings.json` — ⚠️ **gitignoré, donc absent du dépôt**. En
-production les valeurs arrivent par variables d'environnement (cf. [deployment.md](deployment.md)).
+Le modèle LLM servi est élu au démarrage par `ProbeAsync`, qui appelle réellement le fournisseur.
+
+`Ollama:NumCtx` est obligatoire : sans cette valeur, Ollama dimensionne son cache sur le contexte
+maximal du modèle, ce qui provoque des erreurs de mémoire.
 
 ## Mémoire
 
-Court terme = RAM (~20 msgs). Long terme = Supabase pgvector (RAG).
-Tables : `conversations, messages, memory_vectors, user_profile, behavior_patterns, tool_executions`.
-Flux : embed message → pgvector top-5 → injecte dans prompt → LLM → sauvegarde + embedding.
-RAG est **non-bloquant** (try/catch dans `BuildRelevantMemoriesAsync` → liste vide si embeddings down).
-Persistance conversation = **obligatoire** (DB inaccessible → `ApiResponse` 503, le tour échoue).
+- Court terme : derniers messages de la conversation.
+- Long terme : table `memory_vectors`, recherche par similarité cosinus.
+- Embeddings : `IEmbeddingService`, `mistral-embed`, 1024 dimensions.
 
-## Architecture Prod vs Dev
+La mémoire est organisée en emplacements (`MemorySlot`) :
 
-| | Frontend | Backend | Daemon |
-|---|---|---|---|
-| **Prod** | servi par le backend (`wwwroot`) derrière Nginx | VPS, port loopback, façade Nginx (WSS) | Windows local, session utilisateur |
-| **Dev** | `localhost:5173` (Vite) | `localhost:5107` | local adaptatif |
-
-⚠️ Render et Vercel sont des **vestiges** : l'hébergement est un VPS unique derrière Nginx. Le nom
-`DaemonOptions.RenderWsUrl` en garde la trace côté daemon.
-
-En production la PWA n'est **pas** hébergée séparément : le bundle construit vit dans `wwwroot` et
-le backend le sert lui-même, avant l'authentification (la coquille de l'application n'est pas un
-secret — si elle exigeait une session, l'utilisateur n'aurait jamais l'écran pour en ouvrir une).
-
-```
-Navigateur ──HTTPS/API──────────────────→ Backend
-Navigateur ──WSS /ws/voice (billet)─────→ Backend
-Daemon     ──WSS /daemon (X-Daemon-Token)→ Backend   (le daemon INITIE : pas de souci firewall/IP dynamique)
-Backend    ──SSE /api/proactivenotification/stream──→ Navigateur
-```
-
-## Sécurité — modèle d'authentification
-
-**Une seule porte, deux appelants** (`Orion.Api/Authentication/OrionAuth.cs`) :
-
-| Appelant | Preuve | Pourquoi celle-là |
+| Emplacement | Contenu | Écriture |
 |---|---|---|
-| Propriétaire (navigateur) | JWT signé, obtenu par mot de passe | un navigateur ne peut rien garder de permanent |
-| Daemon (machine de confiance) | secret partagé `X-Daemon-Token` | aucun login interactif possible sur un service Windows |
+| `Episode` | échange brut, avant consolidation | ajout |
+| `Rules` | règles de comportement | ajout |
+| `Decisions` | décisions durables et leur raison | ajout |
+| `State` | informations en cours | remplacement |
+| `Refs` | références stables | ajout |
 
-Principes appliqués, à ne pas défaire :
+Chaque tour enregistre un épisode. `MemoryConsolidationScheduler` déclenche `MemoryConsolidator`,
+qui distille les épisodes vers les autres emplacements.
 
-- **Fermé par défaut** — `FallbackPolicy` exige le rôle propriétaire ; une route sans attribut est
-  refusée, jamais ouverte. Les exceptions sont explicites : `/api/auth/login`, `/health`, `index.html`.
-- **Fail-closed** — un secret absent REFUSE, il n'ouvre pas.
-- **Billet de flux** — SSE et WebSocket de navigateur ne portent aucun en-tête : leur jeton passe
-  par l'URL, donc c'est un billet de 60 s à **audience distincte**, et le contrôle vaut dans les
-  deux sens (jeton de session dans une URL → refusé ; billet hors d'un chemin de flux → refusé).
-- **Origines WebSocket** — même source de vérité que le CORS ; liste vide = refus de démarrer.
+La recherche mémoire n'est pas bloquante : si les embeddings sont indisponibles, la conversation
+continue sans souvenirs. La persistance des conversations est obligatoire : si la base est
+inaccessible, le tour échoue.
 
-⚠️ **L'authentification ne couvre que la moitié du problème** : une fois la session ouverte, ce que
-le modèle décide part avec les droits complets de l'utilisateur. Le garde-fou correspondant est
-`IToolInvoker` + `ITool.IsDestructive`, et son périmètre est incomplet — voir
-**[security.md](security.md)**, qui est la référence sur ce sujet.
+Un embedding dépend de son modèle. Modèle et dimension sont stockés avec chaque vecteur et vérifiés
+au démarrage. `MemoryRevectorizer` recalcule la table lors d'un changement de modèle.
 
-Voir [deployment.md](deployment.md) pour le déploiement détaillé.
+## Services d'arrière-plan
+
+| Service | Rôle |
+|---|---|
+| `BriefingScheduler` | génère le briefing quotidien |
+| `MemoryConsolidationScheduler` | consolide la mémoire |
+| `DeferredActionWatcher` | traite la file au retour du daemon et expire les actions périmées |
+| `HudBroadcastService` | alimente les widgets du HUD |
+
+## Topologie
+
+```
+Navigateur ── HTTPS, SSE ───────────► Backend
+Navigateur ── WSS /ws/voice ────────► Backend
+Daemon     ── WSS /daemon ──────────► Backend
+Backend    ── HTTPS ────────────────► Fournisseurs IA
+Backend    ── PostgreSQL ───────────► Supabase
+```
+
+En production, le backend sert aussi le bundle de la PWA depuis `wwwroot`. Le daemon initie sa
+connexion, ce qui évite d'ouvrir un port sur le poste.
+
+## Authentification
+
+| Appelant | Preuve |
+|---|---|
+| Propriétaire | JWT obtenu par mot de passe |
+| Daemon | secret partagé, en-tête `X-Daemon-Token` |
+
+- `FallbackPolicy` exige le rôle propriétaire. Les exceptions sont `/api/auth/login`, `/health` et
+  la coquille de la PWA.
+- Un secret absent refuse l'accès.
+- SSE et WebSocket de navigateur ne peuvent pas porter d'en-tête. Ils utilisent un billet de 60 s à
+  audience distincte, accepté uniquement sur les chemins de flux.
+- Les origines WebSocket reprennent la liste CORS. Une liste vide empêche le démarrage.
+
+Voir [security.md](security.md).
+
+## Configuration
+
+`appsettings.json` n'est pas versionné. En production, les valeurs arrivent par variables
+d'environnement. Voir [deployment.md](deployment.md).

@@ -1,44 +1,18 @@
-# Daemon — Agent Système Windows
+# Daemon Windows
 
-Worker Service .NET 9 (PAS ASP.NET). Tourne 24/7, **initie** la connexion WSS vers le backend
-(sens daemon→backend : pas de souci firewall/IP dynamique). Auth header `X-Daemon-Token`, heartbeat
-bidirectionnel, reconnexion backoff exponentiel.
+Worker Service .NET 9 qui exécute les actions sur le poste. Il initie une connexion WSS vers le
+backend, s'authentifie avec `X-Daemon-Token` et se reconnecte avec un délai exponentiel.
 
-## Structure — 3 projets
+## Projets
 
-```
-Orion.Daemon/         Workers/DaemonWorker · WebSocket (Manager + MessageHandler) ·
-                      Watchers (Activity, Time, Process, System, Adaptive) ·
-                      Notifiers (WindowsToast, Windows[MessageBox], PowerShellTts[SAPI5],
-                      Kokoro[KokoroSharp.CPU v0.6.6, voix ff_siwis]) · ProactiveOrchestrator
-Orion.Daemon.Core/    Entities (DaemonCommand/Response) · Interfaces (IAction, IActionRegistry) ·
-                      Configuration/DaemonOptions
-Orion.Daemon.Actions/ ActionRegistry + 18 actions : OpenApp, OpenFileInEditor, RunScript,
-                      LaunchClaude, OpenBrowserUrl, GetSystemStatus, GetWorkContext, ReadFile,
-                      WriteFile, ListFiles, GitStatus, GitCommit, KillProcess, GetClipboard,
-                      SetClipboard, TypeText, CaptureScreen, ProactiveDeferred
-                      (+ Speak / Synthesize, locales au projet Orion.Daemon)
-```
+| Projet | Contenu |
+|---|---|
+| `Orion.Daemon` | `DaemonWorker`, WebSocket, watchers, notificateurs, `ProactiveOrchestrator`, actions `speak` et `synthesize` |
+| `Orion.Daemon.Core` | entités, interfaces, configuration, `PathScope` |
+| `Orion.Daemon.Actions` | actions système et `ActionRegistry` |
+| `Orion.Daemon.Tests` | tests |
 
-## Flux proactif
-
-```
-Watcher détecte pattern (ex: inactif 3h + skip_meal)
-  → POST /api/proactivenotification/notify (ou WS actif)
-  → backend stocke + broadcast SSE
-  → frontend EventSource → TTS
-  → (ou) notification Windows native + TTS daemon, sans ouvrir l'app
-```
-
-Toute action doit être dans la **whitelist** (`DaemonActionValidator`) avant implémentation.
-
-⚠️ **La whitelist ne filtre que le NOM de l'action, jamais ses arguments.** Un chemin de fichier ou
-une URL la traverse sans être examiné. Le **périmètre** est donc la responsabilité de l'action
-elle-même.
-
-`ReadFile`, `ListFiles` et `WriteFile` le portent depuis le 2026-08-27 via
-`Orion.Daemon.Core/Security/PathScope.cs`. Lire [security.md](security.md) avant d'ajouter une
-action qui touche au disque, au réseau interne ou aux processus.
+Notificateurs : `WindowsToastNotifier`, `WindowsNotifier`, `PowerShellTtsNotifier`, `KokoroSpeaker`.
 
 ## Installation
 
@@ -46,111 +20,83 @@ action qui touche au disque, au réseau interne ou aux processus.
 powershell -File scripts\install-daemon.ps1
 ```
 
-Si Windows bloque le script (marque « téléchargé depuis Internet »), préférer `Unblock-File` à un
-contournement global de la politique d'exécution :
+Si Windows bloque le script :
 
 ```powershell
 Unblock-File scripts\install-daemon.ps1
 ```
 
-A rejouer **a chaque changement du code du daemon**. Le script publie, transporte les voix,
-conserve la configuration et relance. Aucune elevation requise.
+Le script publie le daemon, copie les voix, conserve la configuration et relance le processus. Il
+est à rejouer après chaque modification du code du daemon. Il ne demande pas d'élévation.
 
-### Pourquoi PAS un service Windows
+Le crochet `.githooks/post-merge` signale un `git pull` qui touche `daemon/`.
 
-Le daemon sait tourner en service (`AddWindowsService` est present), mais un service vit en
-**session 0**, isolee du bureau depuis Windows Vista. Or ses quatre notificateurs dependent tous
-de la session utilisateur :
+### Exécution dans la session utilisateur
 
-| Notificateur | Ce qu il fait | En session 0 |
-|---|---|---|
-| `PowerShellTtsNotifier` | `SpeechSynthesizer.Speak()` | aucun peripherique audio |
-| `KokoroSpeaker` | joue un WAV | aucun peripherique audio |
-| `WindowsToastNotifier` | toast Windows | invisible |
-| `WindowsNotifier` | boite de dialogue | invisible |
+Le daemon est lancé par le dossier Démarrage. Un service Windows s'exécuterait en session 0, sans
+accès au bureau ni au son : notifications et voix locale ne fonctionneraient pas, et `open_app`
+ouvrirait des applications invisibles. En contrepartie, le daemon ne tourne pas quand la session est
+fermée.
 
-Installe en service, ORION serait **muet et invisible**, et `OpenApp` ouvrirait des applications
-sur un bureau que personne ne voit. Le tuyau fonctionnerait, le Jarvis serait mort.
+### Fichiers Kokoro
 
-D ou le lancement par le **dossier Demarrage**, dans la session utilisateur. Contrepartie
-assumee : rien ne tourne quand la session est fermee — mais il n y a alors personne a qui parler.
+`dotnet publish` n'inclut pas `voices/` ni `espeak/`. Le script d'installation les copie. Leurs
+chemins sont relatifs : le lanceur fixe donc le répertoire de travail.
 
-Une tache planifiee aurait ajoute le redemarrage automatique en cas de plantage du processus ;
-sa creation exige un administrateur sur ce poste. Les coupures RESEAU, elles, sont deja gerees
-par le daemon (reconnexion a palier exponentiel).
+## Actions
 
-### Le piege des voix Kokoro
+Le backend vérifie les noms d'actions avec `DaemonActionValidator`. Cette liste ne filtre pas les
+arguments : chaque action valide ses entrées.
 
-`dotnet publish` **n emporte pas** `voices/` ni `espeak/` : KokoroSharp les telecharge a
-l execution, dans le repertoire de travail. Sans elles le daemon demarre, se connecte, parait
-sain — et reste muet (`GetVoice` leve `DirectoryNotFoundException`, seule la voix Windows de
-secours repond). Le script les transporte depuis la sortie de build ; c est l etape que le
-`dotnet publish` de l ancienne documentation laissait tomber en silence.
+Le daemon traite les commandes l'une après l'autre.
 
-Pour la meme raison, le lanceur `demarrer-orion.vbs` fixe `CurrentDirectory` : ces chemins sont
-**relatifs**. Lance depuis ailleurs, ORION est muet.
+## Périmètre disque
 
-## Périmètre de lecture — `AllowedRoots`
-
-`read_file` et `list_files` sont **fail-closed** : sans racine déclarée, ils refusent tout. Ce
-n'est pas une panne — c'est le défaut voulu, et le message d'erreur nomme la clé à renseigner.
+`read_file`, `list_files` et `write_file` passent par `PathScope`. Sans racine déclarée, ils refusent
+tout.
 
 ```json
-{ "Daemon": {
-  "AllowedRoots": [
-    "C:\\chemin\\vers\\tes\\depots",
-    "C:\\Users\\<toi>\\Documents"
-  ],
-  "DeniedNames": []
-}}
+{
+  "Daemon": {
+    "AllowedRoots": ["C:\\chemin\\vers\\depots"],
+    "AllowedWriteRoots": [],
+    "DeniedNames": []
+  }
+}
 ```
 
-À déclarer **étroit**. Surtout pas `C:\Users\<toi>` : le profil contient `.ssh`, les bases de
-cookies et les jetons. Une racine autorisée dit où ORION a le droit de chercher — et ce qu'il y
-lit repart dans sa réponse, donc hors de la machine.
+| Clé | Rôle |
+|---|---|
+| `AllowedRoots` | racines lisibles |
+| `AllowedWriteRoots` | racines modifiables ; si la liste est vide, `AllowedRoots` s'applique |
+| `DeniedNames` | noms refusés même sous une racine autorisée ; vide, la liste par défaut s'applique |
+| `ScriptTimeoutSeconds` | durée maximale de `run_script`, 120 s par défaut |
 
-`AllowedWriteRoots` gouverne l'ÉCRITURE (`write_file`) séparément : vide, il retombe sur
-`AllowedRoots` — donc vers un ensemble plus petit ou égal, jamais vers « tout ». Écrire là où on
-lit est souvent trop large : le dossier Démarrage suffit à obtenir une persistance complète, et
-c'est justement par là que le daemon lui-même est lancé.
+Déclarer des racines étroites. Ne pas déclarer le profil utilisateur entier : il contient des clés,
+des cookies et des jetons.
 
-`ScriptTimeoutSeconds` (120 s par défaut) plafonne `run_script`. Le daemon traite les commandes
-une par une : sans ce plafond, un script qui ne rend jamais la main le rend muet sur tout le reste.
+## Configuration
 
-`DeniedNames` vide = liste par défaut (`.ssh`, `.aws`, `.git`, `id_rsa`, `.env*`,
-`appsettings.Production.json`, …), refusée **même sous une racine autorisée** : un dépôt de code
-légitime contient presque toujours un `.env`.
-
-## Config Production
-
-`%LOCALAPPDATA%Oriondaemonappsettings.Production.json` — **hors du depot**, jamais versionne.
+`%LOCALAPPDATA%\Orion\daemon\appsettings.Production.json`, hors du dépôt :
 
 ```json
-{ "Daemon": {
-  "RenderWsUrl": "wss://<ton-domaine>/daemon",
-  "Token": "<identique a DAEMON_WS_TOKEN cote serveur>",
-  "MachineName": "<nom-de-ta-machine>",
-  "ReconnectDelayMs": 5000,
-  "MaxReconnectDelayMs": 60000
-}}
+{
+  "Daemon": {
+    "RenderWsUrl": "wss://example.com/daemon",
+    "Token": "<valeur de DAEMON_WS_TOKEN>",
+    "MachineName": "<nom-de-la-machine>",
+    "ReconnectDelayMs": 5000,
+    "MaxReconnectDelayMs": 60000
+  }
+}
 ```
 
-Le nom `RenderWsUrl` est un vestige : l hebergement est le VPS, plus Render.
+`RenderWsUrl` contient l'URL WebSocket du backend, quel que soit l'hébergeur.
 
-Le jeton est **fail-closed** cote serveur depuis le 2026-08-26 : vide ou absent, la connexion est
-REFUSEE (avant, un jeton non configure faisait sauter le controle). `appsettings.json` du projet
-porte volontairement un jeton VIDE — le vrai ne vit que dans le dossier d installation.
-
-## Verifier que tout marche
+## Vérification
 
 ```powershell
-Get-Process Orion.Daemon                     # doit exister, sans fenetre
+Get-Process Orion.Daemon
 ```
 
-Cote serveur, la preuve reelle :
-
-```bash
-docker logs orion --since 2m | grep -E "Daemon connected|weights"
-#   Daemon connected from <nom-de-ta-machine>
-#   GET /api/proactivenotification/weights - 200      <- le mode proactif fonctionne
-```
+Côté serveur, la connexion apparaît dans les logs sous la forme `Daemon connected from <machine>`.

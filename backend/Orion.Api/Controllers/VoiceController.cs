@@ -14,23 +14,23 @@ namespace Orion.Api.Controllers;
 public class VoiceController : ControllerBase
 {
     private readonly IWhisperService _whisperService;
-    private readonly IVoiceNotificationService _voiceNotification;
+    private readonly ISpeechSynthesizer _speech;
     private readonly ILogger<VoiceController> _logger;
 
     public VoiceController(
         IWhisperService whisperService,
-        IVoiceNotificationService voiceNotification,
+        ISpeechSynthesizer speech,
         ILogger<VoiceController> logger)
     {
         _whisperService = whisperService;
-        _voiceNotification = voiceNotification;
+        _speech = speech;
         _logger = logger;
     }
 
     /// <summary>
-    /// Synthèse vocale via Kokoro (daemon) — retourne WAV bytes pour AudioContext frontend.
+    /// Synthèse vocale (Voxtral TTS, repli Kokoro) — retourne WAV bytes pour AudioContext frontend.
     ///
-    /// 503 si le daemon est déconnecté ou Kokoro indisponible. Il n'y a PAS de repli : le frontend
+    /// 503 si aucun fournisseur ne répond. Il n'y a PAS de repli navigateur : le frontend
     /// reste silencieux et le dit. Web Speech servait autrefois de filet ici — c'était un repli
     /// pire que la panne, puisqu'il sortait par le moteur TTS du système, hors de portée de
     /// l'annulation d'écho du navigateur. Un silence se diagnostique ; un écho se cherche des
@@ -46,11 +46,10 @@ public class VoiceController : ControllerBase
         _logger.LogInformation("[Voice/TTS] Synthesis request: {Preview}",
             request.Text.Length > 50 ? request.Text[..50] + "..." : request.Text);
 
-        var wavBytes = await _voiceNotification.SynthesizeAsync(request.Text, ct);
+        var wavBytes = await _speech.SynthesizeAsync(request.Text, ct);
 
         if (wavBytes == null || wavBytes.Length == 0)
         {
-            // Daemon déconnecté ou Kokoro indisponible — frontend doit utiliser fallback
             _logger.LogWarning("[Voice/TTS] Synthesis unavailable, returning 503 for frontend fallback");
             return StatusCode(503, new { error = "TTS unavailable", fallback = true });
         }

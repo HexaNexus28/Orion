@@ -443,8 +443,41 @@ builder.Services.AddSingleton<IWhisperService>(sp => new TranscriptionCascade(
         sp.GetRequiredService<WhisperService>(),
     },
     sp.GetRequiredService<ILogger<TranscriptionCascade>>()));
-builder.Services.AddScoped<IVoiceNotificationService, VoiceNotificationService>();
-logger.LogInformation(" Voice Service registered (Whisper STT + TTS notification)");
+
+// ── Synthese : distant en tete, Kokoro (daemon) en repli ───────────────────────────────────
+// Kokoro : ~11,5 s pour 15 caracteres sur le PC. Voxtral TTS : 0,41 s depuis le VPS. Mesure du
+// 2026-11-04, detail dans SpeechOptions. Meme cle et meme motif que la transcription.
+builder.Services.Configure<SpeechOptions>(builder.Configuration.GetSection(SpeechOptions.SectionName));
+builder.Services.PostConfigure<SpeechOptions>(o =>
+{
+    if (string.IsNullOrWhiteSpace(o.ApiKey))
+        o.ApiKey = builder.Configuration["Embedding:ApiKey"] ?? string.Empty;
+});
+
+var speechOptions = builder.Configuration.GetSection(SpeechOptions.SectionName)
+    .Get<SpeechOptions>() ?? new SpeechOptions();
+
+builder.Services.AddHttpClient(VoxtralSpeechService.HttpClientName, client =>
+{
+    client.BaseAddress = new Uri(speechOptions.BaseUrl.TrimEnd('/') + "/");
+    client.Timeout = TimeSpan.FromSeconds(speechOptions.TimeoutSeconds);
+});
+
+builder.Services.AddSingleton<VoxtralSpeechService>();
+builder.Services.AddScoped<VoiceNotificationService>();
+builder.Services.AddScoped<IVoiceNotificationService>(sp => sp.GetRequiredService<VoiceNotificationService>());
+
+// L ORDRE de ce tableau EST la politique de repli.
+builder.Services.AddScoped<ISpeechSynthesizer>(sp => new SpeechCascade(
+    new ISpeechSynthesizer[]
+    {
+        sp.GetRequiredService<VoxtralSpeechService>(),
+        sp.GetRequiredService<VoiceNotificationService>(),
+    },
+    sp.GetRequiredService<ILogger<SpeechCascade>>()));
+
+builder.Services.AddSingleton<VoiceConnectionRegistry>();
+logger.LogInformation(" Voice Service registered (STT + TTS en cascade)");
 
 logger.LogInformation(" Business Services registered (including Audit)");
 

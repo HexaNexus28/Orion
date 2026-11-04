@@ -104,6 +104,27 @@ public class VoiceWebSocketHandler
         }
     }
 
+    /// <summary>
+    /// Un autre appareil a pris la main. Le client est prevenu AVANT la fermeture : sinon il y
+    /// verrait une coupure reseau, se reconnecterait, et les deux se chasseraient sans fin.
+    /// </summary>
+    public async Task SupersedeAsync()
+    {
+        _logger.LogInformation("[VoiceWS] Connexion remplacee par un autre client");
+        CancelCurrentTurn();
+        await SendJsonSafeAsync(new { type = "superseded" });
+
+        try
+        {
+            if (_ws is { State: WebSocketState.Open })
+                await _ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "superseded", CancellationToken.None);
+        }
+        catch (Exception ex) when (ex is WebSocketException or ObjectDisposedException)
+        {
+            _logger.LogDebug(ex, "[VoiceWS] Connexion deja fermee");
+        }
+    }
+
     private void HandleAudioData(byte[] buffer, int count)
     {
         // Accumulate PCM audio chunks
@@ -270,7 +291,7 @@ public class VoiceWebSocketHandler
             // ── Step 2: Prepare session (ApiResponse — catches DB errors) ─────
             using var scope = _scopeFactory.CreateScope();
             var conversationAgent = scope.ServiceProvider.GetRequiredService<IConversationAgent>();
-            var voiceNotification = scope.ServiceProvider.GetRequiredService<IVoiceNotificationService>();
+            var speech = scope.ServiceProvider.GetRequiredService<ISpeechSynthesizer>();
 
             var request = new ChatRequest
             {
@@ -353,7 +374,7 @@ public class VoiceWebSocketHandler
                         // joue dans l'ordre d'arrivee. Deux syntheses en vol se doubleraient.
                         if (ttsTasks.Count > 0) await Task.WhenAll(ttsTasks);
                         ttsTasks.Clear();
-                        ttsTasks.Add(SynthesizeAndSendAsync(trimmed, voiceNotification, turnToken));
+                        ttsTasks.Add(SynthesizeAndSendAsync(trimmed, speech, turnToken));
 
                         // L'ATTENTE SUPPLEMENTAIRE SUR LE PREMIER MORCEAU A ETE RETIREE.
                         //
@@ -379,7 +400,7 @@ public class VoiceWebSocketHandler
             var remaining = sentenceBuffer.ToString().Trim();
             if (remaining.Length >= 3)
             {
-                await SynthesizeAndSendAsync(remaining, voiceNotification, turnToken);
+                await SynthesizeAndSendAsync(remaining, speech, turnToken);
             }
 
             await SendJsonAsync(new { type = "llm_done", text = fullResponse.ToString() }, turnToken);
@@ -399,11 +420,11 @@ public class VoiceWebSocketHandler
         }
     }
 
-    private async Task SynthesizeAndSendAsync(string text, IVoiceNotificationService voiceService, CancellationToken ct)
+    private async Task SynthesizeAndSendAsync(string text, ISpeechSynthesizer speech, CancellationToken ct)
     {
         try
         {
-            var wav = await voiceService.SynthesizeAsync(text, ct);
+            var wav = await speech.SynthesizeAsync(text, ct);
             if (wav != null && wav.Length > 0)
             {
                 await SendBinaryAsync(wav, ct);

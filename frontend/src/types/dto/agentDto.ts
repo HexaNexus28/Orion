@@ -47,7 +47,7 @@ export interface HudCardItem {
 }
 
 /**
- * `id` est STABLE et porte le sujet (`git.ShiftStar`) : rappeler le même outil MET À JOUR la
+ * `id` est STABLE et porte le sujet (`git.mon-depot`) : rappeler le même outil MET À JOUR la
  * carte au lieu d'en empiler une seconde.
  */
 export interface HudCard {
