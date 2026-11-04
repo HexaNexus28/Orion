@@ -49,6 +49,7 @@ de la stack — depuis un téléphone, le navigateur envoie l'origine publique, 
 | Cerveau local (repli) | `Ollama__BaseUrl`, `Ollama__Model`, **`Ollama__NumCtx`** |
 | Embeddings | `Embedding__ApiKey`, `Embedding__Model`, `Embedding__Dimensions` |
 | Transcription | `Transcription__ApiKey` (retombe sur celle des embeddings si vide) |
+| Synthèse vocale | `Speech__ApiKey` (retombe sur celle des embeddings si vide) |
 | Recherche web | `Internet__SearchApiProvider`, `Internet__BraveApiKey`, `Internet__SerpApiKey` |
 
 ⚠️ `Ollama__NumCtx` est **obligatoire** : sans elle Ollama dimensionne le cache KV sur le contexte

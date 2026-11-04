@@ -9,8 +9,10 @@ namespace Orion.Business.Services;
 /// <summary>
 /// Service pour notifier le daemon de lire la réponse ORION à voix haute
 /// </summary>
-public class VoiceNotificationService : IVoiceNotificationService
+public class VoiceNotificationService : IVoiceNotificationService, ISpeechSynthesizer
 {
+    public bool IsReady => _daemonClient.IsConnected;
+
     private readonly IDaemonClient _daemonClient;
     private readonly ILogger<VoiceNotificationService> _logger;
 
@@ -96,6 +98,10 @@ public class VoiceNotificationService : IVoiceNotificationService
 
             _logger.LogDebug("[VoiceNotification] Received {Kb}KB WAV binary", result.Data.Length / 1024);
             return result.Data;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
         }
         catch (Exception ex)
         {

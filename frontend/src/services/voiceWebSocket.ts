@@ -74,6 +74,8 @@ export interface VoiceWSCallbacks {
   onToolStart?: (tool: string, args?: string) => void;
   /** Resultat de cet outil. */
   onToolResult?: (tool: string, ok: boolean, summary?: string) => void;
+  /** ORION écoute désormais sur un autre appareil. */
+  onSuperseded?: () => void;
 }
 
 export class VoiceWebSocket {
@@ -269,6 +271,13 @@ export class VoiceWebSocket {
         case 'interrupted':
           console.log('[VoiceWS] Turn interrupted');
           this.callbacks.onInterrupted?.();
+          break;
+
+        case 'superseded':
+          // Se reconnecter ici chasserait l'autre appareil, qui chasserait celui-ci en retour.
+          console.log('[VoiceWS] Un autre appareil a pris la main');
+          this.disconnect();
+          this.callbacks.onSuperseded?.();
           break;
 
         case 'error':

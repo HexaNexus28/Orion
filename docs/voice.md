@@ -8,21 +8,30 @@ end_audio (silence)   ──JSON───────►    TranscriptionCascade
                       ◄──JSON────       transcript
                       ◄──JSON────       llm_chunk (token/token, StreamLLMAsync)
                       ◄──JSON────       llm_done
-AudioContext 24kHz    ◄──Binary───      Kokoro TTS (daemon) WAV raw bytes
+AudioContext 24kHz    ◄──Binary───      SpeechCascade (Voxtral TTS, repli Kokoro) WAV
 barge-in (interrupt)  ──JSON───────►    CancellationToken annule le tour
 ```
 
 ## Protocole WebSocket
 
 - **Client→Server** : Binary (PCM Int16 16kHz mono) | JSON `{type: config|end_audio|interrupt}`
-- **Server→Client** : JSON `{type: ready|session|transcript|llm_start|llm_chunk|llm_done|tts_done|error|interrupted}` | Binary (WAV complets)
-- **TTS daemon↔backend** : `[36-byte requestId UTF-8] + [raw WAV bytes]` (pas de base64)
+- **Server→Client** : JSON `{type: ready|session|transcript|llm_start|llm_chunk|llm_done|tts_done|error|interrupted|superseded}` | Binary (WAV complets)
+- **TTS daemon↔backend** (repli Kokoro) : `[36-byte requestId UTF-8] + [raw WAV bytes]` (pas de base64)
+
+**Un seul client vocal à la fois** (`VoiceConnectionRegistry`). Le dernier connecté prend la main :
+l'ancien reçoit `superseded`, coupe son micro, ne se reconnecte pas et propose de reprendre. Sans
+ça, plusieurs PWA ouvertes écoutaient en parallèle et chaque micro captait la voix jouée par
+l'autre appareil, hors de portée de la protection anti-écho (observé le 2026-11-04).
 
 ## Stack
 
 STT : `TranscriptionCascade` — Voxtral (Mistral) en tête, Whisper.net local en repli ·
-KokoroSharp.CPU (TTS local ~320MB, voix `ff_siwis`) · VAD : `MicVAD` Silero v5 (`useVAD.ts`) —
-silence de clôture ≈450 ms, parole minimale ≈290 ms, pré-roll ≈256 ms.
+TTS : `SpeechCascade` — Voxtral TTS (Mistral, voix Marie, WAV 24 kHz) en tête, Kokoro via le daemon
+en repli · VAD : `MicVAD` Silero v5 (`useVAD.ts`) — silence de clôture ≈450 ms, parole minimale
+≈290 ms, pré-roll ≈256 ms.
+
+Mesure du 2026-11-04 : Kokoro ≈11,5 s pour 15 caractères sur le PC, Voxtral TTS 0,41 s pour 18 et
+1,16 s pour 133 depuis le VPS. La voix ne dépend plus du PC, sauf en repli.
 
 ## Latence (Phase 4.5)
 
@@ -62,8 +71,8 @@ Gardes qui subsistent côté prise :
 
 ## Phrases coupées par une hésitation
 
-La prise se clôt après ≈450 ms de silence. Si la parole reprend dans les 3 s
-(`PHRASE_RESUME_WINDOW_MS`) et qu'ORION n'a ni lancé d'outil ni fini de répondre, le tour en cours
+La prise se clôt après ≈450 ms de silence. Si la parole reprend dans les 3 s suivant la PREMIÈRE
+prise (`PHRASE_RESUME_WINDOW_MS`, le délai ne repart pas à chaque recollage) et qu'ORION n'a ni lancé d'outil ni fini de répondre, le tour en cours
 est annulé et le serveur reçoit les deux prises recollées. Un bruit bref (`onMisfire`) renvoie la
 prise d'origine telle quelle. L'envoi reste immédiat : aucune latence ajoutée.
 

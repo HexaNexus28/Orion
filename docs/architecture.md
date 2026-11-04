@@ -95,6 +95,15 @@ IWhisperService → TranscriptionCascade → [ VoxtralTranscriptionService (Mist
 Voxtral : 0,35 s contre 5,0 s en local sur le même audio (mesure du 2026-08-27), et transcrit
 mieux. Le local reste DERRIÈRE pour que la voix survive à une panne du fournisseur.
 
+### Synthèse vocale — même motif
+
+```
+ISpeechSynthesizer → SpeechCascade → [ VoxtralSpeechService (Mistral), VoiceNotificationService (Kokoro, daemon) ]
+```
+
+Voxtral TTS : 0,41 s contre ≈11,5 s pour Kokoro sur le PC (mesure du 2026-11-04). Le texte des
+réponses vocales part donc chez Mistral, comme la voix de l'utilisateur pour la transcription.
+
 Configuration : `backend/Orion.Api/appsettings.json` — ⚠️ **gitignoré, donc absent du dépôt**. En
 production les valeurs arrivent par variables d'environnement (cf. [deployment.md](deployment.md)).
 
