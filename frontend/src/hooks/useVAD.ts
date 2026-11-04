@@ -13,6 +13,8 @@ interface UseVADOptions {
    * booléen « audio prêt ». On encodait donc toute l'énonciation pour la jeter.
    */
   onSpeechCaptured?: () => void;
+  /** Le début de prise n'était qu'un bruit bref : aucune prise ne suivra. */
+  onMisfire?: () => void;
   onAudioChunk?: (pcm16: Int16Array) => void;
   onAmplitude?: (amplitude: number) => void;
   onError?: (error: string) => void;
@@ -141,6 +143,7 @@ export const useVAD = (options: UseVADOptions = {}) => {
         onVADMisfire: () => {
           setIsSpeaking(false);
           console.log('[VAD] Bruit bref ignoré');
+          cbRef.current.onMisfire?.();
         },
 
         onFrameProcessed: (probabilities) => {
@@ -232,6 +235,14 @@ export const useVAD = (options: UseVADOptions = {}) => {
       vadRef.current ? (listeningRef.current ? 'running' : 'paused') : 'absent',
   };
 };
+
+/** Recolle deux prises d'une même phrase, dans l'ordre où elles ont été dites. */
+export function concatPcm16(first: Int16Array, second: Int16Array): Int16Array {
+  const joined = new Int16Array(first.length + second.length);
+  joined.set(first);
+  joined.set(second, first.length);
+  return joined;
+}
 
 /** Float32 PCM [-1,1] vers Int16 PCM, format attendu par le WebSocket vocal. */
 function floatTo16BitPCM(float32: Float32Array): Int16Array {

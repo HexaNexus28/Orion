@@ -13,6 +13,9 @@ interface UseVoiceWSOptions {
   onError?: (error: string) => void;
 }
 
+/** Marge au-delà de la fin prévue de l'audio, si `onended` ne se déclenche jamais. */
+const PLAYBACK_SAFETY_MARGIN_MS = 3000;
+
 /**
  * useVoiceWS — Full-duplex voice hook using WebSocket.
  *
@@ -31,6 +34,11 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
   // Audio playback
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  // Deux questions distinctes. `isSchedulingRef` : une boucle de décodage tourne-t-elle ?
+  // `activeSourcesRef` : quels sons sont programmés et pas encore finis ? Programmer un son rend
+  // la main aussitôt : seul `onended` dit qu'il s'est tu.
+  const isSchedulingRef = useRef(false);
+  const activeSourcesRef = useRef(new Set<AudioBufferSourceNode>());
   const playbackCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const amplitudeRafRef = useRef<number | null>(null);
@@ -66,8 +74,19 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
   // ── Audio playback — pipelined, gapless ────────────────────────────────────
   // Pre-decode the next chunk while the current one plays to eliminate gaps
 
+  const settlePlayback = useCallback(() => {
+    if (
+      !isSchedulingRef.current &&
+      activeSourcesRef.current.size === 0 &&
+      audioQueueRef.current.length === 0
+    ) {
+      isPlayingRef.current = false;
+    }
+  }, []);
+
   const playNextChunk = useCallback(async () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
+    if (isSchedulingRef.current || audioQueueRef.current.length === 0) return;
+    isSchedulingRef.current = true;
     isPlayingRef.current = true;
 
     // Ensure AudioContext + AnalyserNode are alive
@@ -94,7 +113,8 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       }
     }
 
-    while (nextDecoded) {
+    // `stopPlayback` ferme le contexte pendant un décodage : la boucle ne doit pas lui survivre.
+    while (nextDecoded && ctx === playbackCtxRef.current) {
       const buffer = nextDecoded;
 
       // Start decoding the NEXT chunk in parallel with playback
@@ -106,6 +126,11 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       const source = ctx.createBufferSource();
       source.buffer = buffer;
       source.connect(analyser);
+      activeSourcesRef.current.add(source);
+      source.onended = () => {
+        activeSourcesRef.current.delete(source);
+        settlePlayback();
+      };
       const startAt = Math.max(ctx.currentTime, nextStartTimeRef.current);
       source.start(startAt);
       nextStartTimeRef.current = startAt + buffer.duration;
@@ -114,11 +139,23 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       nextDecoded = await decodePromise;
     }
 
-    isPlayingRef.current = false;
-  }, [startAmplitudeLoop]);
+    if (ctx !== playbackCtxRef.current) return;
+    isSchedulingRef.current = false;
+
+    // Un morceau arrivé pendant le dernier décodage a trouvé la boucle occupée : personne d'autre
+    // ne le relancera, et la fin de la réponse resterait muette dans la file.
+    if (audioQueueRef.current.length > 0) {
+      void playNextChunk();
+      return;
+    }
+    settlePlayback();
+  }, [startAmplitudeLoop, settlePlayback]);
 
   const stopPlayback = useCallback(() => {
     audioQueueRef.current = [];
+    activeSourcesRef.current.forEach((source) => { source.onended = null; });
+    activeSourcesRef.current.clear();
+    isSchedulingRef.current = false;
     isPlayingRef.current = false;
     stopAmplitudeLoop();
     if (playbackCtxRef.current && playbackCtxRef.current.state !== 'closed') {
@@ -174,20 +211,34 @@ export const useVoiceWS = (options: UseVoiceWSOptions = {}) => {
       },
 
       onTTSDone: () => {
-        const checkDone = setInterval(() => {
-          if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
-            clearInterval(checkDone);
-            stopAmplitudeLoop();
-            setIsTurnActive(false);
-            cbRef.current.onOrionSpeaking?.(false);
-          }
-        }, 50);
-        setTimeout(() => {
+        // Le filet de sécurité vit DANS la boucle : un minuteur séparé, laissé armé, clôturait
+        // 15 s plus tard le tour SUIVANT, en pleine réponse.
+        //
+        // Son échéance n'est calculée qu'une fois le décodage fini : `tts_done` arrive pendant
+        // celui du dernier morceau, quand `nextStartTimeRef` ne le compte pas encore. Calculée
+        // trop tôt, elle coupait toute dernière phrase plus longue que la marge.
+        let deadline: number | null = null;
+        const finish = () => {
           clearInterval(checkDone);
+          isPlayingRef.current = false;
           stopAmplitudeLoop();
           setIsTurnActive(false);
           cbRef.current.onOrionSpeaking?.(false);
-        }, 15000);
+        };
+        const checkDone = setInterval(() => {
+          if (!isPlayingRef.current && audioQueueRef.current.length === 0) {
+            finish();
+            return;
+          }
+          if (isSchedulingRef.current) return;
+
+          if (deadline === null) {
+            const ctx = playbackCtxRef.current;
+            const remainingMs = ctx ? Math.max(0, nextStartTimeRef.current - ctx.currentTime) * 1000 : 0;
+            deadline = Date.now() + remainingMs + PLAYBACK_SAFETY_MARGIN_MS;
+          }
+          if (Date.now() > deadline) finish();
+        }, 50);
       },
 
       onInterrupted: () => {

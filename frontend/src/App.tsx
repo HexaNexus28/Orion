@@ -10,7 +10,7 @@ import { DeferredQueueBadge } from './components/overlay/DeferredQueueBadge';
 import { useEntity } from './context/EntityContext';
 import { useOrionStatus } from './context/OrionStatusContext';
 import { useGestureControl } from './hooks/useGestureControl';
-import { useVAD } from './hooks/useVAD';
+import { useVAD, concatPcm16 } from './hooks/useVAD';
 import { useVoiceWS } from './hooks/useVoiceWS';
 import { useStream } from './hooks/useStream';
 import { ToolActivityStrip } from './components/overlay/ToolActivityStrip';
@@ -20,6 +20,13 @@ import { useDeferredQueue } from './services/deferredService';
 
 const isHandTrackingEnabled = import.meta.env.VITE_ENABLE_HAND_TRACKING === 'true';
 const SWIPE_THRESHOLD = 80;
+
+/**
+ * Délai après l'envoi d'une prise pendant lequel reprendre la parole CONTINUE la phrase.
+ * Au-delà, c'est une nouvelle demande. Sans borne, une prise restée sans réponse (coupure
+ * réseau) se recollerait à une phrase dite une heure plus tard.
+ */
+const PHRASE_RESUME_WINDOW_MS = 3000;
 
 const App: React.FC = () => {
   const { state: entityState, setState, setAmplitude, updateAmplitude, amplitudeRef } = useEntity();
@@ -42,6 +49,9 @@ const App: React.FC = () => {
   const [activeOverlay, setActiveOverlay] = useState<'memory' | 'briefing' | 'settings' | 'deferred' | null>(null);
   const closeOverlay = useCallback(() => setActiveOverlay(null), []);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  // Ce qu'ORION a compris. Sans ça, une erreur de transcription et une erreur du modèle se
+  // ressemblent : dans les deux cas il répond à côté, et rien ne dit où chercher.
+  const [heardText, setHeardText] = useState('');
 
   const isPassiveListeningRef = useRef(false);
   const isProcessingVoiceRef = useRef(false);
@@ -100,6 +110,7 @@ const App: React.FC = () => {
     takeStartedDuringTurnRef.current = isTurnActiveRef.current;
     bargeInDeclaredRef.current = false;
     setVoiceError(null);
+    setHeardText('');
     setState('listening');
     setAmplitude(0.6);
   }, [setState, setAmplitude]);
@@ -126,6 +137,20 @@ const App: React.FC = () => {
    */
   const pendingAudioRef = useRef<Int16Array | null>(null);
 
+  /**
+   * UNE PHRASE COUPÉE PAR UNE HÉSITATION RESTE UNE PHRASE.
+   *
+   * La prise se clôt après ≈450 ms de silence, ce qu'une simple hésitation atteint. La suite
+   * partait alors comme un tour à part qui annulait le premier : ORION ne répondait qu'à la fin
+   * de la phrase. Allonger ce délai ferait attendre à chaque tour, donc on envoie tout de suite,
+   * et si la parole reprend avant qu'ORION ait agi ou parlé, on annule et on renvoie le tout.
+   *
+   * `unansweredTakeRef` : dernière prise envoyée, encore sans effet visible.
+   * `mergeBaseRef` : cette prise, une fois annulée, en attente de sa suite.
+   */
+  const unansweredTakeRef = useRef<{ pcm: Int16Array; sentAt: number } | null>(null);
+  const mergeBaseRef = useRef<Int16Array | null>(null);
+
   // Telemetrie du micro : le serveur ne peut pas distinguer « contexte en pause » de « parole
   // trop faible » — les deux donnent le meme silence. On mesure donc ici et on rapporte.
   //
@@ -146,6 +171,14 @@ const App: React.FC = () => {
   const { isSpeaking, isListening, start: startVAD, pause: pauseVAD, reset: _resetVAD, contextState } = useVAD({
     onSpeechStart: handleSpeechStart,
     onSpeechCaptured: handleSpeechCaptured,
+    onMisfire: () => {
+      // Un bruit bref a annulé un tour qui n'avait rien demandé : la phrase repart telle quelle,
+      // sinon une porte qui claque ferait perdre la demande. La prise vide passe par le chemin
+      // normal, qui la recolle à `mergeBaseRef`.
+      if (!mergeBaseRef.current) return;
+      pendingAudioRef.current = new Int16Array(0);
+      hasCapturedAudioRef.current = true;
+    },
     // On RETIENT la prise au lieu de l'émettre. C'est `processVoiceTurn` qui décide de son
     // sort, et qui l'envoie collée à son `end_audio`. Une prise non retenue par la décision
     // (écho d'ORION, bruit ambiant pendant qu'il répond) est simplement écrasée par la
@@ -220,6 +253,7 @@ const App: React.FC = () => {
   const { isTurnActive, sendAudio, endAudio, interrupt, sendDiagnostic, isPlayingRef } = useVoiceWS({
     onTranscript: (transcript) => {
       console.log('[App] Transcript reçu:', transcript);
+      setHeardText(transcript);
       reset();
       setState('thinking');
       setStreaming(true);
@@ -229,11 +263,14 @@ const App: React.FC = () => {
     },
     onNoSpeech: () => {
       // Bruit ambiant capte par le VAD : on revient au repos, sans afficher d'erreur.
+      unansweredTakeRef.current = null;
       setStreaming(false);
       setState('idle');
     },
     onToolStart: (tool, args) => {
       console.log('[App] ORION execute:', tool);
+      // Une action est partie : rejouer la prise la relancerait une seconde fois.
+      unansweredTakeRef.current = null;
       pushTool({ tool, args, status: 'running', iteration: 0 });
     },
     onToolResult: (tool, ok, summary) => {
@@ -250,6 +287,7 @@ const App: React.FC = () => {
         setState('responding');
         setStreaming(true); // Le texte reste « en cours » pendant la lecture audio
       } else {
+        unansweredTakeRef.current = null; // Il a répondu : ce qui suit est une nouvelle demande
         setState('idle');
         setStreaming(false); // Il se fige quand ORION a fini de parler
       }
@@ -261,6 +299,7 @@ const App: React.FC = () => {
       // Deux grandeurs differentes n ont rien a faire dans un seul etat.
     },
     onError: (err) => {
+      unansweredTakeRef.current = null;
       setStreaming(false);
       handleVoiceError(err);
     },
@@ -306,8 +345,18 @@ const App: React.FC = () => {
   useEffect(() => {
     const orionEmet = isPlayingRef.current;
 
-    if (isSpeaking && isTurnActive && !orionEmet) {
+    // Le tour précédent peut être encore en transcription : `isTurnActive` n'est vrai qu'à partir
+    // de `llm_start`, et c'est justement là qu'une phrase reprise doit l'annuler.
+    const unanswered = unansweredTakeRef.current;
+    const isResumingPhrase = unanswered !== null
+      && Date.now() - unanswered.sentAt < PHRASE_RESUME_WINDOW_MS;
+
+    if (isSpeaking && (isTurnActive || isResumingPhrase) && !orionEmet) {
       console.log('[App] Barge-in: interruption du tour ORION (p(parole):', amplitudeRef.current.toFixed(3), ')');
+      if (isResumingPhrase) {
+        mergeBaseRef.current = unanswered.pcm;
+        unansweredTakeRef.current = null;
+      }
       // Le barge-in est DÉCLARÉ : c'est ce drapeau, et lui seul, qui autorise une prise née
       // pendant qu'ORION parlait à devenir un vrai tour. Sans lui, elle est traitée comme
       // l'écho qu'elle est presque toujours.
@@ -350,9 +399,14 @@ const App: React.FC = () => {
     // retombe et ORION répond au bruit ambiant.
     hasCapturedAudioRef.current = false;
 
+    const mergeBase = mergeBaseRef.current;
+    mergeBaseRef.current = null;
+    const audio = mergeBase ? concatPcm16(mergeBase, take) : take;
+    unansweredTakeRef.current = { pcm: audio, sentAt: Date.now() };
+
     // L'ordre d'émission du WebSocket garantit que la prise arrive avant l'ordre qui la consomme.
     chunksRef.current += 1;
-    sendAudioRef.current?.(take);
+    sendAudioRef.current?.(audio);
     endAudio();
 
     // Release processing lock after a short delay
@@ -365,6 +419,7 @@ const App: React.FC = () => {
 
   // ── Text submit ──────────────────────────────────────────────────────────────
   const handleSubmit = useCallback(async (message: string) => {
+    setHeardText('');
     reset();
     setState('thinking');
     try {
@@ -546,6 +601,15 @@ const App: React.FC = () => {
             void startPassiveListeningRef.current?.();
           }}
         />
+      )}
+
+      {heardText && !isInputVisible && (
+        <p
+          aria-live="polite"
+          className="absolute bottom-24 left-0 right-0 z-20 px-4 text-center text-xs leading-relaxed text-orion-light/70 pointer-events-none"
+        >
+          Compris : « {heardText} »
+        </p>
       )}
 
       {/* Ce qui attend le reveil du PC — n'apparait que s'il y a quelque chose */}
