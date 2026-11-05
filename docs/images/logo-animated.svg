@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ORION">
+  <rect width="512" height="512" rx="112" fill="#0a0a0f"/>
+  <g fill="none" stroke="#22d3ee" transform="rotate(-90 256 256)">
+    <circle cx="256" cy="256" r="176" stroke-width="24" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">
+      <animate attributeName="stroke-dashoffset" values="100;0;0;100" keyTimes="0;0.25;0.85;1" dur="7s" repeatCount="indefinite" calcMode="spline" keySplines="0.4 0 0.2 1;0 0 1 1;0.4 0 0.2 1"/>
+    </circle>
+    <circle cx="256" cy="256" r="104" stroke-width="12" stroke-linecap="round" opacity="0.6" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100">
+      <animate attributeName="stroke-dashoffset" values="100;100;0;0;100" keyTimes="0;0.08;0.33;0.85;1" dur="7s" repeatCount="indefinite" calcMode="spline" keySplines="0 0 1 1;0.4 0 0.2 1;0 0 1 1;0.4 0 0.2 1"/>
+    </circle>
+  </g>
+  <circle cx="256" cy="256" r="0" fill="#22d3ee">
+    <animate attributeName="r" values="0;0;32;32;0" keyTimes="0;0.25;0.36;0.85;1" dur="7s" repeatCount="indefinite"/>
+  </circle>
+</svg>
