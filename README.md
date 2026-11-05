@@ -1,22 +1,46 @@
-# ORION
+<p align="center">
+  <img src="docs/images/logo-animated.svg" width="120" alt="Logo ORION">
+</p>
 
-ORION est un assistant IA personnel agentique. Il converse à l'écrit et à la voix, exécute des
-actions sur un poste Windows, conserve une mémoire à long terme et peut prendre l'initiative
-d'une notification.
+<h1 align="center">ORION</h1>
+
+<p align="center">
+  <strong>Un assistant IA personnel qui vit sur votre PC.</strong><br>
+  Il agit, se souvient, et choisit le bon moment pour vous parler.
+</p>
+
+<p align="center">
+  <img src="docs/images/apercu.gif" width="640" alt="Aperçu d'ORION : l'entité centrale en 3D, au repos">
+</p>
 
 Le projet est en développement actif : l'API et les schémas peuvent évoluer.
 
-## Fonctionnalités
+## Pourquoi ORION
 
-| Domaine | Description |
-|---|---|
-| Agent | boucle multi-tours (`AgentLoop`) qui enchaîne des outils en streaming |
-| Actions | un daemon Windows donne accès aux fichiers, à git, aux processus, au presse-papiers et à l'écran |
-| Mémoire | recherche vectorielle pgvector, consolidation automatique, profil utilisateur |
-| Voix | conversation full-duplex par WebSocket, détection de parole Silero |
-| Proactivité | des watchers observent l'activité, un décideur choisit de notifier, de différer ou de se taire |
-| Résilience | cascades de fournisseurs pour le LLM, la transcription et la synthèse vocale |
-| File différée | les actions demandées quand le poste est éteint s'exécutent à son retour |
+- **Il agit, sous votre contrôle.** 24 outils sont exposés au modèle, dont les actions du poste Windows :
+  fichiers, git, processus, presse-papiers, écran. Toute action destructive attend votre confirmation.
+- **Il se souvient.** Chaque échange alimente une mémoire à long terme (pgvector), consolidée automatiquement en
+  règles, décisions, état en cours et références.
+- **Il sait quand se taire.** Des watchers observent l'activité du poste (inactivité, charge, applications, commits
+  non poussés). Un décideur choisit d'émettre, de différer ou d'écarter chaque signal, et ajuste ses choix d'après vos
+  retours.
+- **Il ne dépend pas d'un seul fournisseur.** Le LLM, la transcription et la synthèse vocale passent par des cascades :
+  si un fournisseur échoue, le suivant prend le relais.
+- **Il rattrape le poste éteint.** Les actions demandées quand le PC est éteint s'exécutent à son retour ; les
+  actions destructives passent d'abord par une confirmation à l'écran.
+- **Il se parle comme il s'écrit.** Conversation vocale full-duplex avec détection de parole Silero et
+  interruption à tout moment, ou saisie au clavier.
+
+## Aperçu
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/accueil.png" width="420" alt="Accueil : l'entité 3D, les boutons Mémoire et Briefing"><br><sub>Accueil</sub></td>
+    <td align="center"><img src="docs/images/saisie.png" width="420" alt="Saisie : un tap sur l'entité ouvre le champ de message"><br><sub>Saisie</sub></td>
+  </tr>
+</table>
+
+Captures de l'interface en développement local, sans backend connecté.
 
 ## Architecture
 
@@ -39,8 +63,6 @@ Le projet est en développement actif : l'API et les schémas peuvent évoluer.
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## Stack
-
 | Couche | Technologies |
 |---|---|
 | Frontend | React 19, Vite, TypeScript strict, TailwindCSS, Three.js |
@@ -52,80 +74,45 @@ Le projet est en développement actif : l'API et les schémas peuvent évoluer.
 | Base de données | PostgreSQL 15+ avec pgvector |
 | Recherche web | DuckDuckGo, Brave, SerpAPI |
 
-## Structure du dépôt
+## Démarrer
 
-```
-backend/
-  Orion.Api/        contrôleurs, authentification, WebSockets, composition
-  Orion.Business/   agents, LLM, outils, services
-  Orion.Core/       entités, DTOs, interfaces, configuration
-  Orion.Data/       repositories, unit of work, DbContext
-  Orion.Tests/      tests xUnit et Moq
-daemon/
-  Orion.Daemon/          worker, watchers, notificateurs
-  Orion.Daemon.Core/     interfaces, entités, configuration, périmètre disque
-  Orion.Daemon.Actions/  actions système
-  Orion.Daemon.Tests/    tests du daemon
-frontend/src/       composants, hooks, services, types
-memory/             schéma SQL, migrations
-scripts/            installation du daemon
-docs/               documentation
-```
-
-## Prérequis
-
-- SDK .NET 9
-- Node.js 20 ou supérieur
-- PostgreSQL 15 ou supérieur avec l'extension pgvector
-- Une clé Mistral pour les embeddings, la transcription et la synthèse vocale
-- Une clé NVIDIA NIM, ou Ollama pour un fonctionnement local
-- Windows pour le daemon
-
-## Démarrage
-
-### Base de données
+Prérequis : SDK .NET 9, Node.js 20 ou plus récent, PostgreSQL 15+ avec pgvector, une clé Mistral (embeddings,
+transcription, voix), une clé NVIDIA NIM ou Ollama pour un fonctionnement local. Windows pour le daemon.
 
 ```bash
-psql "$CONNECTION_STRING" -f memory/schema.sql
-```
+# Base de données
+psql "$CONNECTION_STRING" -f memory/schema.sql   # puis memory/migrations/ dans l'ordre
 
-Appliquer ensuite les fichiers de `memory/migrations/` dans l'ordre.
-
-### Backend
-
-```bash
+# Backend (http://localhost:5107)
 cp .env.example .env
 dotnet run --project backend/Orion.Api
+
+# Frontend (http://localhost:3000)
+cd frontend && cp .env.example .env && npm install && npm run dev
 ```
-
-L'API écoute sur `http://localhost:5107`. Les variables sont décrites dans
-[docs/deployment.md](docs/deployment.md).
-
-### Frontend
-
-```bash
-cd frontend
-cp .env.example .env
-npm install
-npm run dev
-```
-
-L'interface est servie sur `http://localhost:3000`.
-
-### Daemon
 
 ```powershell
+# Daemon Windows
 powershell -File scripts/install-daemon.ps1
 ```
 
-Voir [docs/daemon.md](docs/daemon.md).
+Les variables d'environnement sont décrites dans [docs/deployment.md](docs/deployment.md).
 
-## Tests
+| Commande | Effet |
+|---|---|
+| `dotnet test backend/Orion.sln` | Tests du backend |
+| `dotnet test daemon/Orion.Daemon.sln` | Tests du daemon |
+| `cd frontend && npm run build` | Build du frontend |
 
-```bash
-dotnet test backend/Orion.sln
-dotnet test daemon/Orion.Daemon.sln
-cd frontend && npm run build
+## Structure du dépôt
+
+```
+backend/    Orion.Api · Orion.Business · Orion.Core · Orion.Data · Orion.Tests
+daemon/     Orion.Daemon · Orion.Daemon.Core · Orion.Daemon.Actions · Orion.Daemon.Tests
+frontend/   composants, hooks, services, types
+memory/     schéma SQL, migrations
+scripts/    installation du daemon
+docs/       documentation
 ```
 
 ## Documentation
